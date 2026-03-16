@@ -1,0 +1,9 @@
+{
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "strict",
+  "include": ["app"],
+  "exclude": ["venv", ".venv", "__pycache__", "tests"],
+  "reportUnusedFunction": false,
+  "venvPath": ".",
+  "venv": ".venv"
+}

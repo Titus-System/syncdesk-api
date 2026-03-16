@@ -1,0 +1,100 @@
+[tool.poetry]
+name = "syncdesk_api"
+version = "0.1.0"
+description = ""
+authors = ["Pedro Garcia <pedrofsgarcia.pro@gmail.com>"]
+readme = "README.md"
+packages = [{include = "app"}, {include = "logs"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = {extras = ["standard"], version = "^0.121.1"}
+pydantic-settings = "^2.11.0"
+gunicorn = "^23.0.0"
+SQLAlchemy = "^2.0.44"
+alembic = "^1.17.1"
+asyncpg = "^0.30.0"
+prometheus-client = "^0.23.1"
+psutil = "^7.1.3"
+passlib = {extras = ["argon2"], version = "^1.7.4"}
+PyJWT = "^2.10.1"
+motor = "^3.7.1"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^9.0.2"
+pytest-asyncio = "^1.3.0"
+pytest-env = "^1.2.0"
+pytest-cov = "^7.0.0"
+httpx = "^0.28.1"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.14.14"
+bandit = "^1.8.6"
+mypy = "^1.19.1"
+pydantic = "^2.12.4"
+pre-commit = "^4.4.0"
+types-psutil = "^7.0.0.20251001"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["venv", "__pycache__"]
+
+
+[tool.ruff.lint]
+select = [
+    "E",  # Pycodestyle errors
+    "W",  # Pycodestyle warnings
+    "F",  # Pyflakes
+    "I",  # Import order
+    "N",  # Naming conventions
+    "B",  # Bugbear (boas práticas e possíveis bugs)
+    "C4", # Comprehensions
+    "SIM",# Simplifiable code
+    "UP", # Upgrades de código Python (melhorias automáticas)
+]
+ignore = [
+    "F822",  # undefined name in __all__
+    "F704",  # unused awaitable
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/**/__init__.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["jwt.*", "passlib.*", "alembic.*", "motor.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --cov=app --cov-report=term-missing"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv"]
+exclude_files = ["run.py"]

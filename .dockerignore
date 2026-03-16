@@ -1,0 +1,29 @@
+# Version control
+.git
+.gitignore
+
+# Python cache
+__pycache__
+*.py[cod]
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Virtual environments
+.venv
+venv
+env
+
+# Secrets — never bake into the image
+.env
+
+# Docker files themselves
+Dockerfile
+docker-compose.yaml
+.dockerignore
+
+# Editors / OS
+.vscode
+.idea
+*.DS_Store

@@ -1,0 +1,46 @@
+# Byte-code files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Environment variables and secrets
+.env
+.flaskenv
+
+# Database files
+*.sqlite3
+*.db
+*.db-journal
+
+# IDE-specific files
+.idea/
+.vscode/
+*.swp
+*.bak
+*.swo
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Logs and temporary files
+*.log
+tmp/
+logs/
+
+#cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.coverage
+
+
+.github/
