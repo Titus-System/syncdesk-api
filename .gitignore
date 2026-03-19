@@ -43,4 +43,5 @@ logs/
 .coverage
 
 
-.github/
+.github/*
+!/.github/workflows/
