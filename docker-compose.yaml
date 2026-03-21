@@ -2,7 +2,7 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: postgres_db
+    container_name: syncdesk_postgres_db
     restart: unless-stopped
     env_file:
       - .env
@@ -22,7 +22,7 @@ services:
 
   mongo:
     image: mongo:7
-    container_name: mongo_db
+    container_name: syncdesk_mongo_db
     restart: unless-stopped
     ports:
       - "27017:27017"
