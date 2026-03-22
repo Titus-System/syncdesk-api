@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from typing import Any
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request, WebSocket, WebSocketException, status
 from fastapi.responses import JSONResponse
 
 from app.schemas.response import ErrorContent, Meta, SuccessContent
@@ -61,3 +61,42 @@ class ResponseFactory:
 
 def get_response_factory(request: Request) -> ResponseFactory:
     return ResponseFactory(request)
+
+
+class WSResponseFactory:
+    def __init__(self, request_id: str | None = None, instance: str | None = None) -> None:
+        self.request_id = request_id
+        self.instance = instance
+
+    def success(self, data: Any, meta_extensions: dict[str, Any] | None = None) -> dict[str, Any]:
+        meta: dict[str, Any] = {"request_id": self.request_id}
+        if meta_extensions:
+            meta.update(meta_extensions)
+
+        content = SuccessContent(data=data, meta=Meta(**meta))
+        return content.model_dump(mode="json", exclude_none=True)
+
+    def error(self, exc: WebSocketException) -> dict[str, Any]:
+        type_url = getattr(exc, "type", "https://websocket.org/reference/close-codes/")
+        meta_extensions = getattr(exc, "meta_extensions", None)
+
+        meta: dict[str, Any] = {"request_id": self.request_id}
+        if meta_extensions:
+            meta.update(meta_extensions)
+
+        meta["success"] = False
+
+        content = ErrorContent(
+            type=type_url,
+            title="Websocket Error",
+            status=exc.code or 1011,
+            detail=getattr(exc, "reason", None) or "Websocket connection closed",
+            instance=str(self.instance) or None,
+            errors=getattr(exc, "errors", None),
+            meta=Meta(**meta),
+        )
+        return content.model_dump(exclude_none=True)
+
+
+def get_ws_response_factory(ws: WebSocket) -> WSResponseFactory:
+    return WSResponseFactory(getattr(ws.state, "request_id", None), ws.url.path or None)
