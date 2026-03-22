@@ -34,7 +34,13 @@ alembic upgrade head
 
 echo "🚀 Starting FastAPI..."
 if [ "${UVICORN_RELOAD:-false}" = "true" ]; then
-  exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+  exec uvicorn app.main:create_app \
+  --factory \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --reload \
+  --reload-dir /app \
+  --reload-use-polling
 fi
 
 exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
