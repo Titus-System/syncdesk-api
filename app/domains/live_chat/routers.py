@@ -1,53 +1,59 @@
+from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, WebSocket, WebSocketException
 from fastapi.websockets import WebSocketState
 
-from app.core.dependencies import ResponseFactoryDep
-from app.domains.live_chat.entities import ChatMessage
+from app.core.dependencies import WSResponseFactoryDep
 
-from .chat_manager import get_chat_manager
+from .chat_manager import ChatConnection, get_chat_manager
+from .dependencies import ChatServiceDep
+from .exceptions import InvalidMessageError
 
+
+def ensure_ws_request_id(ws: WebSocket) -> None:
+    if not hasattr(ws.state, "request_id"):
+        ws.state.request_id = ws.headers.get("x-request-id") or str(uuid4())
+
+
+chat_manager = get_chat_manager()
 live_chat_router = APIRouter()
 
 
-@live_chat_router.post("/open_room")
-def open_room(response: ResponseFactoryDep) -> JSONResponse:
-    room_id = uuid4()
-    get_chat_manager().open_room(room_id)
-    return response.success({"room_id": str(room_id)})
-
-
-@live_chat_router.get("/conversations/{id}")
+@live_chat_router.get("/conversations/{id}", tags=["Conversations"])
 async def get_conversation(id: UUID) -> None:
     # Load conversation history
     ...
 
 
-@live_chat_router.websocket("/{conversation_id}")
-async def connect_to_conversation(conversation_id: UUID) -> None:
-    # Connects to room or create if necessary
-    ...
-
-
-@live_chat_router.websocket("/room/{room_id}")
-async def chat_room(room_id: UUID, ws: WebSocket) -> None:
+@live_chat_router.websocket("/room/{conversation_id}")
+async def connect_to_conversation(
+    conversation_id: UUID,
+    ws: WebSocket,
+    _: Annotated[None, Depends(ensure_ws_request_id)],
+    service: ChatServiceDep,
+    response: WSResponseFactoryDep,
+) -> None:
     await ws.accept()
-    chat_manager = get_chat_manager()
-    await chat_manager.join_room(room_id, ws)
+    conn = ChatConnection(ws, response)
+    user_id = uuid4()
+    await service.join_chat_room(conversation_id, conn)
 
     try:
         while ws.client_state == WebSocketState.CONNECTED:
-            payload = await ws.receive_json()
-            message = ChatMessage.create(
-                conversation_id=room_id,
-                sender_id=room_id,
-                type="text",
-                content=payload["content"],
-            )
-            await chat_manager.broadcast(room_id, message)
-    except WebSocketDisconnect:
-        ...
+            try:
+                payload = await conn.receive_payload()
+                message = await service.handle_message(conversation_id, user_id, payload)
+
+                await chat_manager.broadcast(conversation_id, message)
+
+            except InvalidMessageError as e:
+                await conn.send_error(
+                    WebSocketException(
+                        code=1003,
+                        reason=str(e) or "",
+                    )
+                )
+
     finally:
-        await chat_manager.leave_room(room_id, ws)
+        await chat_manager.leave_room(conversation_id, conn)

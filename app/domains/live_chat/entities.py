@@ -1,14 +1,16 @@
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+from .exceptions import InvalidMessageError
 
 
 class ChatMessage(BaseModel):
     id: UUID
     conversation_id: UUID
-    sender_id: UUID
+    sender_id: UUID | Literal["System"]
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     type: Literal["text", "file"]
     content: str
@@ -20,23 +22,29 @@ class ChatMessage(BaseModel):
     def create(
         cls,
         conversation_id: UUID,
-        sender_id: UUID,
+        sender_id: UUID | Literal["System"],
         type: Literal["text", "file"],
         content: str,
         mime_type: str | None = None,
         filename: str | None = None,
         responding_to: UUID | None = None,
     ) -> "ChatMessage":
-        return cls(
-            id=uuid4(),
-            conversation_id=conversation_id,
-            sender_id=sender_id,
-            type=type,
-            content=content,
-            mime_type=mime_type,
-            filename=filename,
-            responding_to=responding_to,
-        )
+        try:
+            return cls(
+                id=uuid4(),
+                conversation_id=conversation_id,
+                sender_id=sender_id,
+                type=type,
+                content=content,
+                mime_type=mime_type,
+                filename=filename,
+                responding_to=responding_to,
+            )
+        except ValidationError as e:
+            raise InvalidMessageError(str(e)) from e
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
 
 
 class Conversation(BaseModel):

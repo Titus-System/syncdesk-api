@@ -1,3 +1,3 @@
-from .conversation_repository import ConversationRepository
+from .conversation_repository import ChatRepository
 
-__all__ = ["ConversationRepository"]
+__all__ = ["ChatRepository"]
