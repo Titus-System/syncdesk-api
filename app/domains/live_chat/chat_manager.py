@@ -103,7 +103,6 @@ class ChatManager:
 
     async def leave_room(self, room_id: UUID, conn: ChatConnection) -> None:
         await self.rooms[room_id].leave(conn)
-        await conn.close()
 
     async def broadcast(self, room_id: UUID, message: ChatMessage) -> None:
         await self.rooms[room_id].broadcast(message)
