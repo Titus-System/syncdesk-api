@@ -5,15 +5,22 @@ from uuid import UUID, uuid4
 from fastapi import WebSocket, WebSocketException
 
 from app.core.response import WSResponseFactory
+from app.domains.auth.entities import User, UserWithRoles
 from app.domains.live_chat.exceptions import InvalidMessageError
 
 from .entities import ChatMessage
 
 
 class ChatConnection:
-    def __init__(self, ws: WebSocket, response: WSResponseFactory) -> None:
+    def __init__(
+            self,
+            ws: WebSocket,
+            response: WSResponseFactory,
+            user: User | UserWithRoles | None = None
+        ) -> None:
         self.ws = ws
         self.response = response
+        self.user = user
 
     async def send(self, message: ChatMessage) -> None:
         await self.ws.send_json(self.response.success(message.to_payload()))
@@ -22,9 +29,10 @@ class ChatConnection:
         await self.ws.send_json(self.response.error(exc))
 
     async def room_join_confirmation(self, conversation_id: UUID) -> None:
+        content = f"Joined to chat room {conversation_id}"
         await self.send(
             ChatMessage.create(
-                conversation_id, "System", "text", f"Joined to chat room {conversation_id}"
+                conversation_id, "System", "text", content
             )
         )
 
@@ -55,6 +63,11 @@ class ChatRoom:
     async def join(self, conn: ChatConnection) -> None:
         self.connections.append(conn)
         await conn.room_join_confirmation(self.id)
+        content = f"{conn.user.name if conn.user else ""} Joined chat room."
+        message = ChatMessage.create(
+            self.id, "System", "text", content
+        )
+        await self.broadcast(message)
 
     async def leave(self, conn: ChatConnection) -> None:
         self.connections.remove(conn)

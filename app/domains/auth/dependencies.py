@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import Depends
+from fastapi import Depends, WebSocket, WebSocketException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.dependencies import JWTServiceDep, PasswordSecurityDep
@@ -106,6 +106,31 @@ async def get_current_user_session(
         raise AppHTTPException(status_code=401, detail=str(e)) from e
 
 
+def _extract_bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        raise WebSocketException(code=1008, reason="Missing Authorization header")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise WebSocketException(code=1008, reason="Invalid Authorization header")
+    return token
+
+
+async def get_current_user_session_ws(
+    ws: WebSocket,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> tuple[UserWithRoles, Session]:
+    token = _extract_bearer_token(ws.headers.get("Authorization"))
+    try:
+        return await service.load_current_user_session(token)
+    except (
+        InvalidCredentialsError,
+        InvalidSessionError,
+        SessionNotFoundError,
+        UserNotFoundError,
+    ) as e:
+        raise WebSocketException(code=1008, reason=str(e)) from e
+
+
 async def get_user_permissions(
     service: Annotated[UserService, Depends(get_user_service)],
     auth: Annotated[tuple[UserWithRoles, Session], Depends(get_current_user_session)],
@@ -114,7 +139,16 @@ async def get_user_permissions(
     return await service.get_user_permissions(user.id)
 
 
+async def get_user_permissions_ws(
+    service: Annotated[UserService, Depends(get_user_service)],
+    auth: Annotated[tuple[UserWithRoles, Session], Depends(get_current_user_session_ws)],
+) -> list[Permission]:
+    user, _session = auth
+    return await service.get_user_permissions(user.id)
+
+
 UserPermissionsDep = Annotated[list[Permission], Depends(get_user_permissions)]
+UserPermissionsWsDep = Annotated[list[Permission], Depends(get_user_permissions_ws)]
 
 
 def require_permission(permission_name: str) -> Any:
@@ -122,6 +156,16 @@ def require_permission(permission_name: str) -> Any:
         names = [p.name for p in permissions]
         if permission_name not in names:
             raise AppHTTPException(status_code=403, detail="Insufficient permissions")
+        return True
+
+    return Depends(checker)
+
+
+def require_permission_ws(permission_name: str) -> Any:
+    async def checker(permissions: UserPermissionsWsDep) -> bool:
+        names = [p.name for p in permissions]
+        if permission_name not in names:
+            raise WebSocketException(code=1008, reason="Insufficient permissions")
         return True
 
     return Depends(checker)
@@ -145,3 +189,6 @@ SessionRepoDep = Annotated[SessionRepository, Depends(get_session_repository)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 
 CurrentUserSessionDep = Annotated[tuple[UserWithRoles, Session], Depends(get_current_user_session)]
+CurrentUserSessionWsDep = Annotated[
+    tuple[UserWithRoles, Session], Depends(get_current_user_session_ws)
+]
