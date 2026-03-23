@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketException
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, WebSocketException
 from fastapi.websockets import WebSocketState
 
 from app.core.dependencies import WSResponseFactoryDep
@@ -37,7 +37,7 @@ async def connect_to_conversation(
     await ws.accept()
     conn = ChatConnection(ws, response)
     user_id = uuid4()
-    await service.join_chat_room(conversation_id, conn)
+    await chat_manager.join_room(conversation_id, conn)
 
     try:
         while ws.client_state == WebSocketState.CONNECTED:
@@ -47,6 +47,8 @@ async def connect_to_conversation(
 
                 await chat_manager.broadcast(conversation_id, message)
 
+            except WebSocketDisconnect:
+                break
             except InvalidMessageError as e:
                 await conn.send_error(
                     WebSocketException(
