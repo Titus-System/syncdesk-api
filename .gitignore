@@ -33,7 +33,8 @@ build/
 # Logs and temporary files
 *.log
 tmp/
-logs/
+logs/*
+!logs/__init__.py
 
 #cache
 .pytest_cache/
