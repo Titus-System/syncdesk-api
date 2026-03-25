@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, or_, select, update
+from sqlalchemy import delete, exists, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -248,6 +248,11 @@ class UserRepository:
         return [
             PermissionEntity(id=p.id, name=p.name, description=p.description) for p in permissions
         ]
+
+    async def user_exists(self, user_id: UUID) -> bool:
+        stmt = select(exists().where(UserModel.id == user_id))
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none() is not None
 
     def _to_entity(self, model: UserModel) -> UserEntity:
         return UserEntity(
