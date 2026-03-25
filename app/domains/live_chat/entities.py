@@ -2,14 +2,16 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, Field, ValidationError
+from pymongo import IndexModel
 
 from .exceptions import InvalidMessageError
 
 
 class ChatMessage(BaseModel):
     id: UUID
-    conversation_id: UUID
+    conversation_id: PydanticObjectId
     sender_id: UUID | Literal["System"]
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     type: Literal["text", "file"]
@@ -21,7 +23,7 @@ class ChatMessage(BaseModel):
     @classmethod
     def create(
         cls,
-        conversation_id: UUID,
+        conversation_id: PydanticObjectId,
         sender_id: UUID | Literal["System"],
         type: Literal["text", "file"],
         content: str,
@@ -47,47 +49,31 @@ class ChatMessage(BaseModel):
         return self.model_dump(mode="json", exclude_none=True)
 
 
-class Conversation(BaseModel):
-    id: UUID
-    atendimento_id: UUID
-    participants: list[UUID]
-    created_at: datetime
+class Conversation(Document):
+    session_service_id: PydanticObjectId
+    agent_id: UUID | None
+    client_id: UUID
     sequential_index: int = 0
     parent_id: UUID | None = None
-    children_ids: list[UUID] | None = None
-    closed_at: datetime | None = None
-    messages: list[ChatMessage]
+    children_ids: list[UUID] = []
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
+    messages: list[ChatMessage] = []
 
-    @classmethod
-    def create(
-        cls,
-        atendimento_id: UUID,
-        participants: list[UUID],
-        sequential_index: int = 0,
-        parent_id: UUID | None = None,
-    ) -> "Conversation":
-        return cls(
-            id=uuid4(),
-            atendimento_id=atendimento_id,
-            participants=participants,
-            created_at=datetime.now(UTC),
-            sequential_index=sequential_index,
-            parent_id=parent_id,
-            children_ids=[],
-            messages=[],
-        )
+    class Settings:
+        name = "chats"
+        indexes = [IndexModel([("service_session_id", 1), ("sequential_index", 1)], unique=True)]
 
-    def add_message(self, message: ChatMessage) -> None:
-        self.messages.append(message)
+    def is_opened(self) -> bool:
+        return self.finished_at is None
 
-    def get_message(self, message_id: UUID) -> ChatMessage | None:
-        for m in self.messages:
-            if m.id == message_id:
-                return m
-        return None
+    def participants(self) -> tuple[UUID, ...]:
+        if self.agent_id is None:
+            return (self.client_id,)
+        return (self.client_id, self.agent_id)
 
-    def close(self) -> None:
-        self.closed_at = datetime.now(UTC)
 
-    def is_closed(self) -> bool:
-        return self.closed_at is not None
+class ChatParticipants(BaseModel):
+    id: PydanticObjectId
+    client_id: UUID
+    agent_id: UUID | None

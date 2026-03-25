@@ -1,15 +1,17 @@
 from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import uuid4
 
+from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, WebSocketException
+from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketState
 
 from app.core.dependencies import WSResponseFactoryDep
-from app.domains.auth.dependencies import CurrentUserSessionWsDep, require_permission_ws
+from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
 
-from .chat_manager import ChatConnection, get_chat_manager
-from .dependencies import ChatServiceDep
-from .exceptions import InvalidMessageError
+from ..chat_manager import ChatConnection, get_chat_manager
+from ..dependencies import ConversationServiceDep
+from ..exceptions import InvalidMessageError
 
 
 def ensure_ws_request_id(ws: WebSocket) -> None:
@@ -18,61 +20,65 @@ def ensure_ws_request_id(ws: WebSocket) -> None:
 
 
 chat_manager = get_chat_manager()
-live_chat_router = APIRouter()
+chat_router = APIRouter()
 
 
-@live_chat_router.get("/conversations/{id}", tags=["Conversations"])
-async def get_conversation(id: UUID) -> None:
-    # Load conversation history
-    ...
-
-
-@live_chat_router.websocket(
-    "/room/{conversation_id}",
-    dependencies=[require_permission_ws("session:create")]
+@chat_router.websocket(
+    "/room/{chat_id}", dependencies=[require_permission_ws("chat:add_message")]
 )
 async def connect_to_conversation(
-    conversation_id: UUID,
+    chat_id: PydanticObjectId,
     ws: WebSocket,
     _: Annotated[None, Depends(ensure_ws_request_id)],
     auth: CurrentUserSessionWsDep,
-    service: ChatServiceDep,
+    service: ConversationServiceDep,
     response: WSResponseFactoryDep,
 ) -> None:
     user = auth[0]
 
+    chat = await service.get_by_id(chat_id)
+
+    if chat is None or not chat.is_opened() or user.id not in chat.participants():
+        await ws.send_denial_response(
+            JSONResponse(
+                status_code=403,
+                content={"detail": "Chat does not exist or user is not a participant."},
+            )
+        )
+
     await ws.accept()
     conn = ChatConnection(ws, response, user)
-    await chat_manager.join_room(conversation_id, conn)
+
+    await chat_manager.join_room(chat_id, conn)
 
     try:
         while ws.client_state == WebSocketState.CONNECTED:
             try:
                 payload = await conn.receive_payload()
-                message = await service.handle_message(conversation_id, user.id, payload)
+                message = await service.handle_message(chat_id, user.id, payload)
 
-                await chat_manager.broadcast(conversation_id, message)
+                await service.add_message_to_conversation(chat_id, message)
+
+                await chat_manager.broadcast(chat_id, message)
 
             except WebSocketDisconnect:
                 break
             except InvalidMessageError as e:
-                await conn.send_error(
-                    WebSocketException(
-                        code=1003,
-                        reason=str(e) or "",
-                    )
-                )
-
+                await conn.send_error(WebSocketException(code=1003, reason=str(e) or ""))
+            except ValueError as e:
+                await conn.send_error(WebSocketException(code=1008, reason=str(e)))
+            except RuntimeError as e:
+                await conn.send_error(WebSocketException(code=1011, reason=str(e)))
     finally:
-        await chat_manager.leave_room(conversation_id, conn)
+        await chat_manager.leave_room(chat_id, conn)
 
 
-@live_chat_router.websocket("/test/room/{conversation_id}")
+@chat_router.websocket("/test/room/{conversation_id}")
 async def connect_to_conversation_test(
-    conversation_id: UUID,
+    conversation_id: PydanticObjectId,
     ws: WebSocket,
     _: Annotated[None, Depends(ensure_ws_request_id)],
-    service: ChatServiceDep,
+    service: ConversationServiceDep,
     response: WSResponseFactoryDep,
 ) -> None:
     await ws.accept()

@@ -4,21 +4,21 @@ from fastapi import Depends
 
 from app.db.mongo.dependencies import MongoSessionDep
 
-from .repositories import ChatRepository
-from .services.chat_service import ChatService
+from .repositories import ConversationRepository
+from .services import ConversationService
 
 
-def get_chat_repository(db: MongoSessionDep) -> ChatRepository:
-    return ChatRepository(db)
+def get_conversation_repo(db: MongoSessionDep) -> ConversationRepository:
+    return ConversationRepository(db)
 
 
-ChatRepositoryDep = Annotated[ChatRepository, Depends(get_chat_repository)]
+ConversationRepositoryDep = Annotated[ConversationRepository, Depends(get_conversation_repo)]
 
 
-def get_chat_service(
-    chat_repo: Annotated[ChatRepository, Depends(get_chat_repository)]
-) -> ChatService:
-    return ChatService(chat_repo)
+def get_conversation_service(
+    chat_repo: Annotated[ConversationRepository, Depends(get_conversation_repo)],
+) -> ConversationService:
+    return ConversationService(chat_repo)
 
 
-ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
+ConversationServiceDep = Annotated[ConversationService, Depends(get_conversation_service)]
