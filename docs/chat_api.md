@@ -1,16 +1,71 @@
-## WebSocket Chat Endpoint
+## Conversation vs Chat
 
-**URL**
+* **Conversation**: A conversation is a persistent record of an interaction between a client and an agent. It contains metadata such as participants, timestamps, and message history. Conversations are stored in the database and have a unique `chat_id` (ObjectId).
+
+* **Chat**: A chat refers to the real-time exchange of messages that occurs within a conversation. The chat happens over a WebSocket connection that is associated with a specific conversation (`chat_id`).
+
+> The conversation_id is used to validate and authorize access to the WebSocket chat room. Only participants of the conversation can connect to the corresponding chat room and exchange messages.
+
+> For the sake of simplicity, the conversation_id is the same as the chat_id, since the chat rooms are not persisted in the database and are directly tied to the conversation records.
+
+
+## Starting a Chat
+
+Before connecting to the WebSocket, the user **must create a conversation**. The `chat_id` used in the WebSocket URL corresponds to the ID of the open conversation.
+
+### 1. Create a conversation
+
+Send an HTTP `POST` request to `/api/live_chat/conversation/` with the following payload:
+
+```json
+{
+  "service_session_id": "<ObjectId of the service session>",
+  "client_id": "<UUID of the client user>",
+  "agent_id": "<UUID of the agent>", // optional
+  "parent_id": "<ObjectId of the parent conversation>", // optional
+  "sequential_index": 0 // optional, used for threading/scaled conversations
+}
+```
+
+**Success response:**
+
+```json
+{
+  "data": {
+    "id": "6601e2b8e1b2c8a1f0a1b2c3", // <--- chat_id/conversation_id
+    "service_session_id": "65f0e2b8e1b2c8a1f0a1b2c2",
+    "client_id": "b1e2b8e1-b2c8-a1f0-a1b2-c3d4e5f6a7b8",
+    "agent_id": "c2e3b9e2-b3c9-a2f1-b2c3-d4e5f6a7b8c9",
+    "sequential_index": 0,
+    "parent_id": null,
+    "children_ids": [],
+    "started_at": "2026-03-25T12:00:00Z",
+    "finished_at": null
+  },
+  "meta": {
+    "timestamp": "2026-03-25T21:58:35.229069+00:00",
+    "success": true,
+    "request_id": "e44ca66a-b86c-46fe-89cb-e82752ab3cdc"
+  }
+}
+```
+
+The `data.id` field is the `conversation_id` (ObjectId) that will be used to open the WebSocket.
+
+### 2. Connect to the WebSocket
+
+Open the connection to:
 
 ```
-ws://<host>/api/live_chat/room/{conversation_id}
+ws://<host>/api/live_chat/room/{chat_id}
 ```
+> Use the `conversation_id` obtained in step 1 as the `{chat_id}` in the URL.
+> 
+> The user will only be able to connect if they are a participant in the conversation (client or agent).
 
-**Description**
+### 3. Send and receive messages
 
-Establishes a persistent WebSocket connection to send and receive real-time chat messages within a specific conversation.
-
-For the sake of simplicity, this endpoint uses the conversation_id to identify a chat room.
+After connecting, send messages according to the schema documented below. All messages and responses use the `chat_id` obtained in step 1.
 
 ---
 
@@ -21,7 +76,7 @@ For the sake of simplicity, this endpoint uses the conversation_id to identify a
 The client opens a WebSocket connection to:
 
 ```
-/api/live_chat/room/{conversation_id}
+/api/live_chat/room/{chat_id}
 ```
 
 If the conversation exists (or is created implicitly), the server registers the client in the room and begins streaming messages.
@@ -33,14 +88,15 @@ Example:
 ```json
 {
   "data": {
-    "id": "uuid",
-    "conversation_id": "4634862c-af46-4bcd-b793-d39e4e37bb12",
+    "id": "6601e2b8e1b2c8a1f0a1b2c3",
+    "conversation_id": "6601e2b8e1b2c8a1f0a1b2c3",
     "sender_id": "System",
     "timestamp": "2026-03-22T01:53:44Z",
     "type": "text",
     "content": "Joined to chat room 4634862c-af46-4bcd-b793-d39e4e37bb12"
   },
   "meta": {
+    "timestamp": "2026-03-25T21:58:35.229069+00:00",
     "success": true,
     "request_id": "request-id"
   }
@@ -49,13 +105,7 @@ Example:
 
 ---
 
-## Message Format
-
-All messages exchanged through this connection are JSON.
-
----
-
-## Client → Server Messages
+### 2. Client → Server Messages
 
 The client sends chat messages using the following schema:
 
@@ -65,9 +115,22 @@ The client sends chat messages using the following schema:
   "content": "Hello world",
   "mime_type": "text/plain",
   "filename": "optional-file-name.txt",
-  "responding_to": "optional-message-uuid"
+  "responding_to": "optional-message-objectid"
 }
 ```
+
+> If type or content are missing, the server responds with an error message: "Payload missing required fields: type, content".
+>
+> if the payload contains extra fields, the server ignores them and processes the message as normal.
+> 
+> if type is not "text" or "file", the server responds with an error message: "Input should be 'text' or 'file'".
+> 
+> if type is "file", the content field should contain the file data encoded as a base64 string, and the mime_type field should specify the MIME type of the file (e.g., "application/pdf"). The filename field is optional but can be included to provide the original name of the file.
+> If the filename is not provided for a file message, the server assigns a default filename.
+> 
+> If type is "text", the mime_type and filename field must not be included. If they are included, the server responds with an error message: "Invalid payload for text message. mime_type and filename fields are not allowed for text messages".
+>
+
 
 ### Fields
 
@@ -77,7 +140,7 @@ The client sends chat messages using the following schema:
 | content | string | yes      | Message body                                     |
 | mime_type | string | no       | MIME type of the content (e.g., `text/plain`)    |
 | filename | string | no       | Original file name if the message contains a file |
-| responding_to | string | no       | UUID of the message being replied to (if applicable) |
+| responding_to | string | no       | ObjectId (24-char hex) of the message being replied to (if applicable) |
 
 ---
 
@@ -119,25 +182,45 @@ Sent when a message is accepted and broadcast to the room.
 ```json
 {
   "data": {
-    "id": "c3684603-7026-4366-85fa-3619ce2a0fcd",
-    "conversation_id": "4634862c-af46-4bcd-b793-d39e4e37bb12",
-    "sender_id": "user-123",
+    "id": "6601e2b8e1b2c8a1f0a1b2c3",
+    "conversation_id": "6601e2b8e1b2c8a1f0a1b2c3",
+    "sender_id": "uuid-of-sender",
     "timestamp": "2026-03-22T01:53:44.106614Z",
     "type": "text",
-    "content": "Hello world"
+    "content": "Hello world",
+    "mime_type": null,
+    "filename": null,
+    "responding_to": null
   },
   "meta": {
     "timestamp": "2026-03-22T01:53:44.106753+00:00",
     "success": true,
-    "request_id": "request-id"
+    "request_id": "request-uuid"
   }
 }
 ```
+
+### Fields
+
+| Field           | Type   | Description                                      |
+| --------------- | ------ | ------------------------------------------------ |
+| id              | string | Unique identifier for the message (ObjectId)     |
+| conversation_id | string | Identifier for the conversation (ObjectId)       |
+| sender_id       | string | Identifier for the sender (UUID)                 |
+| timestamp       | string | ISO 8601 timestamp of when the message was sent   |
+| type            | string | Type of message (e.g., "text", "file") |
+| content         | string | The actual message content                       |
+| meta.timestamp  | string | ISO 8601 timestamp of when the server processed the message |
+| meta.success    | boolean | Indicates if the message was successfully processed |
+| meta.request_id | string | Optional identifier for tracing the request (UUID) |
+
 
 ### Notes
 
 * The message is broadcast to **all clients in the room**, including the sender.
 * `request_id` is attributed to the conenction on the initial handshake.
+* `sender_id` is the UUID of the client that sent the message. For system messages (e.g., join confirmation), `sender_id` is set to "System".
+* The user id is taken at the initial connection handshake and associated with the WebSocket connection. All messages sent through that connection are attributed to that user id.
 
 ---
 
@@ -151,10 +234,10 @@ Sent when the client sends an invalid payload or violates the protocol.
   "title": "Websocket Error",
   "status": 1003,
   "detail": "Invalid chat message payload. Payload missing required fields: type, content",
-  "instance": "/api/live_chat/room/{conversation_id}",
+  "instance": "/api/live_chat/room/{chat_id}",
   "meta": {
     "success": false,
-    "request_id": "optional-request-id"
+    "request_id": "optional-request-uuid"
   }
 }
 ```
@@ -185,9 +268,9 @@ The connection **remains open** after recoverable errors such as invalid payload
 ```json
 {
   "data": {
-    "id": "uuid",
-    "conversation_id": "uuid",
-    "sender_id": "user-123",
+    "id": "6601e2b8e1b2c8a1f0a1b2c3",
+    "conversation_id": "6601e2b8e1b2c8a1f0a1b2c3",
+    "sender_id": "uuid-of-sender",
     "timestamp": "2026-03-22T01:53:44Z",
     "type": "text",
     "content": "Hi everyone"

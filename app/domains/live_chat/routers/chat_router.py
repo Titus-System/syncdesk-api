@@ -5,6 +5,7 @@ from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, WebSocketException
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketState
+from pydantic import ValidationError
 
 from app.core.dependencies import WSResponseFactoryDep
 from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
@@ -58,7 +59,7 @@ async def connect_to_conversation(
         while ws.client_state == WebSocketState.CONNECTED:
             try:
                 payload = await conn.receive_payload()
-                message = await service.handle_message(chat_id, user.id, payload)
+                message = service.handle_message(chat_id, user.id, payload)
 
                 await service.add_message_to_conversation(chat_id, message)
 
@@ -66,7 +67,7 @@ async def connect_to_conversation(
 
             except WebSocketDisconnect:
                 break
-            except InvalidMessageError as e:
+            except (InvalidMessageError, ValidationError) as e:
                 await conn.send_error(WebSocketException(code=1003, reason=str(e) or ""))
             except ValueError as e:
                 await conn.send_error(WebSocketException(code=1008, reason=str(e)))
@@ -97,7 +98,7 @@ async def connect_to_conversation_test(
         while ws.client_state == WebSocketState.CONNECTED:
             try:
                 payload = await conn.receive_payload()
-                message = await service.handle_message(conversation_id, user_id, payload)
+                message = service.handle_message(conversation_id, user_id, payload)
 
                 await chat_manager.broadcast(conversation_id, message)
 
