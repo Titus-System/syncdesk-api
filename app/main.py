@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from beanie import init_beanie
 from fastapi import FastAPI
 
 from app.core import (
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await init_postgres_db()
 
         await mongo_db.connect()
+        await init_beanie(database=mongo_db.get_db(), document_models=[])  # type: ignore
         yield
 
     finally:
