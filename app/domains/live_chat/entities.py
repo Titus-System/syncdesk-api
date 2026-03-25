@@ -50,15 +50,15 @@ class ChatMessage(BaseModel):
 
 
 class Conversation(Document):
-    session_service_id: PydanticObjectId
+    service_session_id: PydanticObjectId
     agent_id: UUID | None
     client_id: UUID
     sequential_index: int = 0
-    parent_id: UUID | None = None
-    children_ids: list[UUID] = []
+    parent_id: PydanticObjectId | None = None
+    children_ids: list[PydanticObjectId] = Field(default_factory=list[PydanticObjectId])
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
-    messages: list[ChatMessage] = []
+    messages: list[ChatMessage] = Field(default_factory=list[ChatMessage])
 
     class Settings:
         name = "chats"

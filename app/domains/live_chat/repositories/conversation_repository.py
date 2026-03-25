@@ -25,7 +25,7 @@ class ConversationRepository:
     async def create(self, dto: CreateConversationDTO) -> Conversation:
         try:
             c = Conversation(
-                session_service_id=dto.service_session_id,
+                service_session_id=dto.service_session_id,
                 agent_id=dto.agent_id,
                 client_id=dto.client_id,
                 sequential_index=dto.sequential_index or 0,
@@ -46,7 +46,7 @@ class ConversationRepository:
         self, service_session_id: PydanticObjectId
     ) -> list[Conversation]:
         return await Conversation.find(
-            Conversation.session_service_id == service_session_id
+            Conversation.service_session_id == service_session_id
         ).to_list()
 
     async def update(self, conversation: Conversation) -> Conversation | None:
@@ -73,4 +73,4 @@ class ConversationRepository:
         conversation = await Conversation.get(conversation_id)
         if not conversation:
             raise ResourceNotFoundError("Conversation", str(conversation_id))
-        await conversation.update({"$set": {"agent_id": str(agent_id)}})
+        await conversation.update({"$set": {"agent_id": agent_id}})

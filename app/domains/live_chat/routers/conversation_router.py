@@ -16,7 +16,7 @@ conversation_router = APIRouter()
 
 
 @conversation_router.get(
-    "/{session_service_id}",
+    "/{service_session_id}",
     tags=["Conversations"],
     dependencies=[require_permission("chat:read")]
 )
@@ -81,7 +81,7 @@ async def set_conversation_agent(
             )
 
         await service.attribute_agent(chat_id, agent_id)
-        return response.success(data=None, status_code=status.HTTP_201_CREATED)
+        return response.success(data=None, status_code=status.HTTP_200_OK)
 
     except ResourceNotFoundError as err:
         raise AppHTTPException(

@@ -4,9 +4,10 @@ from typing import Any, cast
 from beanie import PydanticObjectId
 from fastapi import WebSocket, WebSocketException
 
+from app.core.logger import get_logger
 from app.core.response import WSResponseFactory
 from app.domains.auth.entities import User, UserWithRoles
-from app.domains.live_chat.exceptions import InvalidMessageError
+from app.domains.live_chat.exceptions import ChatRoomNotFoundError, InvalidMessageError
 
 from .entities import ChatMessage
 
@@ -61,7 +62,8 @@ class ChatRoom:
         await self.broadcast(message)
 
     async def leave(self, conn: ChatConnection) -> None:
-        self.connections.remove(conn)
+        if conn in self.connections:
+            self.connections.remove(conn)
         await conn.close()
 
     async def close(self) -> None:
@@ -73,21 +75,30 @@ class ChatRoom:
 
     def _drop_dead_connections(self) -> None:
         for ws in self.dead:
-            self.connections.remove(ws)
+            if ws in self.connections:
+                self.connections.remove(ws)
         self.dead = []
 
     async def broadcast(self, message: ChatMessage) -> None:
         for conn in self.connections:
             try:
                 await conn.send(message)
-            except Exception:
+            except (WebSocketException, RuntimeError, OSError):
                 self.dead.append(conn)
+            except Exception:
+                # Keep unexpected failures visible instead of silently dropping them.
+                get_logger().error(
+                    f"Unexpected error broadcasting message {message.id} in room {self.id}.",
+                    exc_info=True,
+                )
+                raise
         self._drop_dead_connections()
 
 
 class ChatManager:
     def __init__(self) -> None:
         self.rooms: dict[PydanticObjectId, ChatRoom] = {}
+        self.logger = get_logger()
 
     def open_room(self, id: PydanticObjectId | None) -> PydanticObjectId:
         if id is None:
@@ -97,19 +108,36 @@ class ChatManager:
         return room.id
 
     async def close_room(self, room_id: PydanticObjectId) -> None:
-        await self.rooms[room_id].close()
-        del self.rooms[room_id]
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            return
+        await room.close()
+        self.rooms.pop(room_id, None)
 
     async def join_room(self, room_id: PydanticObjectId, conn: ChatConnection) -> None:
         if room_id not in self.rooms:
             self.open_room(room_id)
-        await self.rooms[room_id].join(conn)
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            raise ChatRoomNotFoundError(f"room_id={room_id}")
+        await room.join(conn)
 
     async def leave_room(self, room_id: PydanticObjectId, conn: ChatConnection) -> None:
-        await self.rooms[room_id].leave(conn)
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            return
+        await room.leave(conn)
+        if room.is_empty():
+            self.rooms.pop(room_id, None)
 
     async def broadcast(self, room_id: PydanticObjectId, message: ChatMessage) -> None:
-        await self.rooms[room_id].broadcast(message)
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            self.logger.warning(
+                f"Broadcast dropped: room {room_id} was not found for message {message.id}."
+            )
+            return
+        await room.broadcast(message)
 
 
 @lru_cache

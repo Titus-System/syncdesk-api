@@ -11,7 +11,7 @@ from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
 
 from ..chat_manager import ChatConnection, get_chat_manager
 from ..dependencies import ConversationServiceDep
-from ..exceptions import InvalidMessageError
+from ..exceptions import ChatRoomNotFoundError, InvalidMessageError
 
 
 def ensure_ws_request_id(ws: WebSocket) -> None:
@@ -45,13 +45,16 @@ async def connect_to_conversation(
                 content={"detail": "Chat does not exist or user is not a participant."},
             )
         )
+        return
 
     await ws.accept()
     conn = ChatConnection(ws, response, user)
-
-    await chat_manager.join_room(chat_id, conn)
+    joined = False
 
     try:
+        await chat_manager.join_room(chat_id, conn)
+        joined = True
+
         while ws.client_state == WebSocketState.CONNECTED:
             try:
                 payload = await conn.receive_payload()
@@ -69,8 +72,12 @@ async def connect_to_conversation(
                 await conn.send_error(WebSocketException(code=1008, reason=str(e)))
             except RuntimeError as e:
                 await conn.send_error(WebSocketException(code=1011, reason=str(e)))
+    except ChatRoomNotFoundError as e:
+        await conn.send_error(WebSocketException(code=1011, reason=str(e)))
+        await conn.close(code=1011, reason="Chat room unavailable")
     finally:
-        await chat_manager.leave_room(chat_id, conn)
+        if joined:
+            await chat_manager.leave_room(chat_id, conn)
 
 
 @chat_router.websocket("/test/room/{conversation_id}")

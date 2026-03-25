@@ -9,9 +9,4 @@ class CreateConversationDTO(BaseModel):
     agent_id: UUID | None = None
     client_id: UUID
     sequential_index: int = 0
-    parent_id: UUID | None = None
-
-
-class SetConversationAgentDTO(BaseModel):
-    chat_id: PydanticObjectId
-    agent_id: UUID
+    parent_id: PydanticObjectId | None = None
