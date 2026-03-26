@@ -50,7 +50,10 @@ async def create_conversation(
                 detail="User cannot open a chat in the name of another user.",
             )
         chat = await service.create(dto)
-        return response.success(data=chat.model_dump(), status_code=status.HTTP_201_CREATED)
+        return response.success(
+            data=chat.model_dump(mode="json"),
+            status_code=status.HTTP_201_CREATED
+        )
 
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(

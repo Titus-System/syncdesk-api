@@ -15,7 +15,7 @@ Before connecting to the WebSocket, the user **must create a conversation**. The
 
 ### 1. Create a conversation
 
-Send an HTTP `POST` request to `/api/live_chat/conversation/` with the following payload:
+Send an HTTP `POST` request to `/api/conversations/` with the following payload:
 
 ```json
 {

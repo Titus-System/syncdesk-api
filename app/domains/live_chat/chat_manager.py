@@ -39,7 +39,7 @@ class ChatConnection:
             if not isinstance(payload, dict):
                 raise InvalidMessageError("Payload must be a JSON object.")
         except ValueError as err:
-            raise InvalidMessageError("Payload must be valid JSON.") from err
+            raise InvalidMessageError(f"Payload error: {repr(err)}") from err
 
         return cast(dict[str, Any], payload)
 

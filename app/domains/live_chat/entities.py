@@ -61,7 +61,7 @@ class Conversation(Document):
     messages: list[ChatMessage] = Field(default_factory=list[ChatMessage])
 
     class Settings:
-        name = "chats"
+        name = "conversations"
         indexes = [IndexModel([("service_session_id", 1), ("sequential_index", 1)], unique=True)]
 
     def is_opened(self) -> bool:
