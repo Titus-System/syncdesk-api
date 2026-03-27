@@ -58,7 +58,7 @@ async def seed_permissions(session: AsyncSession) -> None:
 
 async def seed_role_permissions(session: AsyncSession) -> None:
     relations = {
-        "admin": ["user:%", "role:%", "permission:%"],
+        "admin": ["user:%", "role:%", "permission:%", "chat:%"],
         "user": ["session:%", "chat:%"],
         "agent": ["session:%", "chat:%"],
     }

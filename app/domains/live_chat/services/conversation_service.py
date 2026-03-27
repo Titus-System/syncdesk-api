@@ -4,6 +4,7 @@ from uuid import UUID
 from beanie import PydanticObjectId
 
 from app.domains.live_chat.entities import ChatMessage, ChatParticipants, Conversation
+from app.domains.live_chat.exceptions import ParentConversationNotFoundError
 from app.domains.live_chat.schemas import CreateConversationDTO, IncomingMessage
 
 from ..repositories import ConversationRepository
@@ -28,6 +29,12 @@ class ConversationService:
         )
 
     async def create(self, dto: CreateConversationDTO) -> Conversation:
+        if dto.parent_id is not None:
+            parent_exists = await self.repo.conversation_exists(dto.parent_id)
+            if not parent_exists:
+                raise ParentConversationNotFoundError(
+                    f"Conversation of id {dto.parent_id} was not found."
+                )
         return await self.repo.create(dto)
 
     async def get_by_id(self, chat_id: PydanticObjectId) -> Conversation | None:

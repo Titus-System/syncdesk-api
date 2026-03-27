@@ -16,7 +16,7 @@ conversation_router = APIRouter()
 
 
 @conversation_router.get(
-    "/{service_session_id}",
+    "/service_session/{service_session_id}",
     tags=["Conversations"],
     dependencies=[require_permission("chat:read")]
 )
@@ -27,7 +27,7 @@ async def get_conversations(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     chats = await service.get_chats_from_service_session(service_session_id)
-    data = [chat.model_dump() for chat in chats]
+    data = [chat.model_dump(mode="json") for chat in chats]
     return response.success(data=data, status_code=status.HTTP_200_OK)
 
 

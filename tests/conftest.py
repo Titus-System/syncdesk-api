@@ -3,8 +3,11 @@ from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
 import pytest
+import pytest_asyncio
+from beanie import init_beanie
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -13,10 +16,19 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
-from app.db.postgres.base import Base
 from app.db.mongo.dependencies import get_mongo_session
+from app.db.postgres.base import Base
 from app.db.postgres.dependencies import get_postgres_session
+from app.domains.live_chat.entities import Conversation
 from app.main import create_app
+
+
+# Beanie initialization fixture
+@pytest_asyncio.fixture(autouse=True)
+async def init_beanie_for_tests(mongo_db_conn: AsyncIOMotorDatabase[dict[str,Any]]):
+    await init_beanie(database=mongo_db_conn, document_models=[Conversation])
+    yield
+    # No teardown needed for Beanie
 
 settings = get_settings()
 
@@ -68,6 +80,21 @@ async def db_session(async_engine: AsyncEngine) -> AsyncSession | Any:
         await trans.rollback()
 
 
+@pytest.fixture
+def mongo_client() -> AsyncIOMotorClient[dict[str,Any]]:
+    client: AsyncIOMotorClient[dict[str,Any]] = AsyncIOMotorClient(settings.test_mongo_bd_url)
+    return client
+
+
+@pytest.fixture
+async def mongo_db_conn(
+    mongo_client: AsyncIOMotorClient[dict[str,Any]]
+) -> AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]:
+    db: AsyncIOMotorDatabase[dict[str,Any]] = mongo_client.get_default_database()
+    yield db
+    mongo_client.close()
+
+
 @pytest.fixture(scope="module")
 def app() -> FastAPI:
     app = create_app()
@@ -75,29 +102,21 @@ def app() -> FastAPI:
 
 
 @pytest.fixture
-async def client(app: FastAPI, db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def client(
+    app: FastAPI,
+    db_session: AsyncSession,
+    mongo_db_conn: AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]
+) -> AsyncGenerator[AsyncClient, None]:
     """Provide an HTTPX AsyncClient connected to the FastAPI test app."""
 
-    class _FakeMongoAdmin:
-        async def command(self, _command: str) -> dict[str, int]:
-            return {"ok": 1}
-
-    class _FakeMongoClient:
-        def __init__(self) -> None:
-            self.admin = _FakeMongoAdmin()
-
-    class _FakeMongoDb:
-        def __init__(self) -> None:
-            self.client = _FakeMongoClient()
-
-    async def _override_session() -> AsyncGenerator[AsyncSession, None]:
+    async def _override_postgres() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
-    def _override_mongo_session() -> _FakeMongoDb:
-        return _FakeMongoDb()
+    async def _override_mongo() -> AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]:
+        yield mongo_db_conn
 
-    app.dependency_overrides[get_postgres_session] = _override_session
-    app.dependency_overrides[get_mongo_session] = _override_mongo_session
+    app.dependency_overrides[get_postgres_session] = _override_postgres
+    app.dependency_overrides[get_mongo_session] = _override_mongo
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as async_client:
         yield async_client

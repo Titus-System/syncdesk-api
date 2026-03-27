@@ -12,6 +12,7 @@ from pymongo.errors import (
 
 from app.core.decorators import require_dto
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
+from app.domains.live_chat.exceptions import ParentConversationNotFoundError
 
 from ..entities import ChatMessage, ChatParticipants, Conversation
 from ..schemas import CreateConversationDTO
@@ -24,6 +25,11 @@ class ConversationRepository:
     @require_dto(CreateConversationDTO)
     async def create(self, dto: CreateConversationDTO) -> Conversation:
         try:
+            if dto.parent_id is not None:
+                parent = await self.conversation_exists(dto.parent_id)
+                if not parent:
+                    raise ParentConversationNotFoundError(f"Invalid parent_id {dto.parent_id}.")
+
             c = Conversation(
                 service_session_id=dto.service_session_id,
                 agent_id=dto.agent_id,
@@ -48,6 +54,13 @@ class ConversationRepository:
         return await Conversation.find(
             Conversation.service_session_id == service_session_id
         ).to_list()
+
+    async def conversation_exists(self, id: PydanticObjectId) -> bool:
+        doc = await self.db["conversations"].find_one(
+            {"_id": id},
+            {"_id": 1}
+        )
+        return doc is not None
 
     async def update(self, conversation: Conversation) -> Conversation | None:
         return cast(Conversation | None, await conversation.save())

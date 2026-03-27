@@ -67,13 +67,27 @@ class Settings(BaseSettings):
     MONGO_DB: str = "syncdesk_db"
 
     @property
+    def mongo_db_test(self) -> str:
+        return f"{self.MONGO_DB}_test"
+
+    @property
     def mongo_database_url(self) -> str:
+        if self.MONGO_USER and self.MONGO_PASSWORD:
+            return (
+                f"mongodb://{self.MONGO_USER}:{self.MONGO_PASSWORD}@"
+                f"{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}"
+            )
+        return f"mongodb://{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}"
+
+    @property
+    def test_mongo_bd_url(self) -> str:
         if self.MONGO_USER and self.MONGO_PASSWORD:
             return (
                 f"mongodb://{self.MONGO_USER}:{self.MONGO_PASSWORD}@"
                 f"{self.MONGO_HOST}:{self.MONGO_PORT}/{self.MONGO_DB}"
             )
-        return f"mongodb://{self.MONGO_HOST}:{self.MONGO_PORT}/{self.MONGO_DB}"
+        return f"mongodb://{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}"
+
 
     # JWT variables
     JWT_SECRET_KEY: str = "your_jwt_secret_key"

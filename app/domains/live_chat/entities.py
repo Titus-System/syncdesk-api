@@ -74,6 +74,6 @@ class Conversation(Document):
 
 
 class ChatParticipants(BaseModel):
-    id: PydanticObjectId
+    id: PydanticObjectId = Field(alias="_id")
     client_id: UUID
     agent_id: UUID | None

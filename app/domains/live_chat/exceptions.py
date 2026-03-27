@@ -17,3 +17,11 @@ class InvalidMessageError(Exception):
 class CreateChatRoomError(Exception):
     def __init__(self, message: str | None = None) -> None:
         super().__init__(f"Server could no ceate chat room. {message or ''}")
+
+
+class ParentConversationNotFoundError(Exception):
+    def __init__(
+        self, message: str | None = None, errors: list[dict[str, Any]] | None = None
+    ) -> None:
+        self.errors = errors
+        super().__init__("Parent Conversation does not exist.")
