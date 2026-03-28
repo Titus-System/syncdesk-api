@@ -137,6 +137,109 @@ class TestConversationRepository:
 
 
     @pytest.mark.asyncio
+    async def test_get_paginated_messages(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        self.create_dto.sequential_index = 0
+        conversation_ids: list[PydanticObjectId] = []
+        for i in range(10):
+            c = await conversation_repo.create(self.create_dto)
+            assert c is not None
+            conversation_ids.append(c.id)
+            for j in range(5):
+                message = ChatMessage.create(
+                    c.id, self.create_dto.client_id, "text", f"conversation {i}, message {j}"
+                )
+                await conversation_repo.add_message(c.id, message)
+            self.create_dto.sequential_index += 1
+        self.create_dto.sequential_index = 0
+
+        page1 = await conversation_repo.get_paginated_messages(
+            self.create_dto.service_session_id, 1, 10
+        )
+
+        assert page1 is not None
+        assert page1.total == 50
+        assert page1.page == 1
+        assert page1.limit == 10
+        assert page1.has_next is True
+        assert len(page1.messages) == 10
+
+        assert page1.messages[0].conversation_id == conversation_ids[8]
+        assert page1.messages[0].content == "conversation 8, message 0"
+        assert page1.messages[4].content == "conversation 8, message 4"
+        assert page1.messages[5].conversation_id == conversation_ids[9]
+        assert page1.messages[9].content == "conversation 9, message 4"
+
+        page2 = await conversation_repo.get_paginated_messages(
+            self.create_dto.service_session_id, 2, 10
+        )
+        assert page2 is not None
+        assert page2.total == 50
+        assert page2.page == 2
+        assert page2.limit == 10
+        assert page2.has_next is True
+        assert len(page2.messages) == 10
+        assert page2.messages[0].conversation_id == conversation_ids[6]
+        assert page2.messages[5].conversation_id == conversation_ids[7]
+
+        page5 = await conversation_repo.get_paginated_messages(
+            self.create_dto.service_session_id, 5, 10
+        )
+        assert page5 is not None
+        assert page5.total == 50
+        assert page5.page == 5
+        assert page5.has_next is False
+        assert len(page5.messages) == 10
+        assert page5.messages[0].conversation_id == conversation_ids[0]
+        assert page5.messages[0].content == "conversation 0, message 0"
+
+    @pytest.mark.asyncio
+    async def test_get_paginated_messages_last_page_partial(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        self.create_dto.sequential_index = 0
+        for i in range(3):
+            c = await conversation_repo.create(self.create_dto)
+            assert c is not None
+            for j in range(5):
+                message = ChatMessage.create(
+                    c.id, self.create_dto.client_id, "text", f"conv {i}, msg {j}"
+                )
+                await conversation_repo.add_message(c.id, message)
+            self.create_dto.sequential_index += 1
+        self.create_dto.sequential_index = 0
+
+        # 15 total, limit 10 → page 2 should have only 5, not 10
+        page2 = await conversation_repo.get_paginated_messages(
+            self.create_dto.service_session_id, 2, 10
+        )
+        assert page2 is not None
+        assert page2.total == 15
+        assert page2.page == 2
+        assert page2.has_next is False
+        assert len(page2.messages) == 5
+        assert page2.messages[0].content == "conv 0, msg 0"
+        assert page2.messages[4].content == "conv 0, msg 4"
+
+    async def get_current_conversation_participants(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        conversation = await conversation_repo.create(self.create_dto)
+        assert conversation is not None
+        participants = await conversation_repo.get_current_service_session_participants(
+            self.create_dto.service_session_id)
+
+        assert isinstance(participants, tuple)
+        assert self.create_dto.client_id in participants
+        assert self.create_dto.agent_id in participants
+
+        participants = await conversation_repo.get_current_service_session_participants(
+            PydanticObjectId())
+        assert participants is None
+
+
+    @pytest.mark.asyncio
     async def test_conversation_exists(
         self, conversation_repo: ConversationRepository
     ) -> None:

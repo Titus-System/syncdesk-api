@@ -355,7 +355,7 @@ class TestWebSocketChat:
             error_msg = await ws.receive_json()
             assert error_msg["status"] == 1003
             assert (
-                "mime_type and filename fields are required when type='file'" 
+                "mime_type and filename fields are required when type='file'"
                 in error_msg["detail"]
             )
 

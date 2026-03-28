@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from beanie import PydanticObjectId
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 from fastapi.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
@@ -40,6 +40,35 @@ async def get_conversations(
 
     data = [chat.model_dump(mode="json") for chat in chats]
     return response.success(data=data, status_code=status.HTTP_200_OK)
+
+
+@conversation_router.get(
+    "/service_session/{service_session_id}/messages",
+    tags=["Conversations", "Messages"],
+    dependencies=[require_permission("chat:read")],
+)
+async def get_paginated_messages(
+    service_session_id: PydanticObjectId,
+    _auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=10, ge=1, le=100),
+) -> JSONResponse:
+    participants = await service.get_current_service_session_participants(service_session_id)
+    if participants is None:
+        return response.success(data=[], status_code=status.HTTP_200_OK)
+
+    user = _auth[0]
+    roles_names = user.roles_names()
+    if "admin" not in roles_names and user.id not in participants:
+        raise AppHTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not a current participant in this service_session.",
+        )
+
+    res = await service.get_paginated_messages(service_session_id, page, limit)
+    return response.success(data=res.model_dump(mode="json"), status_code=status.HTTP_200_OK)
 
 
 @conversation_router.post(

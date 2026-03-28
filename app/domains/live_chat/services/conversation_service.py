@@ -5,7 +5,7 @@ from beanie import PydanticObjectId
 
 from app.domains.live_chat.entities import ChatMessage, ChatParticipants, Conversation
 from app.domains.live_chat.exceptions import ParentConversationNotFoundError
-from app.domains.live_chat.schemas import CreateConversationDTO, IncomingMessage
+from app.domains.live_chat.schemas import CreateConversationDTO, IncomingMessage, PaginatedMessages
 
 from ..repositories import ConversationRepository
 
@@ -50,6 +50,16 @@ class ConversationService:
         self, service_session_id: PydanticObjectId
     ) -> list[Conversation]:
         return await self.repo.get_by_service_session_id(service_session_id)
+
+    async def get_paginated_messages(
+        self, service_session_id: PydanticObjectId, page: int, limit: int
+    ) -> PaginatedMessages:
+        return await self.repo.get_paginated_messages(service_session_id, page, limit)
+
+    async def get_current_service_session_participants(
+        self, service_session_id: PydanticObjectId
+    ) -> tuple[UUID, ...] | None:
+        return await self.repo.get_current_service_session_participants(service_session_id)
 
     async def add_message_to_conversation(
         self, chat_id: PydanticObjectId, message: ChatMessage

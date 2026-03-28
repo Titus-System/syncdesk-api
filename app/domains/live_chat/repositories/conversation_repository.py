@@ -4,7 +4,7 @@ from uuid import UUID
 
 from beanie import PydanticObjectId
 from beanie.odm.queries.aggregation import AggregationQuery
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorCommandCursor, AsyncIOMotorDatabase
 from pymongo.errors import (
     ConnectionFailure,
     DuplicateKeyError,
@@ -17,7 +17,7 @@ from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.live_chat.exceptions import ParentConversationNotFoundError
 
 from ..entities import ChatMessage, ChatParticipants, Conversation
-from ..schemas import CreateConversationDTO
+from ..schemas import CreateConversationDTO, PaginatedMessages
 
 
 class ConversationRepository:
@@ -63,6 +63,118 @@ class ConversationRepository:
             projection_model=Conversation,
         )
         return await query.to_list()
+
+    # async def get_paginated_messages(
+    #     self, service_session_id: PydanticObjectId, page: int, limit: int
+    # ) -> PaginatedMessages:
+    #     query: AggregationQuery[Conversation] = Conversation.aggregate(
+    #         [
+    #             {"$match": {"service_session_id": service_session_id}},
+    #             {"$sort": {"sequential_index": 1}},
+    #         ],
+    #         projection_model=Conversation,
+    #     )
+    #     conversations = await query.to_list()
+    #     messages: list[ChatMessage] = []
+    #     for c in conversations:
+    #         messages.extend(c.messages)
+    #     total = len(messages)
+    #     ceiling = max(len(messages) - (page - 1) * limit, 0)
+    #     floor = max(ceiling - limit, 0)
+    #     messages = messages[floor:ceiling]
+
+    #     return PaginatedMessages(
+    #         messages=messages, total=total, page=page, limit=limit, has_next=floor > 0
+    #     )
+
+    async def get_paginated_messages(
+        self, service_session_id: PydanticObjectId, page: int, limit: int
+    ) -> PaginatedMessages:
+        skip = (page - 1) * limit
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"service_session_id": service_session_id}},
+            {"$sort": {"sequential_index": 1}},
+            {"$unwind": "$messages"},
+            {"$replaceRoot": {"newRoot": "$messages"}},
+            {
+                "$facet": {
+                    "total": [{"$count": "count"}],
+                    "messages": [
+                        {"$sort": {"timestamp": 1}},
+                        {
+                            "$group": {
+                                "_id": None,
+                                "all": {"$push": "$$ROOT"},
+                                "count": {"$sum": 1},
+                            }
+                        },
+                        {
+                            "$project": {
+                                "sliced": {
+                                    "$slice": [
+                                        "$all",
+                                        {"$max": [{"$subtract": ["$count", skip + limit]}, 0]},
+                                        {
+                                            "$subtract": [
+                                                {"$max": [{"$subtract": ["$count", skip]}, 0]},
+                                                {"$max": [
+                                                        {"$subtract": ["$count", skip + limit]},
+                                                        0,
+                                                    ]
+                                                },
+                                            ]
+                                        },
+                                    ]
+                                }
+                            }
+                        },
+                        {"$unwind": "$sliced"},
+                        {"$replaceRoot": {"newRoot": "$sliced"}},
+                    ],
+                }
+            },
+        ]
+
+        cursor: AsyncIOMotorCommandCursor[dict[str, Any]] = (
+            Conversation.get_motor_collection().aggregate(pipeline)
+        )
+        result: list[dict[str, Any]] = await cursor.to_list(length=1)
+        facet: dict[str, list[dict[str, Any]]] = (
+            result[0] if result else {"total": [], "messages": []}
+        )
+
+        total: int = facet["total"][0]["count"] if facet["total"] else 0
+        ceiling: int = max(total - skip, 0)
+        floor: int = max(ceiling - limit, 0)
+
+        messages: list[ChatMessage] = [ChatMessage(**doc) for doc in facet["messages"]]
+
+        return PaginatedMessages(
+            messages=messages, total=total, page=page, limit=limit, has_next=floor > 0
+        )
+
+    async def get_current_service_session_participants(
+        self, service_session_id: PydanticObjectId
+    ) -> tuple[UUID, ...] | None:
+        doc = await self.db["conversations"].find_one(
+            {"service_session_id": service_session_id},
+            {"client_id": 1, "agent_id": 1},
+            sort=[("sequential_index", -1)],
+        )
+        if doc is None:
+            return None
+        participants: list[UUID] = [
+            UUID(bytes=doc["client_id"])
+            if isinstance(doc["client_id"], bytes)
+            else UUID(doc["client_id"])
+        ]
+        agent_raw = doc.get("agent_id")
+        if agent_raw is not None:
+            participants.append(
+                UUID(bytes=agent_raw) if isinstance(agent_raw, bytes) else UUID(agent_raw)
+            )
+        return tuple(participants)
 
     async def conversation_exists(self, id: PydanticObjectId) -> bool:
         doc = await self.db["conversations"].find_one({"_id": id}, {"_id": 1})

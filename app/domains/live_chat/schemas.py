@@ -5,6 +5,7 @@ from beanie import PydanticObjectId
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.core.config import get_settings
+from app.domains.live_chat.entities import ChatMessage
 from app.domains.live_chat.exceptions import InvalidMessageError
 
 
@@ -50,3 +51,11 @@ class IncomingMessage(BaseModel):
         if len(self.content) > lim:
             raise InvalidMessageError(f"Message content exceeds {lim} characters.")
         return self
+
+
+class PaginatedMessages(BaseModel):
+    messages: list[ChatMessage]
+    total: int
+    page: int
+    limit: int
+    has_next: bool

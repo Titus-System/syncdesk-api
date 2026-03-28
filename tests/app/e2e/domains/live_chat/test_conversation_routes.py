@@ -7,7 +7,7 @@ from beanie import PydanticObjectId
 from httpx import AsyncClient
 
 from app.domains.auth.entities import UserWithRoles
-from app.domains.live_chat.entities import Conversation
+from app.domains.live_chat.entities import ChatMessage, Conversation
 from app.domains.live_chat.schemas import CreateConversationDTO
 from tests.app.e2e.conftest import AuthActions
 
@@ -108,6 +108,121 @@ class TestConversationCRUD:
         for i in range(5):
             assert data[i]["sequential_index"] == i
             assert data[i]["client_id"] == str(self.create_dto.client_id)
+
+
+    @pytest.mark.asyncio
+    async def test_get_paginated_messages(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        self.create_dto.client_id = admin_user[0].id
+
+        # Create 3 conversations with 5 messages each (15 total)
+        for i in range(3):
+            self.create_dto.sequential_index = i
+            create_resp = await client.post(
+                "/api/conversations/",
+                json=self.create_dto.model_dump(mode="json"),
+                headers=auth.auth_headers(admin_user[1]),
+            )
+            assert create_resp.status_code == 201
+            conv_id = PydanticObjectId(create_resp.json()["data"]["id"])
+            conv = await Conversation.get(conv_id)
+            assert conv is not None
+            for j in range(5):
+                msg = ChatMessage.create(
+                    conv_id, admin_user[0].id, "text", f"conv {i}, msg {j}"
+                )
+                await conv.update({"$push": {"messages": msg.model_dump()}})
+
+        self.create_dto.sequential_index = 0
+
+        r = await client.get(
+            f"/api/conversations/service_session/{self.create_dto.service_session_id}/messages?page=1&limit=10",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data["total"] == 15
+        assert data["page"] == 1
+        assert data["limit"] == 10
+        assert data["has_next"] is True
+        assert len(data["messages"]) == 10
+        assert data["messages"][0]["content"] == "conv 1, msg 0"
+        assert data["messages"][9]["content"] == "conv 2, msg 4"
+
+    @pytest.mark.asyncio
+    async def test_get_paginated_messages_second_page(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        self.create_dto.client_id = admin_user[0].id
+
+        for i in range(3):
+            self.create_dto.sequential_index = i
+            create_resp = await client.post(
+                "/api/conversations/",
+                json=self.create_dto.model_dump(mode="json"),
+                headers=auth.auth_headers(admin_user[1]),
+            )
+            assert create_resp.status_code == 201
+            conv_id = PydanticObjectId(create_resp.json()["data"]["id"])
+            conv = await Conversation.get(conv_id)
+            assert conv is not None
+            for j in range(5):
+                msg = ChatMessage.create(
+                    conv_id, admin_user[0].id, "text", f"conv {i}, msg {j}"
+                )
+                await conv.update({"$push": {"messages": msg.model_dump()}})
+
+        self.create_dto.sequential_index = 0
+
+        r = await client.get(
+            f"/api/conversations/service_session/{self.create_dto.service_session_id}/messages?page=2&limit=10",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data["total"] == 15
+        assert data["page"] == 2
+        assert data["has_next"] is False
+        assert len(data["messages"]) == 5
+        assert data["messages"][0]["content"] == "conv 0, msg 0"
+        assert data["messages"][4]["content"] == "conv 0, msg 4"
+
+    @pytest.mark.asyncio
+    async def test_get_paginated_messages_unauthorized(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        self.create_dto.client_id = admin_user[0].id
+        create_resp = await client.post(
+            "/api/conversations/",
+            json=self.create_dto.model_dump(mode="json"),
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert create_resp.status_code == 201
+
+        outsider = await auth.register_and_login(
+            email="outsider_msg@test.com", username="outsider_msg"
+        )
+
+        r = await client.get(
+            f"/api/conversations/service_session/{self.create_dto.service_session_id}/messages",
+            headers=auth.auth_headers(outsider["access_token"]),
+        )
+        assert r.status_code == 403
+        assert "not a current participant" in r.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_get_paginated_messages_empty(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        fake_session_id = PydanticObjectId()
+        r = await client.get(
+            f"/api/conversations/service_session/{fake_session_id}/messages",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        assert r.json()["data"] == []
+
 
     @pytest.mark.asyncio
     async def test_set_conversation_agent(
