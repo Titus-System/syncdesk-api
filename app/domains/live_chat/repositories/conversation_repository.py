@@ -33,7 +33,7 @@ class ConversationRepository:
                     raise ParentConversationNotFoundError(f"Invalid parent_id {dto.parent_id}.")
 
             c = Conversation(
-                service_session_id=dto.service_session_id,
+                ticket_id=dto.ticket_id,
                 agent_id=dto.agent_id,
                 client_id=dto.client_id,
                 sequential_index=dto.sequential_index or 0,
@@ -50,12 +50,12 @@ class ConversationRepository:
     async def get_chat_participants(self, id: PydanticObjectId) -> ChatParticipants | None:
         return await Conversation.find_one(Conversation.id == id, projection_model=ChatParticipants)
 
-    async def get_by_service_session_id(
-        self, service_session_id: PydanticObjectId
+    async def get_by_ticket_id(
+        self, ticket_id: PydanticObjectId
     ) -> list[Conversation]:
         query: AggregationQuery[Conversation] = Conversation.aggregate(
             [
-                {"$match": {"service_session_id": service_session_id}},
+                {"$match": {"ticket_id": ticket_id}},
                 {"$addFields": {"_sort": {"$ifNull": ["$finished_at", datetime(9999, 12, 31)]}}},
                 {"$sort": {"_sort": 1}},
                 {"$unset": "_sort"},
@@ -65,11 +65,11 @@ class ConversationRepository:
         return await query.to_list()
 
     # async def get_paginated_messages(
-    #     self, service_session_id: PydanticObjectId, page: int, limit: int
+    #     self, ticket_id: PydanticObjectId, page: int, limit: int
     # ) -> PaginatedMessages:
     #     query: AggregationQuery[Conversation] = Conversation.aggregate(
     #         [
-    #             {"$match": {"service_session_id": service_session_id}},
+    #             {"$match": {"ticket_id": ticket_id}},
     #             {"$sort": {"sequential_index": 1}},
     #         ],
     #         projection_model=Conversation,
@@ -88,12 +88,12 @@ class ConversationRepository:
     #     )
 
     async def get_paginated_messages(
-        self, service_session_id: PydanticObjectId, page: int, limit: int
+        self, ticket_id: PydanticObjectId, page: int, limit: int
     ) -> PaginatedMessages:
         skip = (page - 1) * limit
 
         pipeline: list[dict[str, Any]] = [
-            {"$match": {"service_session_id": service_session_id}},
+            {"$match": {"ticket_id": ticket_id}},
             {"$sort": {"sequential_index": 1}},
             {"$unwind": "$messages"},
             {"$replaceRoot": {"newRoot": "$messages"}},
@@ -154,11 +154,11 @@ class ConversationRepository:
             messages=messages, total=total, page=page, limit=limit, has_next=floor > 0
         )
 
-    async def get_current_service_session_participants(
-        self, service_session_id: PydanticObjectId
+    async def get_current_ticket_participants(
+        self, ticket_id: PydanticObjectId
     ) -> tuple[UUID, ...] | None:
         doc = await self.db["conversations"].find_one(
-            {"service_session_id": service_session_id},
+            {"ticket_id": ticket_id},
             {"client_id": 1, "agent_id": 1},
             sort=[("sequential_index", -1)],
         )

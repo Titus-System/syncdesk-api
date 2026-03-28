@@ -64,7 +64,7 @@ live_chat/
 
 ### Conversation
 - `id` (ObjectId): Unique identifier
-- `service_session_id` (ObjectId): Associated service session
+- `ticket_id` (ObjectId): Associated ticket
 - `client_id` (UUID): Client user
 - `agent_id` (UUID, optional): Agent user
 - `parent_id` (ObjectId, optional): Parent conversation (for threading)
@@ -90,7 +90,7 @@ live_chat/
 
 | Endpoint | Permission | Additional Rules |
 |---|---|---|
-| `GET /service_session/{id}` | `chat:read` | Admins can read any session. Non-admin users must be a participant in the most recent conversation of the session. |
+| `GET /ticket/{id}` | `chat:read` | Admins can read any session. Non-admin users must be a participant in the most recent conversation of the session. |
 | `POST /` | `chat:create` | Agents and admins can create conversations for any client. Non-admin/non-agent users can only create conversations where `client_id` matches their own ID. |
 | `PATCH /{chat_id}/set-agent/{agent_id}` | `chat:set_agent` | First assignment: any user with the permission. Reassignment: only the currently assigned agent or an admin. The target `agent_id` must belong to a user with the "agent" role. |
 
@@ -110,7 +110,7 @@ Send a POST request to `/api/conversations/` with:
 
 ```json
 {
-	"service_session_id": "<ObjectId>",
+	"ticket_id": "<ObjectId>",
 	"client_id": "<UUID>",
 	"agent_id": "<UUID>",
 	"parent_id": "<ObjectId>",

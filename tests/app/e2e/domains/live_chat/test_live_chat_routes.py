@@ -182,7 +182,7 @@ class TestWebSocketChat:
     ) -> str:
         """Create a conversation via REST and return its id."""
         dto = CreateConversationDTO(
-            service_session_id=PydanticObjectId(),
+            ticket_id=PydanticObjectId(),
             client_id=client_id,
             agent_id=agent_id,
         )

@@ -46,20 +46,20 @@ class ConversationService:
     async def attribute_agent(self, chat_id: PydanticObjectId, agent_id: UUID) -> None:
         return await self.repo.attribute_agent(chat_id, agent_id)
 
-    async def get_chats_from_service_session(
-        self, service_session_id: PydanticObjectId
+    async def get_chats_from_ticket(
+        self, ticket_id: PydanticObjectId
     ) -> list[Conversation]:
-        return await self.repo.get_by_service_session_id(service_session_id)
+        return await self.repo.get_by_ticket_id(ticket_id)
 
     async def get_paginated_messages(
-        self, service_session_id: PydanticObjectId, page: int, limit: int
+        self, ticket_id: PydanticObjectId, page: int, limit: int
     ) -> PaginatedMessages:
-        return await self.repo.get_paginated_messages(service_session_id, page, limit)
+        return await self.repo.get_paginated_messages(ticket_id, page, limit)
 
-    async def get_current_service_session_participants(
-        self, service_session_id: PydanticObjectId
+    async def get_current_ticket_participants(
+        self, ticket_id: PydanticObjectId
     ) -> tuple[UUID, ...] | None:
-        return await self.repo.get_current_service_session_participants(service_session_id)
+        return await self.repo.get_current_ticket_participants(ticket_id)
 
     async def add_message_to_conversation(
         self, chat_id: PydanticObjectId, message: ChatMessage

@@ -10,7 +10,7 @@ from app.domains.live_chat.exceptions import InvalidMessageError
 
 
 class CreateConversationDTO(BaseModel):
-    service_session_id: PydanticObjectId
+    ticket_id: PydanticObjectId
     agent_id: UUID | None = None
     client_id: UUID
     sequential_index: int = 0

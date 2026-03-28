@@ -24,7 +24,7 @@ async def cleanup_conversation_collection():
 class TestConversationRepository:
 
     create_dto = CreateConversationDTO(
-        service_session_id = PydanticObjectId(),
+        ticket_id = PydanticObjectId(),
         agent_id = uuid4(),
         client_id = uuid4(),
     )
@@ -54,7 +54,7 @@ class TestConversationRepository:
         with pytest.raises(ResourceAlreadyExistsError):
             await conversation_repo.create(
                 CreateConversationDTO(
-                    service_session_id = self.create_dto.service_session_id,
+                    ticket_id = self.create_dto.ticket_id,
                     agent_id = uuid4(),
                     client_id = self.create_dto.client_id,
                     sequential_index = c1.sequential_index
@@ -69,7 +69,7 @@ class TestConversationRepository:
         c1 = await conversation_repo.create(self.create_dto)
         c2 = await conversation_repo.create(
             CreateConversationDTO(
-                service_session_id = self.create_dto.service_session_id,
+                ticket_id = self.create_dto.ticket_id,
                 agent_id = uuid4(),
                 client_id = self.create_dto.client_id,
                 sequential_index = c1.sequential_index + 1,
@@ -92,7 +92,7 @@ class TestConversationRepository:
         with pytest.raises(ParentConversationNotFoundError):
             await conversation_repo.create(
                 CreateConversationDTO(
-                    service_session_id = self.create_dto.service_session_id,
+                    ticket_id = self.create_dto.ticket_id,
                     agent_id = uuid4(),
                     client_id = self.create_dto.client_id,
                     sequential_index = c1.sequential_index + 1,
@@ -129,8 +129,8 @@ class TestConversationRepository:
     ) -> None:
         conversation = await conversation_repo.create(self.create_dto)
         assert conversation is not None
-        found_list = await conversation_repo.get_by_service_session_id(
-                        self.create_dto.service_session_id
+        found_list = await conversation_repo.get_by_ticket_id(
+                        self.create_dto.ticket_id
                         )
         assert isinstance(found_list, list)
         assert any(c.id == conversation.id for c in found_list)
@@ -155,7 +155,7 @@ class TestConversationRepository:
         self.create_dto.sequential_index = 0
 
         page1 = await conversation_repo.get_paginated_messages(
-            self.create_dto.service_session_id, 1, 10
+            self.create_dto.ticket_id, 1, 10
         )
 
         assert page1 is not None
@@ -172,7 +172,7 @@ class TestConversationRepository:
         assert page1.messages[9].content == "conversation 9, message 4"
 
         page2 = await conversation_repo.get_paginated_messages(
-            self.create_dto.service_session_id, 2, 10
+            self.create_dto.ticket_id, 2, 10
         )
         assert page2 is not None
         assert page2.total == 50
@@ -184,7 +184,7 @@ class TestConversationRepository:
         assert page2.messages[5].conversation_id == conversation_ids[7]
 
         page5 = await conversation_repo.get_paginated_messages(
-            self.create_dto.service_session_id, 5, 10
+            self.create_dto.ticket_id, 5, 10
         )
         assert page5 is not None
         assert page5.total == 50
@@ -212,7 +212,7 @@ class TestConversationRepository:
 
         # 15 total, limit 10 → page 2 should have only 5, not 10
         page2 = await conversation_repo.get_paginated_messages(
-            self.create_dto.service_session_id, 2, 10
+            self.create_dto.ticket_id, 2, 10
         )
         assert page2 is not None
         assert page2.total == 15
@@ -227,14 +227,14 @@ class TestConversationRepository:
     ) -> None:
         conversation = await conversation_repo.create(self.create_dto)
         assert conversation is not None
-        participants = await conversation_repo.get_current_service_session_participants(
-            self.create_dto.service_session_id)
+        participants = await conversation_repo.get_current_ticket_participants(
+            self.create_dto.ticket_id)
 
         assert isinstance(participants, tuple)
         assert self.create_dto.client_id in participants
         assert self.create_dto.agent_id in participants
 
-        participants = await conversation_repo.get_current_service_session_participants(
+        participants = await conversation_repo.get_current_ticket_participants(
             PydanticObjectId())
         assert participants is None
 

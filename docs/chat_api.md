@@ -19,7 +19,7 @@ Send an HTTP `POST` request to `/api/conversations/` with the following payload:
 
 ```json
 {
-  "service_session_id": "<ObjectId of the service session>",
+  "ticket_id": "<ObjectId of the ticket>",
   "client_id": "<UUID of the client user>",
   "agent_id": "<UUID of the agent>", // optional
   "parent_id": "<ObjectId of the parent conversation>", // optional
@@ -33,7 +33,7 @@ Send an HTTP `POST` request to `/api/conversations/` with the following payload:
 {
   "data": {
     "id": "6601e2b8e1b2c8a1f0a1b2c3", // <--- chat_id/conversation_id
-    "service_session_id": "65f0e2b8e1b2c8a1f0a1b2c2",
+    "ticket_id": "65f0e2b8e1b2c8a1f0a1b2c2",
     "client_id": "b1e2b8e1-b2c8-a1f0-a1b2-c3d4e5f6a7b8",
     "agent_id": "c2e3b9e2-b3c9-a2f1-b2c3-d4e5f6a7b8c9",
     "sequential_index": 0,

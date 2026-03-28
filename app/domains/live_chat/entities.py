@@ -55,7 +55,7 @@ class ChatMessage(BaseModel):
 
 
 class Conversation(Document):
-    service_session_id: PydanticObjectId
+    ticket_id: PydanticObjectId
     agent_id: UUID | None
     client_id: UUID
     sequential_index: int = 0
@@ -67,7 +67,7 @@ class Conversation(Document):
 
     class Settings:
         name = "conversations"
-        indexes = [IndexModel([("service_session_id", 1), ("sequential_index", 1)], unique=True)]
+        indexes = [IndexModel([("ticket_id", 1), ("sequential_index", 1)], unique=True)]
 
     def is_opened(self) -> bool:
         return self.finished_at is None

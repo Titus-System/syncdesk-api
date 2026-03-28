@@ -16,17 +16,17 @@ conversation_router = APIRouter()
 
 
 @conversation_router.get(
-    "/service_session/{service_session_id}",
+    "/ticket/{ticket_id}",
     tags=["Conversations"],
     dependencies=[require_permission("chat:read")],
 )
 async def get_conversations(
-    service_session_id: PydanticObjectId,
+    ticket_id: PydanticObjectId,
     _auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    chats = await service.get_chats_from_service_session(service_session_id)
+    chats = await service.get_chats_from_ticket(ticket_id)
     if not chats:
         return response.success(data=[], status_code=status.HTTP_200_OK)
 
@@ -35,7 +35,7 @@ async def get_conversations(
     if "admin" not in roles_names and user.id not in chats[-1].participants():
         raise AppHTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not a current participant in this service_session.",
+            detail="User is not a current participant in this ticket.",
         )
 
     data = [chat.model_dump(mode="json") for chat in chats]
@@ -43,19 +43,19 @@ async def get_conversations(
 
 
 @conversation_router.get(
-    "/service_session/{service_session_id}/messages",
+    "/ticket/{ticket_id}/messages",
     tags=["Conversations", "Messages"],
     dependencies=[require_permission("chat:read")],
 )
 async def get_paginated_messages(
-    service_session_id: PydanticObjectId,
+    ticket_id: PydanticObjectId,
     _auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1, le=100),
 ) -> JSONResponse:
-    participants = await service.get_current_service_session_participants(service_session_id)
+    participants = await service.get_current_ticket_participants(ticket_id)
     if participants is None:
         return response.success(data=[], status_code=status.HTTP_200_OK)
 
@@ -64,10 +64,10 @@ async def get_paginated_messages(
     if "admin" not in roles_names and user.id not in participants:
         raise AppHTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not a current participant in this service_session.",
+            detail="User is not a current participant in this ticket.",
         )
 
-    res = await service.get_paginated_messages(service_session_id, page, limit)
+    res = await service.get_paginated_messages(ticket_id, page, limit)
     return response.success(data=res.model_dump(mode="json"), status_code=status.HTTP_200_OK)
 
 

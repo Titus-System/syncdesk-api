@@ -20,7 +20,7 @@ async def cleanup_conversation_collection():
 
 class TestConversationCRUD:
     create_dto = CreateConversationDTO(
-        service_session_id=PydanticObjectId(),
+        ticket_id=PydanticObjectId(),
         agent_id = uuid4(),
         client_id= uuid4()
     )
@@ -64,7 +64,7 @@ class TestConversationCRUD:
         assert r.status_code == 201
         body = r.json()
         assert body["data"] is not None
-        assert body["data"]["service_session_id"] == str(self.create_dto.service_session_id)
+        assert body["data"]["ticket_id"] == str(self.create_dto.ticket_id)
 
     @pytest.mark.asyncio
     async def test_create_conversation_not_allowed(
@@ -99,7 +99,7 @@ class TestConversationCRUD:
         self.create_dto.sequential_index = 0
 
         get_resp = await client.get(
-            f"/api/conversations/service_session/{self.create_dto.service_session_id}",
+            f"/api/conversations/ticket/{self.create_dto.ticket_id}",
             headers=auth.auth_headers(admin_user[1]),
         )
         assert get_resp.status_code == 200
@@ -137,7 +137,7 @@ class TestConversationCRUD:
         self.create_dto.sequential_index = 0
 
         r = await client.get(
-            f"/api/conversations/service_session/{self.create_dto.service_session_id}/messages?page=1&limit=10",
+            f"/api/conversations/ticket/{self.create_dto.ticket_id}/messages?page=1&limit=10",
             headers=auth.auth_headers(admin_user[1]),
         )
         assert r.status_code == 200
@@ -176,7 +176,7 @@ class TestConversationCRUD:
         self.create_dto.sequential_index = 0
 
         r = await client.get(
-            f"/api/conversations/service_session/{self.create_dto.service_session_id}/messages?page=2&limit=10",
+            f"/api/conversations/ticket/{self.create_dto.ticket_id}/messages?page=2&limit=10",
             headers=auth.auth_headers(admin_user[1]),
         )
         assert r.status_code == 200
@@ -205,7 +205,7 @@ class TestConversationCRUD:
         )
 
         r = await client.get(
-            f"/api/conversations/service_session/{self.create_dto.service_session_id}/messages",
+            f"/api/conversations/ticket/{self.create_dto.ticket_id}/messages",
             headers=auth.auth_headers(outsider["access_token"]),
         )
         assert r.status_code == 403
@@ -217,7 +217,7 @@ class TestConversationCRUD:
     ) -> None:
         fake_session_id = PydanticObjectId()
         r = await client.get(
-            f"/api/conversations/service_session/{fake_session_id}/messages",
+            f"/api/conversations/ticket/{fake_session_id}/messages",
             headers=auth.auth_headers(admin_user[1]),
         )
         assert r.status_code == 200
@@ -248,7 +248,7 @@ class TestConversationCRUD:
         assert patch_resp.status_code == 200
 
         get_resp = await client.get(
-            f"/api/conversations/service_session/{self.create_dto.service_session_id}",
+            f"/api/conversations/ticket/{self.create_dto.ticket_id}",
             headers=auth.auth_headers(admin_user[1]),
         )
         assert get_resp.status_code == 200
