@@ -88,7 +88,6 @@ class Settings(BaseSettings):
             )
         return f"mongodb://{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}"
 
-
     # JWT variables
     JWT_SECRET_KEY: str = "your_jwt_secret_key"
     ACCESS_TOKEN_SIGNING_KEY: str = "your_access_token_siging_key"
@@ -110,6 +109,8 @@ class Settings(BaseSettings):
     @property
     def session_default_timedelta(self) -> timedelta:
         return timedelta(days=self.SESSION_EXPIRE_DAYS)
+
+    MAX_CHAT_MESSAGE_CONTENT_SIZE: int = 2000
 
     model_config = SettingsConfigDict(extra="allow", env_file=".env", env_file_encoding="utf-8")
 

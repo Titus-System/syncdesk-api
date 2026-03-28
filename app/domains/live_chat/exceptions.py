@@ -16,7 +16,7 @@ class InvalidMessageError(Exception):
 
 class CreateChatRoomError(Exception):
     def __init__(self, message: str | None = None) -> None:
-        super().__init__(f"Server could no ceate chat room. {message or ''}")
+        super().__init__(f"Server could not create chat room. {message or ''}")
 
 
 class ParentConversationNotFoundError(Exception):

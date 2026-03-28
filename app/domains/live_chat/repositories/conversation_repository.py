@@ -1,7 +1,9 @@
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
 from beanie import PydanticObjectId
+from beanie.odm.queries.aggregation import AggregationQuery
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import (
     ConnectionFailure,
@@ -37,7 +39,7 @@ class ConversationRepository:
                 sequential_index=dto.sequential_index or 0,
                 parent_id=dto.parent_id,
             )
-            return cast(Conversation, await c.insert())
+            return await c.insert()
 
         except DuplicateKeyError as err:
             raise ResourceAlreadyExistsError("Chat", "index") from err
@@ -51,15 +53,19 @@ class ConversationRepository:
     async def get_by_service_session_id(
         self, service_session_id: PydanticObjectId
     ) -> list[Conversation]:
-        return await Conversation.find(
-            Conversation.service_session_id == service_session_id
-        ).to_list()
+        query: AggregationQuery[Conversation] = Conversation.aggregate(
+            [
+                {"$match": {"service_session_id": service_session_id}},
+                {"$addFields": {"_sort": {"$ifNull": ["$finished_at", datetime(9999, 12, 31)]}}},
+                {"$sort": {"_sort": 1}},
+                {"$unset": "_sort"},
+            ],
+            projection_model=Conversation,
+        )
+        return await query.to_list()
 
     async def conversation_exists(self, id: PydanticObjectId) -> bool:
-        doc = await self.db["conversations"].find_one(
-            {"_id": id},
-            {"_id": 1}
-        )
+        doc = await self.db["conversations"].find_one({"_id": id}, {"_id": 1})
         return doc is not None
 
     async def update(self, conversation: Conversation) -> Conversation | None:

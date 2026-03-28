@@ -345,7 +345,7 @@ class TestWebSocketChat:
             error_msg = await ws.receive_json()
             assert error_msg["status"] == 1003
             assert (
-                "Invalid payload. filename field is not allowed for text messages"
+                "mime_type and filename fields are not allowed"
                 in error_msg["detail"]
             )
 
@@ -354,7 +354,10 @@ class TestWebSocketChat:
             )
             error_msg = await ws.receive_json()
             assert error_msg["status"] == 1003
-            assert "mime_type is required when type='file'" in error_msg["detail"]
+            assert (
+                "mime_type and filename fields are required when type='file'" 
+                in error_msg["detail"]
+            )
 
     async def test_non_participant_cannot_connect(
         self,

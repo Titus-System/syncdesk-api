@@ -19,5 +19,5 @@ __all__ = [
     "CurrentUserSessionWsDep",
     "UserServiceDep",
     "require_permission",
-    "require_permission_ws"
+    "require_permission_ws",
 ]

@@ -6,6 +6,8 @@ from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, Field, ValidationError
 from pymongo import IndexModel
 
+from app.core.config import get_settings
+
 from .exceptions import InvalidMessageError
 
 
@@ -31,6 +33,9 @@ class ChatMessage(BaseModel):
         filename: str | None = None,
         responding_to: UUID | None = None,
     ) -> "ChatMessage":
+        lim = get_settings().MAX_CHAT_MESSAGE_CONTENT_SIZE
+        if len(content) > lim:
+            raise InvalidMessageError(f"Message content exceeds {lim} characters.")
         try:
             return cls(
                 id=uuid4(),

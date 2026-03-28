@@ -24,9 +24,7 @@ chat_manager = get_chat_manager()
 chat_router = APIRouter()
 
 
-@chat_router.websocket(
-    "/room/{chat_id}", dependencies=[require_permission_ws("chat:add_message")]
-)
+@chat_router.websocket("/room/{chat_id}", dependencies=[require_permission_ws("chat:add_message")])
 async def connect_to_conversation(
     chat_id: PydanticObjectId,
     ws: WebSocket,

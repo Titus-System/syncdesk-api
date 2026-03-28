@@ -3,6 +3,7 @@ from typing import Any, cast
 
 from beanie import PydanticObjectId
 from fastapi import WebSocket, WebSocketException
+from fastapi.websockets import WebSocketState
 
 from app.core.logger import get_logger
 from app.core.response import WSResponseFactory
@@ -64,7 +65,8 @@ class ChatRoom:
     async def leave(self, conn: ChatConnection) -> None:
         if conn in self.connections:
             self.connections.remove(conn)
-        await conn.close()
+        if conn.ws.client_state == WebSocketState.CONNECTED:
+            await conn.close()
 
     async def close(self) -> None:
         for c in self.connections:
@@ -91,7 +93,7 @@ class ChatRoom:
                     f"Unexpected error broadcasting message {message.id} in room {self.id}.",
                     exc_info=True,
                 )
-                raise
+                self.dead.append(conn)
         self._drop_dead_connections()
 
 

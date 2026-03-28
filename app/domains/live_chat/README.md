@@ -57,7 +57,7 @@ live_chat/
 
 1. **Create Conversation**: Client sends HTTP POST to `/api/conversations/` to create a conversation.
 2. **Connect WebSocket**: Client connects to `/api/live_chat/room/{chat_id}` using the conversation ID.
-3. **Send/Receive Messages**: Messages are exchanged in real time. Each message is validated, persisted, and broadcast to all participants in the room.
+3. **Send/Receive Messages**: Messages are exchanged in real time. Each message is validated (including content size limits via `MAX_CHAT_MESSAGE_CONTENT_SIZE` setting), persisted, and broadcast to all participants in the room.
 4. **Room Lifecycle**: Chat rooms are created on demand and deleted when empty.
 
 ## Data Models
@@ -79,10 +79,28 @@ live_chat/
 - `sender_id` (UUID or "System"): Sender
 - `timestamp` (datetime): When sent
 - `type` ("text" or "file"): Message type
-- `content` (str): Message content or base64-encoded file
-- `mime_type` (str, optional): MIME type (for files)
-- `filename` (str, optional): File name (for files)
+- `content` (str): Message content or base64-encoded file. Size limited by `MAX_CHAT_MESSAGE_CONTENT_SIZE`
+- `mime_type` (str, required for files, forbidden for text): MIME type
+- `filename` (str, required for files, forbidden for text): File name
 - `responding_to` (UUID, optional): Message being replied to
+
+## Authorization
+
+### HTTP Endpoints
+
+| Endpoint | Permission | Additional Rules |
+|---|---|---|
+| `GET /service_session/{id}` | `chat:read` | Admins can read any session. Non-admin users must be a participant in the most recent conversation of the session. |
+| `POST /` | `chat:create` | Agents and admins can create conversations for any client. Non-admin/non-agent users can only create conversations where `client_id` matches their own ID. |
+| `PATCH /{chat_id}/set-agent/{agent_id}` | `chat:set_agent` | First assignment: any user with the permission. Reassignment: only the currently assigned agent or an admin. The target `agent_id` must belong to a user with the "agent" role. |
+
+### WebSocket Endpoints
+
+| Endpoint | Permission | Additional Rules |
+|---|---|---|
+| `/room/{chat_id}` | `chat:add_message` | Only participants of an **open** conversation can connect. Connection is denied (HTTP 403) if the conversation does not exist, is closed, or the user is not a participant. |
+
+---
 
 ## Frontend Integration Guide
 
@@ -110,7 +128,7 @@ Open a WebSocket connection to:
 ws://<host>/api/live_chat/room/{chat_id}
 ```
 
-Only participants of the conversation can connect.
+Only participants of an open conversation can connect. The server responds with HTTP 403 if access is denied.
 
 ### 3. Send Messages
 
@@ -123,7 +141,7 @@ For text:
 	"content": "Hello world"
 }
 ```
-For files:
+For files (both `mime_type` and `filename` are required):
 ```json
 {
 	"type": "file",
@@ -147,4 +165,13 @@ If a message is invalid, the server responds with an error message but keeps the
 - **No persistence for chat rooms**: Chat rooms are lost on server restart. Only conversation/message history is persisted in the database.
 - **Blocking operations**: Any blocking code in message handlers will stall the event loop and impact all connections.
 - **No message delivery guarantees**: If a client disconnects before receiving a message, that message is not re-sent.
-- **No file size limits**: File uploads are accepted as base64 strings, but there is no enforced size limit at the WebSocket layer.
+
+## Known Issues and Future Improvements
+
+| Severity  | Issue                                                      | Description                                                                                                                        |
+|-----------|------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| 🔴 Critical  | Test WebSocket endpoint unsecured                          | `/test/room/{conversation_id}` has no authentication/authorization; must be removed or secured before production.                  |
+| 🔴 High      | No logic for conversations >16MB (MongoDB limit)           | Conversations exceeding 16MB will fail to save; needs pagination or splitting.                                                     |
+| 🔴 High      | No treatment for files                                     | File messages are accepted as base64 but not processed; needs HTTP endpoint, storage, and URL generation.                          |
+| 🟠 Medium    | No logic to handle the scaling of a conversation           | No implementation for creating child conversations.                                                                                |
+| 🔵 Low       | Duplicate parent_id validation                             | Both service and repository check parent existence, causing double DB queries.                                                     |

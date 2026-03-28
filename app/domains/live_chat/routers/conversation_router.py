@@ -18,7 +18,7 @@ conversation_router = APIRouter()
 @conversation_router.get(
     "/service_session/{service_session_id}",
     tags=["Conversations"],
-    dependencies=[require_permission("chat:read")]
+    dependencies=[require_permission("chat:read")],
 )
 async def get_conversations(
     service_session_id: PydanticObjectId,
@@ -27,14 +27,23 @@ async def get_conversations(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     chats = await service.get_chats_from_service_session(service_session_id)
+    if not chats:
+        return response.success(data=[], status_code=status.HTTP_200_OK)
+
+    user = _auth[0]
+    roles_names = user.roles_names()
+    if "admin" not in roles_names and user.id not in chats[-1].participants():
+        raise AppHTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not a current participant in this service_session.",
+        )
+
     data = [chat.model_dump(mode="json") for chat in chats]
     return response.success(data=data, status_code=status.HTTP_200_OK)
 
 
 @conversation_router.post(
-    "/",
-    tags=["Conversations"],
-    dependencies=[require_permission("chat:create")]
+    "/", tags=["Conversations"], dependencies=[require_permission("chat:create")]
 )
 async def create_conversation(
     dto: CreateConversationDTO,
@@ -44,15 +53,16 @@ async def create_conversation(
 ) -> JSONResponse:
     try:
         user = auth[0]
-        if dto.client_id != user.id:
+        roles_names = user.roles_names()
+        if "agent" not in roles_names and "admin" not in roles_names and dto.client_id != user.id:
             raise AppHTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="User cannot open a chat in the name of another user.",
+                detail="User can't create a conversation in the name of another user.",
             )
+
         chat = await service.create(dto)
         return response.success(
-            data=chat.model_dump(mode="json"),
-            status_code=status.HTTP_201_CREATED
+            data=chat.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
         )
 
     except ResourceAlreadyExistsError as e:
@@ -65,7 +75,7 @@ async def create_conversation(
 @conversation_router.patch(
     "/{chat_id}/set-agent/{agent_id}",
     tags=["Conversations"],
-    dependencies=[require_permission("chat:update")],
+    dependencies=[require_permission("chat:set_agent")],
 )
 async def set_conversation_agent(
     chat_id: PydanticObjectId,
@@ -76,11 +86,28 @@ async def set_conversation_agent(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     try:
+        user = _auth[0]
+
+        chat = await service.get_by_id(chat_id)
+        if chat is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation {chat_id} does not exist.",
+            )
+
+        if chat.agent_id is not None and (
+            "admin" not in user.roles_names() and user.id != chat.agent_id
+        ):
+            raise AppHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins or currently assigned agent can reassign this conversation.",
+            )
+
         roles = await user_service.get_user_roles(agent_id)
         if "agent" not in [r.name for r in roles]:
             raise AppHTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="agent_id provided does not correspond to a valid user.",
+                detail="agent_id provided does not correspond to a valid agent.",
             )
 
         await service.attribute_agent(chat_id, agent_id)

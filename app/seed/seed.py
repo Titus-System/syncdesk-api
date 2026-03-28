@@ -51,6 +51,7 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "chat:read", "description": "Read chat history"},
         {"name": "chat:update", "description": "Update chat attributes"},
         {"name": "chat:add_message", "description": "Send messages in a Chat"},
+        {"name": "chat:set_agent", "description": "Set agent to conversation"},
     ]
 
     await session.execute(insert(Permission).values(permissions))

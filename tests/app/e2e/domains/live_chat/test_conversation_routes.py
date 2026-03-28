@@ -52,7 +52,7 @@ class TestConversationCRUD:
         assert conv.client_id == admin_user[0].id
 
     @pytest.mark.asyncio
-    async def test_create_conversation_forbidden(
+    async def test_create_conversation_admin(
         self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
     ) -> None:
         self.create_dto.client_id = uuid4()
@@ -61,8 +61,25 @@ class TestConversationCRUD:
             json=self.create_dto.model_dump(mode="json"),
             headers=auth.auth_headers(admin_user[1]),
         )
-        assert r.status_code == 403
-        assert "User cannot open a chat in the name of another user" in r.text
+        assert r.status_code == 201
+        body = r.json()
+        assert body["data"] is not None
+        assert body["data"]["service_session_id"] == str(self.create_dto.service_session_id)
+
+    @pytest.mark.asyncio
+    async def test_create_conversation_not_allowed(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        unauthorized = await auth.register_and_login()
+        create_resp = await client.post(
+            "/api/conversations/",
+            json=self.create_dto.model_dump(mode="json"),
+            headers=auth.auth_headers(unauthorized["access_token"]),
+        )
+        assert create_resp is not None
+        assert create_resp.status_code == 403
+        body = create_resp.json()
+        assert "can't create a conversation in the name of another user" in body["detail"]
 
     @pytest.mark.asyncio
     async def test_get_conversations(
@@ -145,7 +162,29 @@ class TestConversationCRUD:
             headers=auth.auth_headers(admin_user[1]),
         )
         assert patch_resp.status_code == 403
-        assert "does not correspond to a valid user" in patch_resp.text
+        body = patch_resp.json()
+        assert "does not correspond to a valid agent" in body["detail"]
+        self.create_dto.agent_id = uuid4()
+
+    async def test_set_conversation_agent_not_allowed(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        create_resp = await client.post(
+            "/api/conversations/",
+            json=self.create_dto.model_dump(mode="json"),
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert create_resp.status_code == 201
+        conv_id = create_resp.json()["data"]["id"]
+
+        unauth_user = await auth.register_agent()
+        patch_resp = await client.patch(
+            f"/api/conversations/{conv_id}/set-agent/{unauth_user['id']}",
+            headers=auth.auth_headers(unauth_user["access_token"]),
+        )
+        assert patch_resp.status_code == 403
+        body = patch_resp.json()
+        assert "Only admins or currently assigned agent can reassign" in body["detail"]
 
     @pytest.mark.asyncio
     async def test_set_conversation_agent_not_found(
@@ -157,4 +196,4 @@ class TestConversationCRUD:
             f"/api/conversations/{fake_conv_id}/set-agent/{agent_id}",
             headers=auth.auth_headers(admin_user[1]),
         )
-        assert patch_resp.status_code == 403
+        assert patch_resp.status_code == 404

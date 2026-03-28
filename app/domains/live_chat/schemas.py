@@ -4,6 +4,9 @@ from uuid import UUID
 from beanie import PydanticObjectId
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from app.core.config import get_settings
+from app.domains.live_chat.exceptions import InvalidMessageError
+
 
 class CreateConversationDTO(BaseModel):
     service_session_id: PydanticObjectId
@@ -30,15 +33,20 @@ class IncomingMessage(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def validate_logic(self) -> 'IncomingMessage':
-        if self.type == 'text' and self.filename is not None:
+    def validate_logic(self) -> "IncomingMessage":
+        if self.type == "text" and (self.filename is not None or self.mime_type is not None):
             raise ValueError(
-                "Invalid payload. filename field is not allowed for text messages"
+                "Invalid payload. mime_type and filename fields are not allowed for text messages."
             )
 
-        if self.type == "file" and self.mime_type is None:
-            raise ValueError(
-                "mime_type is required when type='file'"
-            )
+        if self.type == "file" and (self.mime_type is None or self.filename is None):
+            raise ValueError("mime_type and filename fields are required when type='file'")
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_content_size(self) -> "IncomingMessage":
+        lim = get_settings().MAX_CHAT_MESSAGE_CONTENT_SIZE
+        if len(self.content) > lim:
+            raise InvalidMessageError(f"Message content exceeds {lim} characters.")
         return self

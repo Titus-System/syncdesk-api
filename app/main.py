@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await init_postgres_db()
 
         await mongo_db.connect()
-        await init_beanie(database=mongo_db.get_db(), document_models=[Conversation])  # type: ignore
+        await init_beanie(database=mongo_db.get_db(), document_models=[Conversation])
         yield
 
     finally:
