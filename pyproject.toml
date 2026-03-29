@@ -58,6 +58,7 @@ select = [
     "C4", # Comprehensions
     "SIM",# Simplifiable code
     "UP", # Upgrades de código Python (melhorias automáticas)
+    "E501",  # line too long (handled by ruff format)
 ]
 ignore = [
     "F822",  # undefined name in __all__

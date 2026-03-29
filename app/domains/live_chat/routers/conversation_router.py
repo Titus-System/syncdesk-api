@@ -11,6 +11,12 @@ from app.domains.auth import CurrentUserSessionDep, UserServiceDep, require_perm
 
 from ..dependencies import ConversationServiceDep
 from ..schemas import CreateConversationDTO
+from .swagger_utils import (
+    get_convs_swagger,
+    get_messages_swagger,
+    post_conv_swagger,
+    set_agent_swagger,
+)
 
 conversation_router = APIRouter()
 
@@ -19,6 +25,7 @@ conversation_router = APIRouter()
     "/ticket/{ticket_id}",
     tags=["Conversations"],
     dependencies=[require_permission("chat:read")],
+    **get_convs_swagger,
 )
 async def get_conversations(
     ticket_id: PydanticObjectId,
@@ -46,14 +53,15 @@ async def get_conversations(
     "/ticket/{ticket_id}/messages",
     tags=["Conversations", "Messages"],
     dependencies=[require_permission("chat:read")],
+    **get_messages_swagger,
 )
 async def get_paginated_messages(
     ticket_id: PydanticObjectId,
     _auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=10, ge=1, le=100),
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)."),
+    limit: int = Query(default=10, ge=1, le=100, description="Number of messages per page."),
 ) -> JSONResponse:
     participants = await service.get_current_ticket_participants(ticket_id)
     if participants is None:
@@ -72,7 +80,10 @@ async def get_paginated_messages(
 
 
 @conversation_router.post(
-    "/", tags=["Conversations"], dependencies=[require_permission("chat:create")]
+    "/",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:create")],
+    **post_conv_swagger,
 )
 async def create_conversation(
     dto: CreateConversationDTO,
@@ -105,6 +116,7 @@ async def create_conversation(
     "/{chat_id}/set-agent/{agent_id}",
     tags=["Conversations"],
     dependencies=[require_permission("chat:set_agent")],
+    **set_agent_swagger,
 )
 async def set_conversation_agent(
     chat_id: PydanticObjectId,
