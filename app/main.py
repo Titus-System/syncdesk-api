@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from beanie import init_beanie
 from fastapi import FastAPI
 
 from app.core import (
@@ -13,6 +14,7 @@ from app.core.init_routers import initiate_routers
 from app.core.logger import get_logger
 from app.core.middleware import add_middlewares
 from app.db import close_postgres_db, init_postgres_db, mongo_db
+from app.domains.live_chat import Conversation
 
 
 @asynccontextmanager
@@ -27,6 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await init_postgres_db()
 
         await mongo_db.connect()
+        await init_beanie(database=mongo_db.get_db(), document_models=[Conversation])
         yield
 
     finally:

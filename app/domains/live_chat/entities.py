@@ -1,14 +1,20 @@
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from beanie import Document, PydanticObjectId
+from pydantic import BaseModel, Field, ValidationError
+from pymongo import IndexModel
+
+from app.core.config import get_settings
+
+from .exceptions import InvalidMessageError
 
 
 class ChatMessage(BaseModel):
     id: UUID
-    conversation_id: UUID
-    sender_id: UUID
+    conversation_id: PydanticObjectId
+    sender_id: UUID | Literal["System"]
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     type: Literal["text", "file"]
     content: str
@@ -19,67 +25,60 @@ class ChatMessage(BaseModel):
     @classmethod
     def create(
         cls,
-        conversation_id: UUID,
-        sender_id: UUID,
+        conversation_id: PydanticObjectId,
+        sender_id: UUID | Literal["System"],
         type: Literal["text", "file"],
         content: str,
         mime_type: str | None = None,
         filename: str | None = None,
         responding_to: UUID | None = None,
     ) -> "ChatMessage":
-        return cls(
-            id=uuid4(),
-            conversation_id=conversation_id,
-            sender_id=sender_id,
-            type=type,
-            content=content,
-            mime_type=mime_type,
-            filename=filename,
-            responding_to=responding_to,
-        )
+        lim = get_settings().MAX_CHAT_MESSAGE_CONTENT_SIZE
+        if len(content) > lim:
+            raise InvalidMessageError(f"Message content exceeds {lim} characters.")
+        try:
+            return cls(
+                id=uuid4(),
+                conversation_id=conversation_id,
+                sender_id=sender_id,
+                type=type,
+                content=content,
+                mime_type=mime_type,
+                filename=filename,
+                responding_to=responding_to,
+            )
+        except ValidationError as e:
+            raise InvalidMessageError(str(e)) from e
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
 
 
-class Conversation(BaseModel):
-    id: UUID
-    atendimento_id: UUID
-    participants: list[UUID]
-    created_at: datetime
+class Conversation(Document):
+    ticket_id: PydanticObjectId
+    agent_id: UUID | None
+    client_id: UUID
     sequential_index: int = 0
-    parent_id: UUID | None = None
-    children_ids: list[UUID] | None = None
-    closed_at: datetime | None = None
-    messages: list[ChatMessage]
+    parent_id: PydanticObjectId | None = None
+    children_ids: list[PydanticObjectId] = Field(default_factory=list[PydanticObjectId])
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
+    messages: list[ChatMessage] = Field(default_factory=list[ChatMessage])
 
-    @classmethod
-    def create(
-        cls,
-        atendimento_id: UUID,
-        participants: list[UUID],
-        sequential_index: int = 0,
-        parent_id: UUID | None = None,
-    ) -> "Conversation":
-        return cls(
-            id=uuid4(),
-            atendimento_id=atendimento_id,
-            participants=participants,
-            created_at=datetime.now(UTC),
-            sequential_index=sequential_index,
-            parent_id=parent_id,
-            children_ids=[],
-            messages=[],
-        )
+    class Settings:
+        name = "conversations"
+        indexes = [IndexModel([("ticket_id", 1), ("sequential_index", 1)], unique=True)]
 
-    def add_message(self, message: ChatMessage) -> None:
-        self.messages.append(message)
+    def is_opened(self) -> bool:
+        return self.finished_at is None
 
-    def get_message(self, message_id: UUID) -> ChatMessage | None:
-        for m in self.messages:
-            if m.id == message_id:
-                return m
-        return None
+    def participants(self) -> tuple[UUID, ...]:
+        if self.agent_id is None:
+            return (self.client_id,)
+        return (self.client_id, self.agent_id)
 
-    def close(self) -> None:
-        self.closed_at = datetime.now(UTC)
 
-    def is_closed(self) -> bool:
-        return self.closed_at is not None
+class ChatParticipants(BaseModel):
+    id: PydanticObjectId = Field(alias="_id")
+    client_id: UUID
+    agent_id: UUID | None

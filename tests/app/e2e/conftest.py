@@ -1,10 +1,12 @@
 import asyncio
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -13,15 +15,17 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.db.mongo.dependencies import get_mongo_session
 from app.db.postgres.base import Base
 from app.db.postgres.dependencies import get_postgres_session
+from app.domains.auth.entities import UserWithRoles
 from app.main import create_app
 from app.seed.seed import seed_permissions, seed_role_permissions, seed_roles
 
 settings = get_settings()
 
 ADMIN_ROLE_ID = 1
-
+AGENT_ROLE_ID = 3
 
 # ────────────────────────────────────────────────────────
 # Session-scoped DDL (sync fixture → asyncio.run)
@@ -93,18 +97,41 @@ async def db_session(async_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, 
 
 
 @pytest.fixture
+def mongo_client() -> AsyncIOMotorClient[dict[str,Any]]:
+    client: AsyncIOMotorClient[dict[str,Any]] = AsyncIOMotorClient(settings.test_mongo_bd_url)
+    return client
+
+
+@pytest.fixture
+async def mongo_db_conn(
+    mongo_client: AsyncIOMotorClient[dict[str,Any]]
+) -> AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]:
+    db: AsyncIOMotorDatabase[dict[str,Any]] = mongo_client.get_default_database()
+    yield db
+    mongo_client.close()
+
+
+@pytest.fixture
 def app() -> FastAPI:
     return create_app()
 
 
 @pytest.fixture
-async def client(app: FastAPI, db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def client(
+    app: FastAPI,
+    db_session: AsyncSession,
+    mongo_db_conn: AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]
+    ) -> AsyncGenerator[AsyncClient, None]:
     """AsyncClient wired to the test DB session via dependency override."""
 
     async def _override_session() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
+    async def _override_mongo() -> AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]:
+        yield mongo_db_conn
+
     app.dependency_overrides[get_postgres_session] = _override_session
+    app.dependency_overrides[get_mongo_session] = _override_mongo
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -200,6 +227,24 @@ class AuthActions:
         await self.db_session.flush()
         return data
 
+    async def register_agent(
+        self,
+        email: str = "agent@test.com",
+        username: str = "agentuser",
+        password: str = "Secure123!",
+    ) -> dict[str, Any]:
+        data = await self.register(email, username, password)
+        user_id = data["id"]
+        await self.db_session.execute(
+            text(
+                "INSERT INTO user_roles (user_id, role_id)"
+                " VALUES (:uid, :rid) ON CONFLICT DO NOTHING"
+            ),
+            {"uid": user_id, "rid": AGENT_ROLE_ID},
+        )
+        await self.db_session.flush()
+        return data
+
     async def register_and_login_admin(
         self,
         email: str = "admin@test.com",
@@ -212,6 +257,17 @@ class AuthActions:
 
     def auth_headers(self, access_token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {access_token}"}
+
+    async def me(self, access_token: str) -> UserWithRoles:
+        r = await self.client.get(
+            "/api/auth/me",
+            headers = self.auth_headers(access_token)
+        )
+
+        assert r.status_code == 200
+        res = r.json()["data"]
+        res["id"] = UUID(res["id"])
+        return UserWithRoles(**res)
 
 
 @pytest.fixture

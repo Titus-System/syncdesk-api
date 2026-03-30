@@ -1,66 +1,145 @@
 from functools import lru_cache
-from uuid import UUID, uuid4
+from typing import Any, cast
 
-from fastapi import WebSocket
+from beanie import PydanticObjectId
+from fastapi import WebSocket, WebSocketException
+from fastapi.websockets import WebSocketState
+
+from app.core.logger import get_logger
+from app.core.response import WSResponseFactory
+from app.domains.auth.entities import User, UserWithRoles
+from app.domains.live_chat.exceptions import ChatRoomNotFoundError, InvalidMessageError
 
 from .entities import ChatMessage
 
 
+class ChatConnection:
+    def __init__(
+        self, ws: WebSocket, response: WSResponseFactory, user: User | UserWithRoles | None = None
+    ) -> None:
+        self.ws = ws
+        self.response = response
+        self.user = user
+
+    async def send(self, message: ChatMessage) -> None:
+        await self.ws.send_json(self.response.success(message.to_payload()))
+
+    async def send_error(self, exc: WebSocketException) -> None:
+        await self.ws.send_json(self.response.error(exc))
+
+    async def room_join_confirmation(self, conversation_id: PydanticObjectId) -> None:
+        content = f"Joined to chat room {conversation_id}"
+        await self.send(ChatMessage.create(conversation_id, "System", "text", content))
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        await self.ws.close(code, reason or "Connection fulfilled it's purpose.")
+
+    async def receive_payload(self) -> dict[str, Any]:
+        try:
+            payload = await self.ws.receive_json()
+            if not isinstance(payload, dict):
+                raise InvalidMessageError("Payload must be a JSON object.")
+        except ValueError as err:
+            raise InvalidMessageError(f"Payload error: {repr(err)}") from err
+
+        return cast(dict[str, Any], payload)
+
+
 class ChatRoom:
-    def __init__(self, id: UUID):
+    def __init__(self, id: PydanticObjectId):
         self.id = id
-        self.connections: list[WebSocket] = []
+        self.connections: list[ChatConnection] = []
+        self.dead: list[ChatConnection] = []
 
     @classmethod
-    def create(cls, id: UUID | None = None) -> "ChatRoom":
-        return cls(id=uuid4() if id is None else id)
+    def create(cls, id: PydanticObjectId | None = None) -> "ChatRoom":
+        return cls(id=PydanticObjectId() if id is None else id)
 
-    async def join(self, ws: WebSocket) -> None:
-        self.connections.append(ws)
-        await ws.send_text(f"Connected to room {self.id}")
+    async def join(self, conn: ChatConnection) -> None:
+        self.connections.append(conn)
+        await conn.room_join_confirmation(self.id)
+        content = f"{conn.user.name if conn.user else ''} Joined chat room."
+        message = ChatMessage.create(self.id, "System", "text", content)
+        await self.broadcast(message)
 
-    async def leave(self, ws: WebSocket) -> None:
-        self.connections.remove(ws)
+    async def leave(self, conn: ChatConnection) -> None:
+        if conn in self.connections:
+            self.connections.remove(conn)
+        if conn.ws.client_state == WebSocketState.CONNECTED:
+            await conn.close()
+
+    async def close(self) -> None:
+        for c in self.connections:
+            await c.close(1001, "Chat Room is being closed by the server.")
 
     def is_empty(self) -> bool:
         return len(self.connections) <= 0
 
-    async def broadcast(self, message: ChatMessage) -> None:
-        json_payload = message.model_dump(mode="json", exclude_none=True)
-        dead: list[WebSocket] = []
-        for ws in self.connections:
-            try:
-                await ws.send_json(json_payload)
-            except Exception:
-                dead.append(ws)
+    def _drop_dead_connections(self) -> None:
+        for ws in self.dead:
+            if ws in self.connections:
+                self.connections.remove(ws)
+        self.dead = []
 
-        for ws in dead:
-            self.connections.remove(ws)
+    async def broadcast(self, message: ChatMessage) -> None:
+        for conn in self.connections:
+            try:
+                await conn.send(message)
+            except (WebSocketException, RuntimeError, OSError):
+                self.dead.append(conn)
+            except Exception:
+                # Keep unexpected failures visible instead of silently dropping them.
+                get_logger().error(
+                    f"Unexpected error broadcasting message {message.id} in room {self.id}.",
+                    exc_info=True,
+                )
+                self.dead.append(conn)
+        self._drop_dead_connections()
 
 
 class ChatManager:
     def __init__(self) -> None:
-        self.rooms: dict[UUID, ChatRoom] = {}
+        self.rooms: dict[PydanticObjectId, ChatRoom] = {}
+        self.logger = get_logger()
 
-    def open_room(self, id: UUID) -> UUID:
+    def open_room(self, id: PydanticObjectId | None) -> PydanticObjectId:
+        if id is None:
+            id = PydanticObjectId()
         room = ChatRoom.create(id)
         self.rooms[room.id] = room
         return room.id
 
-    async def close_room(self, room_id: UUID) -> None:
-        for ws in self.rooms[room_id].connections:
-            await ws.close()
-        del self.rooms[room_id]
+    async def close_room(self, room_id: PydanticObjectId) -> None:
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            return
+        await room.close()
+        self.rooms.pop(room_id, None)
 
-    async def join_room(self, room_id: UUID, ws: WebSocket) -> None:
-        await self.rooms[room_id].join(ws)
+    async def join_room(self, room_id: PydanticObjectId, conn: ChatConnection) -> None:
+        if room_id not in self.rooms:
+            self.open_room(room_id)
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            raise ChatRoomNotFoundError(f"room_id={room_id}")
+        await room.join(conn)
 
-    async def leave_room(self, room_id: UUID, ws: WebSocket) -> None:
-        await self.rooms[room_id].leave(ws)
-        await ws.close()
+    async def leave_room(self, room_id: PydanticObjectId, conn: ChatConnection) -> None:
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            return
+        await room.leave(conn)
+        if room.is_empty():
+            self.rooms.pop(room_id, None)
 
-    async def broadcast(self, room_id: UUID, message: ChatMessage) -> None:
-        await self.rooms[room_id].broadcast(message)
+    async def broadcast(self, room_id: PydanticObjectId, message: ChatMessage) -> None:
+        room = self.rooms.get(room_id, None)
+        if room is None:
+            self.logger.warning(
+                f"Broadcast dropped: room {room_id} was not found for message {message.id}."
+            )
+            return
+        await room.broadcast(message)
 
 
 @lru_cache

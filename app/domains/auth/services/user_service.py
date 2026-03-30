@@ -4,7 +4,7 @@ from app.db.exceptions import ResourceNotFoundError
 from app.domains.auth.exceptions import UserCannotLoseLoginMethodError
 from app.domains.auth.repositories.user_repository import UserRepository
 
-from ..entities import Permission, User, UserWithRoles
+from ..entities import Permission, Role, User, UserWithRoles
 from ..schemas import CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
 
 
@@ -59,3 +59,9 @@ class UserService:
 
     async def get_user_permissions(self, id: UUID) -> list[Permission]:
         return await self.repo.get_user_permissions(id)
+
+    async def user_exists(self, user_id: UUID) -> bool:
+        return await self.repo.user_exists(user_id)
+
+    async def get_user_roles(self, user_id: UUID) -> list[Role]:
+        return await self.repo.get_user_roles(user_id)

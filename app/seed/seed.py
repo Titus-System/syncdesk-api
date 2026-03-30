@@ -9,6 +9,7 @@ async def seed_roles(session: AsyncSession) -> None:
     roles = [
         {"id": 1, "name": "admin", "description": "system administrator"},
         {"id": 2, "name": "user", "description": "common user"},
+        {"id": 3, "name": "agent", "description": "attends to the clients problems"},
     ]
 
     await session.execute(insert(Role).values(roles))
@@ -45,6 +46,12 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "session:create", "description": "Create sessions (login)"},
         {"name": "session:refresh", "description": "Refresh sessions"},
         {"name": "session:delete", "description": "Delete sessions (logout)"},
+        # Chat
+        {"name": "chat:create", "description": "Create chat entry in the database"},
+        {"name": "chat:read", "description": "Read chat history"},
+        {"name": "chat:update", "description": "Update chat attributes"},
+        {"name": "chat:add_message", "description": "Send messages in a Chat"},
+        {"name": "chat:set_agent", "description": "Set agent to conversation"},
     ]
 
     await session.execute(insert(Permission).values(permissions))
@@ -52,8 +59,9 @@ async def seed_permissions(session: AsyncSession) -> None:
 
 async def seed_role_permissions(session: AsyncSession) -> None:
     relations = {
-        "admin": ["user:%", "role:%", "permission:%"],
-        "user": ["session:%"],
+        "admin": ["user:%", "role:%", "permission:%", "chat:%"],
+        "user": ["session:%", "chat:%"],
+        "agent": ["session:%", "chat:%"],
     }
 
     for role_name, patterns in relations.items():

@@ -1,3 +1,4 @@
-from .routers import live_chat_router
+from .entities import Conversation
+from .routers import chat_router, conversation_router
 
-__all__ = ["live_chat_router"]
+__all__ = ["Conversation", "chat_router", "conversation_router"]

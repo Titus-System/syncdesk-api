@@ -53,6 +53,7 @@ class AuthService:
             email=dto.email,
             password_hash=password_hash,
             username=dto.username,
+            name=dto.name,
             role_ids=default_role_ids,
         )
         user = await self.user_service.create(create_user_dto)
