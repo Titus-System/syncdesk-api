@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.http.schemas import SessionDeviceInfo
+from app.core.http.schemas import DeviceType, SessionDeviceInfo
 from app.domains.auth.entities import Session
 from app.domains.auth.enums import SessionStatus
 from app.domains.auth.models import User as UserModel
@@ -159,6 +159,27 @@ class TestSessionRepository:
         assert session.refresh_token_hash == dto.refresh_token_hash
         assert session.expires_at == dto.expires_at
         assert session.is_valid()
+
+    @pytest.mark.asyncio
+    async def test_create_session_with_device_type_enum_persists_jsonb(
+        self,
+        create_dto: CreateSessionDTO,
+        session_repo: SessionRepository,
+    ) -> None:
+        dto = create_dto
+        dto.device_info = SessionDeviceInfo(
+            user_agent="Mozilla/5.0",
+            browser="Chromium",
+            app_version="146",
+            os="Android",
+            device_type=DeviceType.MOBILE,
+        )
+
+        session = await session_repo.create(dto)
+        assert session is not None
+        assert session.device_info is not None
+        assert session.device_info.device_type == DeviceType.MOBILE
+        assert session.device_info.browser == "Chromium"
 
     @pytest.mark.asyncio
     async def test_create_session_existing_token_hash_should_fail(

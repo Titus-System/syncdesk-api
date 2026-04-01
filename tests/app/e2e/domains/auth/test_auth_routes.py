@@ -73,6 +73,56 @@ class TestRegister:
         assert "user" in role_names
 
     @pytest.mark.asyncio
+    async def test_register_with_device_client_hints_headers(
+        self, client: AsyncClient
+    ) -> None:
+        """Regression: DeviceType enum from middleware must be JSON-serializable in session JSONB."""
+        r = await client.post(
+            "/api/auth/register",
+            json={
+                "email": "devicehints@test.com",
+                "username": "devicehints",
+                "password": "Pass1234!",
+            },
+            headers={
+                "user-agent": "Mozilla/5.0",
+                "sec-ch-ua": '"Chromium";v="146", "Not A(Brand)";v="24"',
+                "sec-ch-ua-mobile": "?1",
+                "sec-ch-ua-platform": '"Android"',
+            },
+        )
+        assert r.status_code == 201
+        data = r.json()["data"]
+        assert data["email"] == "devicehints@test.com"
+        assert "access_token" in data
+        assert "refresh_token" in data
+
+    @pytest.mark.asyncio
+    async def test_register_with_malformed_client_hints_still_succeeds(
+        self, client: AsyncClient
+    ) -> None:
+        """Malformed client hints should not break registration/session creation."""
+        r = await client.post(
+            "/api/auth/register",
+            json={
+                "email": "badch@test.com",
+                "username": "badch",
+                "password": "Pass1234!",
+            },
+            headers={
+                "user-agent": "OddAgent/1.0",
+                "sec-ch-ua": "not-a-valid-ch-ua-format",
+                "sec-ch-ua-mobile": "?2",
+                "sec-ch-ua-platform": "UnknownOS",
+            },
+        )
+        assert r.status_code == 201
+        data = r.json()["data"]
+        assert data["email"] == "badch@test.com"
+        assert "access_token" in data
+        assert "refresh_token" in data
+
+    @pytest.mark.asyncio
     async def test_register_ignores_role_ids_field(
         self, client: AsyncClient, auth: AuthActions
     ) -> None:
@@ -284,6 +334,53 @@ class TestRefresh:
         r = await client.post("/api/auth/refresh", json={"refresh_token": "nope"})
         assert r.status_code == 403
 
+    @pytest.mark.asyncio
+    async def test_refresh_token_replay_revokes_current_session(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        """Reusing an already-rotated refresh token should invalidate the session."""
+        tokens = await auth.register_and_login(email="replay@test.com", username="replay")
+        headers = auth.auth_headers(tokens["access_token"])
+
+        first = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+        assert first.status_code == 200
+
+        replay = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+        assert replay.status_code == 401
+
+        me_after_replay = await client.get("/api/auth/me", headers=headers)
+        assert me_after_replay.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_refresh_same_token_twice_immediately_only_first_succeeds(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        """Back-to-back refresh attempts with same token must not both succeed."""
+        tokens = await auth.register_and_login(email="race@test.com", username="race")
+        headers = auth.auth_headers(tokens["access_token"])
+
+        first = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+        second = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+
+        assert first.status_code == 200
+        assert second.status_code in {401, 404}
+
 
 class TestLogout:
     """POST /api/auth/logout"""
@@ -309,6 +406,19 @@ class TestLogout:
     async def test_logout_no_token(self, client: AsyncClient) -> None:
         r = await client.post("/api/auth/logout")
         assert r.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_logout_twice_second_request_is_rejected(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login(email="logouttwice@test.com", username="logouttwice")
+        headers = auth.auth_headers(tokens["access_token"])
+
+        first = await client.post("/api/auth/logout", headers=headers)
+        assert first.status_code == 200
+
+        second = await client.post("/api/auth/logout", headers=headers)
+        assert second.status_code == 401
 
 
 class TestFullAuthFlow:
