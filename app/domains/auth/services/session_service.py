@@ -51,9 +51,11 @@ class SessionService:
 
     async def create(self, dto: CreateSessionDTO) -> tuple[Session, str]:
         await self.repo.free_active_sessions_limit(dto.user_id, self.max_active_sessions)
-        session_model = await self.repo.add(
-            SessionModel(**dto.model_dump(exclude={"role_names"}, exclude_none=True))
-        )
+        session_data = dto.model_dump(exclude={"role_names"}, exclude_none=True)
+        if dto.device_info is not None:
+            session_data["device_info"] = dto.device_info.model_dump(mode="json", exclude_none=True)
+
+        session_model = await self.repo.add(SessionModel(**session_data))
         refresh_token = self.jwt_service.create_refresh_token(
             session_model.user_id, dto.role_names, session_model.id
         )
