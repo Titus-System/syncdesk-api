@@ -12,23 +12,12 @@ from ..schemas import (
     ReplacePermissionDTO,
     UpdatePermissionDTO,
 )
-from .swagger_utils import (
-    add_perm_to_roles_swagger,
-    create_perm_swagger,
-    delete_perm_swagger,
-    get_perm_roles_swagger,
-    get_perm_swagger,
-    list_perms_swagger,
-    replace_perm_swagger,
-    update_perm_swagger,
-)
 
 permission_router = APIRouter()
 
 
 @permission_router.post(
-    "/", tags=["Permissions"], dependencies=[require_permission("permission:create")],
-    **create_perm_swagger,
+    "/", tags=["Permissions"], dependencies=[require_permission("permission:create")]
 )
 async def create_permission(
     dto: CreatePermissionDTO,
@@ -47,8 +36,7 @@ async def create_permission(
 
 
 @permission_router.get(
-    "/", tags=["Permissions"], dependencies=[require_permission("permission:list")],
-    **list_perms_swagger,
+    "/", tags=["Permissions"], dependencies=[require_permission("permission:list")]
 )
 async def get_permissions(
     service: PermissionServiceDep,
@@ -59,8 +47,7 @@ async def get_permissions(
 
 
 @permission_router.get(
-    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:read")],
-    **get_perm_swagger,
+    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:read")]
 )
 async def get_permission_by_id(
     id: int,
@@ -77,8 +64,7 @@ async def get_permission_by_id(
 
 
 @permission_router.put(
-    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:replace")],
-    **replace_perm_swagger,
+    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:replace")]
 )
 async def replace_permission(
     id: int,
@@ -97,8 +83,7 @@ async def replace_permission(
 
 
 @permission_router.patch(
-    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:update")],
-    **update_perm_swagger,
+    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:update")]
 )
 async def update_permission(
     id: int,
@@ -117,8 +102,7 @@ async def update_permission(
 
 
 @permission_router.delete(
-    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:delete")],
-    **delete_perm_swagger,
+    "/{id}", tags=["Permissions"], dependencies=[require_permission("permission:delete")]
 )
 async def delete_permission(
     id: int,
@@ -142,7 +126,6 @@ async def delete_permission(
     "/{id}/roles",
     tags=["Permissions", "Roles"],
     dependencies=[require_permission("permission:read_roles")],
-    **get_perm_roles_swagger,
 )
 async def get_permission_roles(
     id: int,
@@ -162,7 +145,6 @@ async def get_permission_roles(
     "/{id}/roles",
     tags=["Permissions", "Roles"],
     dependencies=[require_permission("permission:add_to_roles")],
-    **add_perm_to_roles_swagger,
 )
 async def add_permission_to_roles(
     id: int,

@@ -7,16 +7,10 @@ from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.dependencies import CurrentUserSessionDep, UserServiceDep, require_permission
+from app.schemas.response import GenericSuccessContent
 
+from ..entities import User
 from ..schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
-from .swagger_utils import (
-    add_user_roles_swagger,
-    create_user_swagger,
-    get_user_swagger,
-    list_users_swagger,
-    replace_user_swagger,
-    update_user_swagger,
-)
 
 user_router = APIRouter()
 
@@ -24,8 +18,8 @@ user_router = APIRouter()
 @user_router.post(
     "/",
     tags=["Users"],
+    response_model=GenericSuccessContent[User],
     dependencies=[require_permission("user:create")],
-    **create_user_swagger,
 )
 async def create_user(
     dto: CreateUserDTO,
@@ -46,8 +40,8 @@ async def create_user(
 @user_router.get(
     "/",
     tags=["Users"],
+    response_model=GenericSuccessContent[list[User]],
     dependencies=[require_permission("user:list")],
-    **list_users_swagger,
 )
 async def get_users(
     _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
@@ -58,10 +52,7 @@ async def get_users(
     )
 
 
-@user_router.get(
-    "/{id}", tags=["Users"], dependencies=[require_permission("user:read")],
-    **get_user_swagger,
-)
+@user_router.get("/{id}", tags=["Users"], dependencies=[require_permission("user:read")])
 async def get_user(
     id: UUID, _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
@@ -73,10 +64,7 @@ async def get_user(
     return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
 
 
-@user_router.put(
-    "/{id}", tags=["Users"], dependencies=[require_permission("user:replace")],
-    **replace_user_swagger,
-)
+@user_router.put("/{id}", tags=["Users"], dependencies=[require_permission("user:replace")])
 async def replace_user(
     id: UUID,
     dto: ReplaceUserDTO,
@@ -95,10 +83,7 @@ async def replace_user(
     )
 
 
-@user_router.patch(
-    "/{id}", tags=["Users"], dependencies=[require_permission("user:update")],
-    **update_user_swagger,
-)
+@user_router.patch("/{id}", tags=["Users"], dependencies=[require_permission("user:update")])
 async def update_user(
     id: UUID,
     dto: UpdateUserDTO,
@@ -118,8 +103,7 @@ async def update_user(
 
 
 @user_router.post(
-    "/{id}/roles", tags=["users", "Roles"], dependencies=[require_permission("user:add_roles")],
-    **add_user_roles_swagger,
+    "/{id}/roles", tags=["users", "Roles"], dependencies=[require_permission("user:add_roles")]
 )
 async def add_user_roles(
     id: UUID,
