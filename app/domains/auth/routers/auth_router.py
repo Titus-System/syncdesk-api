@@ -1,12 +1,9 @@
-from typing import Any
-
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
 from app.db.exceptions import ResourceAlreadyExistsError
-from app.schemas.response import GenericSuccessContent
 
 from ..dependencies import AuthServiceDep, CurrentUserSessionDep, UserServiceDep
 from ..exceptions import (
@@ -17,37 +14,22 @@ from ..exceptions import (
     UserPasswordNotConfiguredError,
 )
 from ..schemas import (
-    LoginResponse,
     RefreshSessionRequest,
     RegisterUserRequest,
-    UserCreatedResponse,
     UserLoginRequest,
+)
+from .swagger_utils import (
+    get_me_swagger,
+    login_swagger,
+    logout_swagger,
+    refresh_swagger,
+    register_swagger,
 )
 
 auth_router = APIRouter()
 
 
-register_responses: dict[int | str, dict[str, Any]] = {
-    status.HTTP_201_CREATED: {
-        "model": UserCreatedResponse,
-        "description": "User created successfully.",
-    }
-}
-
-
-login_responses: dict[str | int, dict[str, Any]] = {
-    status.HTTP_200_OK: {"description": "Login successful"},
-    status.HTTP_404_NOT_FOUND: {"description": "User not found"},
-    status.HTTP_400_BAD_REQUEST: {"description": "Password not configured"},
-    status.HTTP_401_UNAUTHORIZED: {"description": "Invalid password"},
-}
-
-login_response_model = GenericSuccessContent[LoginResponse]
-
-
-@auth_router.post(
-    "/login", tags=["Auth"], response_model=login_response_model, responses=login_responses
-)
+@auth_router.post("/login", tags=["Auth"], **login_swagger)
 async def login(
     dto: UserLoginRequest, service: AuthServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
@@ -64,7 +46,7 @@ async def login(
         ) from e
 
 
-@auth_router.post("/register", tags=["Auth"], responses=register_responses)
+@auth_router.post("/register", tags=["Auth"], **register_swagger)
 async def register_common_user(
     dto: RegisterUserRequest, service: AuthServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
@@ -82,7 +64,7 @@ async def register_common_user(
         ) from e
 
 
-@auth_router.post("/refresh", tags=["Auth"])
+@auth_router.post("/refresh", tags=["Auth"], **refresh_swagger)
 async def refresh(
     dto: RefreshSessionRequest,
     current_user: CurrentUserSessionDep,
@@ -111,7 +93,7 @@ async def refresh(
         ) from e
 
 
-@auth_router.post("/logout", tags=["Auth"])
+@auth_router.post("/logout", tags=["Auth"], **logout_swagger)
 async def logout(
     user_session: CurrentUserSessionDep,
     response: ResponseFactoryDep,
@@ -125,7 +107,7 @@ async def logout(
     )
 
 
-@auth_router.get("/me", tags=["Auth"])
+@auth_router.get("/me", tags=["Auth"], **get_me_swagger)
 async def get_me(
     user_session: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
