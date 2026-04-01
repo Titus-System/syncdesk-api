@@ -1,12 +1,13 @@
 import asyncio
 
+from alembic import command as alembic_command
+from alembic.config import Config as AlembicConfig
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
 from app.core.logger import get_logger
 
-from .base import Base
 from .engine import engine
 
 
@@ -14,7 +15,7 @@ async def init_postgres_db() -> None:
     for _ in range(10):
         try:
             await _create_db_if_not_exists()
-            await _create_tables()
+            await _run_migrations()
             return
         except Exception as e:
             get_logger().error(f"[{_ + 1}] Error connecting to database: {e.with_traceback(None)}")
@@ -41,8 +42,9 @@ async def _create_db_if_not_exists() -> None:
             get_logger().info(f"Database {settings.POSTGRES_DB} created successfully.")
 
 
-async def _create_tables() -> None:
-    engine = create_async_engine(get_settings().database_url, future=True)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+async def _run_migrations() -> None:
+    loop = asyncio.get_event_loop()
+    alembic_cfg = AlembicConfig("alembic.ini")
+    get_logger().info("Running Alembic migrations (upgrade head)...")
+    await loop.run_in_executor(None, alembic_command.upgrade, alembic_cfg, "head")
+    get_logger().info("Alembic migrations applied successfully.")
