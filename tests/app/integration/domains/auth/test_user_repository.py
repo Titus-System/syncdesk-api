@@ -640,3 +640,206 @@ class TestUserRepository:
     async def test_update_password_nonexistent_user(self, user_repo: UserRepository) -> None:
         result = await user_repo.update_password(uuid4(), "new_hash")
         assert result is None
+
+    # ── compliance flags round-trip (must_change_password / must_accept_terms) ──
+
+    @pytest.mark.asyncio
+    async def test_create_user_persists_must_change_password(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=False,
+        )
+        user = await user_repo.create(dto)
+        assert user.must_change_password is True
+        assert user.must_accept_terms is False
+
+    @pytest.mark.asyncio
+    async def test_create_user_persists_must_accept_terms(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=False,
+            must_accept_terms=True,
+        )
+        user = await user_repo.create(dto)
+        assert user.must_change_password is False
+        assert user.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_create_user_defaults_for_compliance_flags(
+        self, user_repo: UserRepository
+    ) -> None:
+        """must_change_password defaults to False, must_accept_terms defaults to True."""
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+        )
+        user = await user_repo.create(dto)
+        assert user.must_change_password is False
+        assert user.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_get_by_id_returns_compliance_flags(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=True,
+        )
+        created = await user_repo.create(dto)
+        fetched = await user_repo.get_by_id(created.id)
+        assert fetched is not None
+        assert fetched.must_change_password is True
+        assert fetched.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_get_by_email_returns_compliance_flags(
+        self, user_repo: UserRepository
+    ) -> None:
+        email = f"attr_{uuid4().hex[:8]}@example.com"
+        dto = CreateUserDTO(
+            email=email,
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=True,
+        )
+        await user_repo.create(dto)
+        fetched = await user_repo.get_by_email(email)
+        assert fetched is not None
+        assert fetched.must_change_password is True
+        assert fetched.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_get_all_returns_compliance_flags(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto1 = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=False,
+        )
+        dto2 = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=False,
+            must_accept_terms=True,
+        )
+        await user_repo.create(dto1)
+        await user_repo.create(dto2)
+        users = await user_repo.get_all()
+        user_map = {u.email: u for u in users}
+        u1 = user_map[dto1.email]
+        u2 = user_map[dto2.email]
+        assert u1.must_change_password is True
+        assert u1.must_accept_terms is False
+        assert u2.must_change_password is False
+        assert u2.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_get_active_returns_compliance_flags(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=True,
+        )
+        await user_repo.create(dto)
+        users = await user_repo.get_active()
+        assert len(users) >= 1
+        matched = [u for u in users if u.email == dto.email]
+        assert len(matched) == 1
+        assert matched[0].must_change_password is True
+        assert matched[0].must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_get_with_roles_returns_compliance_flags(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=True,
+        )
+        created = await user_repo.create(dto)
+        fetched = await user_repo.get_with_roles(created.id)
+        assert fetched is not None
+        assert fetched.must_change_password is True
+        assert fetched.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_get_by_email_with_roles_returns_compliance_flags(
+        self, user_repo: UserRepository
+    ) -> None:
+        email = f"attr_{uuid4().hex[:8]}@example.com"
+        dto = CreateUserDTO(
+            email=email,
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=True,
+        )
+        await user_repo.create(dto)
+        fetched = await user_repo.get_by_email_with_roles(email)
+        assert fetched is not None
+        assert fetched.must_change_password is True
+        assert fetched.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_create_with_compliance_flags_true(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=True,
+            must_accept_terms=True,
+        )
+        user = await user_repo.create(dto)
+        assert user.must_change_password is True
+        assert user.must_accept_terms is True
+        fetched = await user_repo.get_by_id(user.id)
+        assert fetched is not None
+        assert fetched.must_change_password is True
+        assert fetched.must_accept_terms is True
+
+    @pytest.mark.asyncio
+    async def test_create_with_compliance_flags_false(
+        self, user_repo: UserRepository
+    ) -> None:
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+            must_change_password=False,
+            must_accept_terms=False,
+        )
+        user = await user_repo.create(dto)
+        assert user.must_change_password is False
+        assert user.must_accept_terms is False
+
+    @pytest.mark.asyncio
+    async def test_update_password_resets_must_change_preserves_must_accept(
+        self, user_repo: UserRepository
+    ) -> None:
+        """update_password clears must_change_password but must_accept_terms stays."""
+        dto = CreateUserDTO(
+            email=f"attr_{uuid4().hex[:8]}@example.com",
+            password_hash="old_hash",
+            must_change_password=True,
+            must_accept_terms=True,
+        )
+        user = await user_repo.create(dto)
+        updated = await user_repo.update_password(user.id, "new_hash")
+        assert updated is not None
+        assert updated.must_change_password is False
+        assert updated.must_accept_terms is True

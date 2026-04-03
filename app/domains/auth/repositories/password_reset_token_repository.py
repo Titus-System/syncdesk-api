@@ -64,7 +64,8 @@ class PasswordResetTokenRepository:
 
         await self.db.commit()
 
-        model = PasswordResetTokenModel(**row)
+        coerced = {**row, "purpose": TokenPurpose(row["purpose"])}
+        model = PasswordResetTokenModel(**coerced)
         return self._to_entity(model)
 
     async def invalidate_user_tokens(self, user_id: UUID, purpose: TokenPurpose) -> None:

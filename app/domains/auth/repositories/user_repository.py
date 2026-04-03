@@ -146,6 +146,8 @@ class UserRepository:
             oauth_provider_id=row.oauth_provider_id,
             is_active=row.is_active,
             is_verified=row.is_verified,
+            must_change_password=row.must_change_password,
+            must_accept_terms=row.must_accept_terms,
             roles=roles,
         )
 
@@ -168,6 +170,8 @@ class UserRepository:
             oauth_provider_id=row.oauth_provider_id,
             is_active=row.is_active,
             is_verified=row.is_verified,
+            must_change_password=row.must_change_password,
+            must_accept_terms=row.must_accept_terms,
             roles=roles,
         )
 

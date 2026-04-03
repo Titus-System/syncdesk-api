@@ -3,8 +3,12 @@ from uuid import UUID
 
 from app.core.config import get_settings
 from app.core.http.schemas import SessionDeviceInfo
+from app.core.logger import get_logger
 from app.core.security import JWTService, PasswordSecurity
 from app.domains.auth.entities import Session, User, UserWithRoles
+from app.domains.auth.enums import TokenPurpose
+from app.domains.auth.schemas.api_schemas import AdminRegisterUserRequest, LoginResponse
+from app.domains.auth.services.password_service import PasswordService
 
 from ..exceptions import (
     InvalidCredentialsError,
@@ -33,12 +37,15 @@ class AuthService:
         jwt_service: JWTService,
         password_security: PasswordSecurity,
         role_service: RoleService,
+        password_service: PasswordService,
     ):
         self.user_service = user_service
         self.session_service = session_service
         self.jwt_service = jwt_service
         self.passwordSecurity = password_security
         self.role_service = role_service
+        self.password_service = password_service
+        self.logger = get_logger()
 
     async def register(
         self, dto: RegisterUserRequest, device_info: SessionDeviceInfo | None = None
@@ -71,13 +78,13 @@ class AuthService:
 
     async def login(
         self, dto: UserLoginRequest, device_info: SessionDeviceInfo | None = None
-    ) -> tuple[str, str]:
+    ) -> LoginResponse:
         user = await self.user_service.get_by_email_with_roles(email=dto.email)
         if user is None:
             raise UserNotFoundError()
 
         password_hash = user.password_hash
-        if password_hash is None:
+        if not password_hash:
             raise UserPasswordNotConfiguredError()
 
         is_authenticated = self.passwordSecurity.verify_password(dto.password, password_hash)
@@ -85,7 +92,16 @@ class AuthService:
             raise InvalidPasswordError(user.email)
 
         role_names = [r.name for r in user.roles] if user.roles is not None else []
-        return await self.session_service.init_session(user.id, role_names, device_info)
+        access_token, refresh_token = await self.session_service.init_session(
+            user.id, role_names, device_info
+        )
+        response = LoginResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            must_accept_terms=user.must_accept_terms,
+            must_change_password=user.must_change_password,
+        )
+        return response
 
     async def _validate_refresh_request(
         self,
@@ -165,3 +181,26 @@ class AuthService:
 
     async def logout(self, user: User, session: Session) -> None:
         await self.session_service.revoke(session.id)
+
+    async def admin_register(self, dto: AdminRegisterUserRequest) -> UserWithRoles:
+        password = self.password_service.generate_random_password()
+        password_hash = self.passwordSecurity.generate_password_hash(password)
+
+        create_dto = CreateUserDTO(
+            email=dto.email,
+            password_hash=password_hash,
+            name=dto.name,
+            role_ids=dto.role_ids,
+            must_change_password=True,
+        )
+
+        user = await self.user_service.create(create_dto)
+
+        raw_token = await self.password_service.create_reset_token(user.id, TokenPurpose.INVITE)
+
+        try:
+            await self.password_service.send_welcome_email(user, raw_token, password)
+        except Exception:
+            self.logger.error("Welcome email dispatch failed after admin_register", exc_info=True)
+
+        return user
