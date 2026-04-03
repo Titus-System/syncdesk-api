@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     ENVIRONMENT: str = "development"
 
+    MOBILE_FRONTEND_URL: str = "syncdesk:/"
+    WEB_FRONTEND_URL: str = "http://localhost:3000"
+
     # CORS settings
     CORS_ALLOW_ORIGINS: list[str] = ["*"]
     CORS_ALLOW_CREDENTIALS: bool = False
@@ -111,6 +114,26 @@ class Settings(BaseSettings):
         return timedelta(days=self.SESSION_EXPIRE_DAYS)
 
     MAX_CHAT_MESSAGE_CONTENT_SIZE: int = 2000
+
+    # Password Token variables
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    INVITE_TOKEN_EXPIRE_HOURS: int = 72
+
+    @property
+    def password_reset_token_timedelta(self) -> timedelta:
+        return timedelta(minutes=self.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
+    
+    @property
+    def invite_token_timedelta(self) -> timedelta:
+        return timedelta(hours=self.INVITE_TOKEN_EXPIRE_HOURS)
+    
+    RESET_TOKEN_HMAC_SECRET: str = "your_reset_token_hmac_secret"
+
+    # Email (Resend)
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "no_reply@syncdesk.pro"
+    RUN_RESEND_INTEGRATION_TESTS: bool = False
+    RESEND_TEST_TO_EMAIL: str = ""
 
     model_config = SettingsConfigDict(extra="allow", env_file=".env", env_file_encoding="utf-8")
 
