@@ -11,6 +11,12 @@ from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
+    TicketClientResponseDTO,
+    TicketCommentResponseDTO,
+    TicketCompanyResponseDTO,
+    TicketHistoryResponseDTO,
+    TicketResponseDTO,
+    TicketSearchFiltersDTO,
     UpdateTicketStatusDTO,
     UpdateTicketStatusResponseDTO,
 )
@@ -57,6 +63,10 @@ class TicketService:
             status=created_ticket.status,
             creation_date=created_ticket.creation_date,
         )
+
+    async def search_tickets(self, filters: TicketSearchFiltersDTO) -> list[TicketResponseDTO]:
+        tickets = await self.repo.search_tickets(filters)
+        return [self._to_ticket_response(ticket) for ticket in tickets]
 
     async def update_status(
         self, ticket_id: PydanticObjectId, dto: UpdateTicketStatusDTO
@@ -110,4 +120,47 @@ class TicketService:
             name=client_name,
             email=user.email,
             company=company,
+        )
+
+    def _to_ticket_response(self, ticket: Ticket) -> TicketResponseDTO:
+        return TicketResponseDTO(
+            id=str(ticket.id),
+            triage_id=str(ticket.triage_id),
+            type=ticket.type,
+            criticality=ticket.criticality,
+            product=ticket.product,
+            status=ticket.status,
+            creation_date=ticket.creation_date,
+            description=ticket.description,
+            chat_ids=[str(chat_id) for chat_id in ticket.chat_ids],
+            agent_history=[
+                TicketHistoryResponseDTO(
+                    agent_id=history.agent_id,
+                    name=history.name,
+                    level=history.level,
+                    assignment_date=history.assignment_date,
+                    exit_date=history.exit_date,
+                    transfer_reason=history.transfer_reason,
+                )
+                for history in ticket.agent_history
+            ],
+            client=TicketClientResponseDTO(
+                id=ticket.client.id,
+                name=ticket.client.name,
+                email=ticket.client.email,
+                company=TicketCompanyResponseDTO(
+                    id=ticket.client.company.id,
+                    name=ticket.client.company.name,
+                ),
+            ),
+            comments=[
+                TicketCommentResponseDTO(
+                    comment_id=comment.comment_id,
+                    author=comment.author,
+                    text=comment.text,
+                    date=comment.date,
+                    internal=comment.internal,
+                )
+                for comment in ticket.comments
+            ],
         )

@@ -38,6 +38,60 @@ class CreateTicketResponseDTO(BaseModel):
     creation_date: datetime
 
 
+class TicketSearchFiltersDTO(BaseDTO):
+    ticket_id: PydanticObjectId | None = Field(default=None, description="Ticket ObjectId.")
+    client_id: UUID | None = Field(default=None, description="Client UUID in auth domain.")
+    triage_id: PydanticObjectId | None = Field(default=None, description="Triage ObjectId.")
+    status: TicketStatus | None = Field(default=None, description="Ticket status.")
+    criticality: TicketCriticality | None = Field(default=None, description="Ticket criticality.")
+    type: TicketType | None = Field(default=None, description="Ticket type.")
+    product: str | None = Field(default=None, description="Exact product name.")
+
+
+class TicketCompanyResponseDTO(BaseModel):
+    id: UUID
+    name: str
+
+
+class TicketClientResponseDTO(BaseModel):
+    id: UUID
+    name: str
+    email: str
+    company: TicketCompanyResponseDTO
+
+
+class TicketHistoryResponseDTO(BaseModel):
+    agent_id: UUID
+    name: str
+    level: str
+    assignment_date: datetime
+    exit_date: datetime
+    transfer_reason: str
+
+
+class TicketCommentResponseDTO(BaseModel):
+    comment_id: UUID
+    author: str
+    text: str
+    date: datetime
+    internal: bool = False
+
+
+class TicketResponseDTO(BaseModel):
+    id: str
+    triage_id: str
+    type: TicketType
+    criticality: TicketCriticality
+    product: str
+    status: TicketStatus
+    creation_date: datetime
+    description: str
+    chat_ids: list[str]
+    agent_history: list[TicketHistoryResponseDTO]
+    client: TicketClientResponseDTO
+    comments: list[TicketCommentResponseDTO]
+
+
 class UpdateTicketStatusDTO(BaseDTO):
     model_config = {"json_schema_extra": {"example": {"status": "in_progress"}}}
 
