@@ -33,9 +33,13 @@ from ..schemas import (
     UserLoginRequest,
 )
 from .swagger_utils import (
+    admin_register_swagger,
+    change_password_swagger,
+    forgot_password_swagger,
     get_me_swagger,
     login_swagger,
     logout_swagger,
+    reset_password_swagger,
     refresh_swagger,
     register_swagger,
 )
@@ -136,6 +140,7 @@ async def get_me(
     "/admin/register",
     tags=["Auth"],
     dependencies=[require_permission("user:create")],
+    **admin_register_swagger,
 )
 async def admin_register_user(
     dto: AdminRegisterUserRequest,
@@ -160,6 +165,7 @@ async def admin_register_user(
     "/change-password",
     tags=["Auth"],
     dependencies=[require_permission("password:change")],
+    **change_password_swagger,
 )
 async def change_password(
     dto: ChangePasswordRequest,
@@ -181,7 +187,7 @@ async def change_password(
         ) from e
 
 
-@auth_router.post("/forgot-password", tags=["Auth"])
+@auth_router.post("/forgot-password", tags=["Auth"], **forgot_password_swagger)
 async def forgot_password(
     dto: ForgotPasswordRequest, service: PasswordServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
@@ -195,7 +201,7 @@ async def forgot_password(
     )
 
 
-@auth_router.post("/reset-password", tags=["Auth"])
+@auth_router.post("/reset-password", tags=["Auth"], **reset_password_swagger)
 async def reset_password(
     dto: ResetPasswordRequest, service: PasswordServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:

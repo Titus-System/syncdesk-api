@@ -136,6 +136,114 @@ get_me_swagger: dict[str, Any] = {
     "responses": get_me_responses,
 }
 
+admin_register_responses: dict[int | str, dict[str, Any]] = {
+    201: {
+        "description": "User registered successfully by admin.",
+        "model": GenericSuccessContent[User],
+    },
+    400: {
+        "description": "Invalid registration data (e.g. duplicate email).",
+        "model": ErrorContent,
+    },
+    403: {
+        "description": "Missing permission to create users.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": "Request body validation failed.",
+        "model": ErrorContent,
+    },
+}
+
+admin_register_swagger: dict[str, Any] = {
+    "summary": "Register a new user as admin",
+    "description": (
+        "Creates a new user account via admin permissions. "
+        "Returns 400 when registration data is invalid (for example, duplicate email)."
+    ),
+    "status_code": status.HTTP_201_CREATED,
+    "response_model": GenericSuccessContent[User],
+    "responses": admin_register_responses,
+}
+
+change_password_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Password changed successfully.",
+        "model": GenericSuccessContent[None],
+    },
+    400: {
+        "description": "Current password is incorrect.",
+        "model": ErrorContent,
+    },
+    403: {
+        "description": "Missing permission to change password.",
+        "model": ErrorContent,
+    },
+    404: {
+        "description": "User not found.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": "Request body validation failed.",
+        "model": ErrorContent,
+    },
+}
+
+change_password_swagger: dict[str, Any] = {
+    "summary": "Change current user password",
+    "description": (
+        "Changes the authenticated user's password after validating the current password."
+    ),
+    "response_model": GenericSuccessContent[None],
+    "responses": change_password_responses,
+}
+
+forgot_password_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Password reset flow triggered (always returns success).",
+        "model": GenericSuccessContent[dict[str, str]],
+    },
+    422: {
+        "description": "Request body validation failed.",
+        "model": ErrorContent,
+    },
+}
+
+forgot_password_swagger: dict[str, Any] = {
+    "summary": "Request password reset",
+    "description": (
+        "Triggers the password reset flow for a given email. "
+        "For security, the endpoint returns success even when the email is not registered."
+    ),
+    "response_model": GenericSuccessContent[dict[str, str]],
+    "responses": forgot_password_responses,
+}
+
+reset_password_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Password reset successfully.",
+        "model": GenericSuccessContent[None],
+    },
+    400: {
+        "description": "Invalid token or password reset could not be completed.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": "Request body validation failed.",
+        "model": ErrorContent,
+    },
+}
+
+reset_password_swagger: dict[str, Any] = {
+    "summary": "Reset password with token",
+    "description": (
+        "Resets the user's password using a valid reset token. "
+        "Returns 400 when the token is invalid, expired, or cannot be used."
+    ),
+    "response_model": GenericSuccessContent[None],
+    "responses": reset_password_responses,
+}
+
 # ---------------------------------------------------------------------------
 # Permission Router
 # ---------------------------------------------------------------------------
