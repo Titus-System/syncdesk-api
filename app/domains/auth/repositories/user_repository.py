@@ -254,6 +254,31 @@ class UserRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none() is not None
 
+    async def must_change_password(self, user_id: UUID) -> bool:
+        stmt = select(UserModel.must_change_password).where(UserModel.id == user_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none() is True
+
+    async def must_accept_terms(self, user_id: UUID) -> bool:
+        stmt = select(UserModel.must_accept_terms).where(UserModel.id == user_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none() is True
+
+    async def update_password(self, user_id: UUID, new_password_hash: str) -> UserEntity | None:
+        stmt = (
+            update(UserModel)
+            .where(UserModel.id == user_id)
+            .values(password_hash=new_password_hash, must_change_password=False)
+            .returning(UserModel)
+        )
+
+        res = await self.db.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            return None
+        await self.db.commit()
+        return self._to_entity(row)
+
     def _to_entity(self, model: UserModel) -> UserEntity:
         return UserEntity(
             id=model.id,
@@ -265,6 +290,8 @@ class UserRepository:
             oauth_provider_id=model.oauth_provider_id,
             is_active=model.is_active,
             is_verified=model.is_verified,
+            must_change_password=model.must_change_password,
+            must_accept_terms=model.must_accept_terms,
         )
 
     def _to_user_with_roles(self, model: UserModel) -> UserWithRoles:
@@ -279,5 +306,7 @@ class UserRepository:
             oauth_provider_id=model.oauth_provider_id,
             is_active=model.is_active,
             is_verified=model.is_verified,
+            must_change_password=model.must_change_password,
+            must_accept_terms=model.must_accept_terms,
             roles=roles,
         )

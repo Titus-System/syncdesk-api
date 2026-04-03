@@ -556,3 +556,87 @@ class TestUserRepository:
 
         res = await user_repo.remove_roles(uuid4(), [role1.id, role2.id])
         assert res == []
+
+    # ── must_change_password ──────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_must_change_password_returns_true(self, user_repo: UserRepository) -> None:
+        dto = CreateUserDTO(
+            email=f"mcp_{uuid4().hex[:8]}@example.com",
+            password_hash="temp_hash",
+            must_change_password=True,
+        )
+        user = await user_repo.create(dto)
+        assert await user_repo.must_change_password(user.id) is True
+
+    @pytest.mark.asyncio
+    async def test_must_change_password_returns_false(self, user_repo: UserRepository) -> None:
+        dto = CreateUserDTO(
+            email=f"mcp_{uuid4().hex[:8]}@example.com",
+            password_hash="temp_hash",
+            must_change_password=False,
+        )
+        user = await user_repo.create(dto)
+        assert await user_repo.must_change_password(user.id) is False
+
+    @pytest.mark.asyncio
+    async def test_must_change_password_nonexistent_user(self, user_repo: UserRepository) -> None:
+        assert await user_repo.must_change_password(uuid4()) is False
+
+    # ── must_accept_terms ─────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_must_accept_terms_returns_true(self, user_repo: UserRepository) -> None:
+        dto = CreateUserDTO(
+            email=f"mat_{uuid4().hex[:8]}@example.com",
+            password_hash="temp_hash",
+            must_accept_terms=True,
+        )
+        user = await user_repo.create(dto)
+        assert await user_repo.must_accept_terms(user.id) is True
+
+    @pytest.mark.asyncio
+    async def test_must_accept_terms_returns_false(self, user_repo: UserRepository) -> None:
+        dto = CreateUserDTO(
+            email=f"mat_{uuid4().hex[:8]}@example.com",
+            password_hash="temp_hash",
+            must_accept_terms=False,
+        )
+        user = await user_repo.create(dto)
+        assert await user_repo.must_accept_terms(user.id) is False
+
+    @pytest.mark.asyncio
+    async def test_must_accept_terms_nonexistent_user(self, user_repo: UserRepository) -> None:
+        assert await user_repo.must_accept_terms(uuid4()) is False
+
+    # ── update_password ───────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_update_password_success(self, user_repo: UserRepository) -> None:
+        dto = CreateUserDTO(
+            email=f"upd_{uuid4().hex[:8]}@example.com",
+            password_hash="old_hash",
+            must_change_password=True,
+        )
+        user = await user_repo.create(dto)
+        updated = await user_repo.update_password(user.id, "new_hash")
+        assert updated is not None
+        assert updated.password_hash == "new_hash"
+        assert updated.must_change_password is False
+
+    @pytest.mark.asyncio
+    async def test_update_password_clears_must_change_flag(self, user_repo: UserRepository) -> None:
+        dto = CreateUserDTO(
+            email=f"upd_{uuid4().hex[:8]}@example.com",
+            password_hash="old_hash",
+            must_change_password=True,
+        )
+        user = await user_repo.create(dto)
+        assert await user_repo.must_change_password(user.id) is True
+        await user_repo.update_password(user.id, "new_hash")
+        assert await user_repo.must_change_password(user.id) is False
+
+    @pytest.mark.asyncio
+    async def test_update_password_nonexistent_user(self, user_repo: UserRepository) -> None:
+        result = await user_repo.update_password(uuid4(), "new_hash")
+        assert result is None
