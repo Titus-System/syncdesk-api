@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import secrets
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -9,6 +12,21 @@ from passlib.context import CryptContext
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+class ResetTokenSecurity:
+    def __init__(self) -> None:
+        self.secret = get_settings().RESET_TOKEN_HMAC_SECRET.encode()
+
+    def generate_token(self) -> str:
+        return secrets.token_urlsafe(32)
+
+    def hash_token(self, token: str) -> str:
+        return hmac.new(self.secret, token.encode(), hashlib.sha256).hexdigest()
+
+    def verify(self, token: str, stored_hash: str) -> bool:
+        expected = self.hash_token(token)
+        return hmac.compare_digest(expected, stored_hash)
 
 
 class PasswordSecurity:
