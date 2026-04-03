@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.core.http.schemas import SessionDeviceInfo
 
-from .enums import OAuthProvider, SessionStatus
+from .enums import OAuthProvider, SessionStatus, TokenPurpose
 
 
 def _utcnow() -> datetime:
@@ -116,6 +116,8 @@ class User:
     oauth_provider_id: str | None = None
     is_active: bool = True
     is_verified: bool = False
+    must_change_password: bool = False
+    must_accept_terms: bool = False
 
     def __repr__(self) -> str:
         return f"<User (id={self.id}, email={self.email})>"
@@ -189,3 +191,31 @@ class UserWithRoles(User):
 class UserRole:
     user_id: UUID
     role_id: int
+
+
+@dataclass
+class PasswordResetToken:
+    id: UUID
+    user_id: UUID
+    token_hash: str
+    purpose: TokenPurpose
+    created_at: datetime
+    expires_at: datetime
+    used_at: datetime | None = None
+
+    def is_expired(self) -> bool:
+        return _utcnow() > self.expires_at
+
+    def is_used(self) -> bool:
+        return self.used_at is not None
+
+    def is_valid(self) -> bool:
+        return not self.is_expired() and not self.is_used()
+
+
+@dataclass
+class UserTermsAcceptance:
+    id: UUID
+    user_id: UUID
+    terms_version: str
+    accepted_at: datetime

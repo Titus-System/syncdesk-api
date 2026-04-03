@@ -19,3 +19,8 @@ class OAuthProvider(Enum):
 def enum_values(enum_class: type[Enum]) -> list[str]:
     """Return enum values for a given Enum class."""
     return [member.value for member in enum_class]
+
+
+class TokenPurpose(Enum):
+    RESET = "reset"
+    INVITE = "invite"
