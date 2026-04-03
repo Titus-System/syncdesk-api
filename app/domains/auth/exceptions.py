@@ -36,3 +36,13 @@ class InvalidPasswordError(Exception):
 class InvalidCredentialsError(Exception):
     def __init__(self, message: str | None = None) -> None:
         super().__init__(f"Invalid credentials. {message or ''}")
+
+
+class InvalidResetTokenError(Exception):
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(f"Invalid password reset token. {message or ''}")
+
+
+class PasswordChangeRequiredError(Exception):
+    def __init__(self) -> None:
+        super().__init__("Password change is required before proceeding.")

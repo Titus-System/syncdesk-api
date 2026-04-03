@@ -13,6 +13,8 @@ class CreateUserDTO(BaseDTO):
     oauth_provider_id: str | None = None
     is_active: bool = True
     is_verified: bool = False
+    must_change_password: bool = False
+    must_accept_terms: bool = True
     role_ids: list[int] = []
 
     @model_validator(mode="after")
@@ -43,3 +45,8 @@ class ReplaceUserDTO(CreateUserDTO):
 
 class AddUserRolesDTO(BaseDTO):
     role_ids: list[int]
+
+
+class UserCompliance(BaseDTO):
+    must_change_password: bool
+    must_accept_terms: bool

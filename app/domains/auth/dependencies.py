@@ -3,9 +3,19 @@ from typing import Annotated, Any
 from fastapi import Depends, WebSocket, WebSocketException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.dependencies import JWTServiceDep, PasswordSecurityDep
+from app.core.dependencies import (
+    EmailServiceDep,
+    JWTServiceDep,
+    PasswordSecurityDep,
+    ResetTokenSecurityDep,
+)
 from app.core.exceptions import AppHTTPException
 from app.db.postgres.dependencies import PgSessionDep
+from app.domains.auth.repositories.password_reset_token_repository import (
+    PasswordResetTokenRepository,
+)
+from app.domains.auth.schemas import UserCompliance
+from app.domains.auth.services.password_service import PasswordService
 
 from .entities import Permission, Session, UserWithRoles
 from .exceptions import (
@@ -46,6 +56,10 @@ def get_session_repository(db: PgSessionDep) -> SessionRepository:
     return SessionRepository(db)
 
 
+def get_password_reset_token_repository(db: PgSessionDep) -> PasswordResetTokenRepository:
+    return PasswordResetTokenRepository(db)
+
+
 # ============================================================
 # Services
 # ============================================================
@@ -75,12 +89,31 @@ def get_session_service(
     return SessionService(db, session_repo, jwt_service)
 
 
+def get_password_service(
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    token_repo: Annotated[
+        PasswordResetTokenRepository, Depends(get_password_reset_token_repository)
+    ],
+    password_security: PasswordSecurityDep,
+    email_strategy: EmailServiceDep,
+    reset_token_security: ResetTokenSecurityDep,
+) -> PasswordService:
+    return PasswordService(
+        user_service=user_service,
+        token_repo=token_repo,
+        password_security=password_security,
+        email_strategy=email_strategy,
+        reset_token_security=reset_token_security,
+    )
+
+
 def get_auth_service(
     user_service: Annotated[UserService, Depends(get_user_service)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
     role_service: Annotated[RoleService, Depends(get_role_service)],
     jwt_service: JWTServiceDep,
     password_security: PasswordSecurityDep,
+    password_service: Annotated[PasswordService, Depends(get_password_service)],
 ) -> AuthService:
     return AuthService(
         user_service=user_service,
@@ -88,6 +121,7 @@ def get_auth_service(
         jwt_service=jwt_service,
         password_security=password_security,
         role_service=role_service,
+        password_service=password_service,
     )
 
 
@@ -104,6 +138,15 @@ async def get_current_user_session(
         UserNotFoundError,
     ) as e:
         raise AppHTTPException(status_code=401, detail=str(e)) from e
+
+
+async def get_user_compliance(
+    user_session: Annotated[tuple[UserWithRoles, Session], Depends(get_current_user_session)],
+) -> UserCompliance:
+    user = user_session[0]
+    return UserCompliance(
+        must_accept_terms=user.must_accept_terms, must_change_password=user.must_change_password
+    )
 
 
 def _extract_bearer_token(authorization: str | None) -> str:
@@ -151,6 +194,15 @@ UserPermissionsDep = Annotated[list[Permission], Depends(get_user_permissions)]
 UserPermissionsWsDep = Annotated[list[Permission], Depends(get_user_permissions_ws)]
 
 
+async def get_user_compliance_ws(
+    user_session: Annotated[tuple[UserWithRoles, Session], Depends(get_current_user_session_ws)],
+) -> UserCompliance:
+    user = user_session[0]
+    return UserCompliance(
+        must_accept_terms=user.must_accept_terms, must_change_password=user.must_change_password
+    )
+
+
 def require_permission(permission_name: str) -> Any:
     async def checker(permissions: UserPermissionsDep) -> bool:
         names = [p.name for p in permissions]
@@ -169,6 +221,42 @@ def require_permission_ws(permission_name: str) -> Any:
         return True
 
     return Depends(checker)
+
+
+def require_user_compliance() -> Any:
+    async def checker(compliance: Annotated[UserCompliance, Depends(get_user_compliance)]) -> bool:
+        required_actions: list[str] = []
+        if compliance.must_change_password:
+            required_actions.append("change_password")
+        if compliance.must_accept_terms:
+            required_actions.append("accept_terms")
+
+        if required_actions:
+            raise AppHTTPException(
+                status_code=428,  # precondition required
+                detail="Account setup required before accessing this resource.",
+                errors={"required_actions": required_actions},
+            )
+        return True
+
+    return Depends(checker)
+
+
+def require_user_compliance_ws() -> Any:
+    async def checker_ws(
+        compliance: Annotated[UserCompliance, Depends(get_user_compliance_ws)],
+    ) -> bool:
+        required_actions: list[str] = []
+        if compliance.must_change_password:
+            required_actions.append("change_password")
+        if compliance.must_accept_terms:
+            required_actions.append("accept_terms")
+
+        if required_actions:
+            raise WebSocketException(code=1008, reason="Account setup required")
+        return True
+
+    return Depends(checker_ws)
 
 
 # ============================================================
@@ -192,3 +280,7 @@ CurrentUserSessionDep = Annotated[tuple[UserWithRoles, Session], Depends(get_cur
 CurrentUserSessionWsDep = Annotated[
     tuple[UserWithRoles, Session], Depends(get_current_user_session_ws)
 ]
+
+PasswordServiceDep = Annotated[PasswordService, Depends(get_password_service)]
+
+UserComplianceDep = Annotated[UserCompliance, Depends(get_user_compliance)]

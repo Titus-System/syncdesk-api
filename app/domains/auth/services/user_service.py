@@ -65,3 +65,6 @@ class UserService:
 
     async def get_user_roles(self, user_id: UUID) -> list[Role]:
         return await self.repo.get_user_roles(user_id)
+
+    async def update_password(self, user_id: UUID, new_password_hash: str) -> User | None:
+        return await self.repo.update_password(user_id, new_password_hash)

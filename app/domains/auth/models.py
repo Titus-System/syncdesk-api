@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres.base import Base
 
-from .enums import OAuthProvider, SessionStatus, enum_values
+from .enums import OAuthProvider, SessionStatus, TokenPurpose, enum_values
 
 user_roles = Table(
     "user_roles",
@@ -49,6 +49,8 @@ class User(Base):
     oauth_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    must_accept_terms: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
@@ -139,3 +141,40 @@ class Session(Base):
 
     def __repr__(self) -> str:
         return f"<Session(id={self.id}, status={self.status})>"
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True, unique=True)
+    purpose: Mapped[TokenPurpose] = mapped_column(
+        SqlEnum(
+            TokenPurpose,
+            name="token_purpose",
+            native_enum=True,
+            create_constraint=False,
+            values_callable=enum_values,
+        ),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # user: Mapped["User"] = relationship(back_populates="sessions")
+
+
+class UserTermsAcceptance(Base):
+    __tablename__ = "user_terms_acceptances"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    terms_version: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
