@@ -1,20 +1,15 @@
 from app.core.http.schemas import SessionDeviceInfo
 
-from .api_schemas import (
-    LoginResponse,
-    RefreshSessionRequest,
-    RegisterUserRequest,
-    UserCreatedResponse,
-    UserLoginRequest,
-)
+from .api_schemas import *
 from .permission_schemas import CreatePermissionDTO, ReplacePermissionDTO, UpdatePermissionDTO
+from .reset_password_token_schemas import *
 from .role_schemas import AddRolePermissionsDTO, CreateRoleDTO, ReplaceRoleDTO, UpdateRoleDTO
 from .session_schemas import (
     CreateSessionDTO,
     RefreshSessionDTO,
     UpdateSessionDTO,
 )
-from .user_schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
+from .user_schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO, UserCompliance
 
 __all__ = [
     "CreateRoleDTO",
@@ -32,9 +27,15 @@ __all__ = [
     "ReplaceUserDTO",
     "UpdateUserDTO",
     "AddUserRolesDTO",
+    "UserCompliance",
+    "CreatePasswordResetTokenDTO",
     "LoginResponse",
     "RefreshSessionRequest",
     "RegisterUserRequest",
     "UserCreatedResponse",
     "UserLoginRequest",
+    "AdminRegisterUserRequest",
+    "ChangePasswordRequest",
+    "ForgotPasswordRequest",
+    "ResetPasswordRequest"
 ]

@@ -20,6 +20,9 @@ class SessionRepository:
     @require_dto(CreateSessionDTO)
     async def create(self, dto: CreateSessionDTO) -> SessionEntity:
         insert_values = dto.model_dump(exclude={"role_names"}, exclude_none=True)
+        if dto.device_info is not None:
+            insert_values["device_info"] = dto.device_info.model_dump(mode="json", exclude_none=True)
+
         stmt = insert(SessionModel).values(**insert_values).returning(SessionModel)
         try:
             res = await self.db.execute(stmt)
@@ -76,6 +79,9 @@ class SessionRepository:
     @require_dto(UpdateSessionDTO)
     async def update(self, session_id: UUID, dto: UpdateSessionDTO) -> SessionEntity | None:
         update_values = dto.model_dump(exclude_none=True)
+        if dto.device_info is not None:
+            update_values["device_info"] = dto.device_info.model_dump(mode="json", exclude_none=True)
+
         if not update_values:
             return None
 
@@ -111,6 +117,9 @@ class SessionRepository:
         requests could both use the same refresh token.
         """
         update_values = dto.model_dump(exclude_none=True)
+        if dto.device_info is not None:
+            update_values["device_info"] = dto.device_info.model_dump(mode="json", exclude_none=True)
+
         stmt = (
             update(SessionModel)
             .where(

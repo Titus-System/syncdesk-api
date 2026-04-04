@@ -7,6 +7,8 @@ from alembic import context
 from app.core.config import get_settings
 from app.db.postgres.base import Base
 
+import app.domains.auth.models  # noqa: F401 — register models with Base.metadata
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

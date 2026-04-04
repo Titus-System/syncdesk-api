@@ -1,5 +1,7 @@
 import asyncio
+import re
 from collections.abc import AsyncGenerator, Generator
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -15,6 +17,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.core.dependencies import get_email_service
+from app.core.email.schemas import ResetPasswordEmailParams, WelcomeEmailParams
+from app.core.email.strategy import EmailStrategy
 from app.db.mongo.dependencies import get_mongo_session
 from app.db.postgres.base import Base
 from app.db.postgres.dependencies import get_postgres_session
@@ -26,6 +31,46 @@ settings = get_settings()
 
 ADMIN_ROLE_ID = 1
 AGENT_ROLE_ID = 3
+
+# ────────────────────────────────────────────────────────
+# Fake Email Strategy (captures emails instead of sending)
+# ────────────────────────────────────────────────────────
+
+
+@dataclass
+class SentEmail:
+    to: str
+    kind: str  # "welcome" or "reset"
+    params: WelcomeEmailParams | ResetPasswordEmailParams
+
+
+class FakeEmailStrategy(EmailStrategy):
+    """In-memory email stub that records every call."""
+
+    def __init__(self) -> None:
+        self.sent: list[SentEmail] = []
+
+    async def send_welcome_email(self, to: str, email_params: WelcomeEmailParams) -> None:
+        self.sent.append(SentEmail(to=to, kind="welcome", params=email_params))
+
+    async def send_reset_email(self, to: str, email_params: ResetPasswordEmailParams) -> None:
+        self.sent.append(SentEmail(to=to, kind="reset", params=email_params))
+
+    # ── helpers for test assertions ──
+
+    def last_welcome(self) -> SentEmail | None:
+        return next((e for e in reversed(self.sent) if e.kind == "welcome"), None)
+
+    def last_reset(self) -> SentEmail | None:
+        return next((e for e in reversed(self.sent) if e.kind == "reset"), None)
+
+    @staticmethod
+    def extract_token_from_url(url: str) -> str:
+        """Pull the `token=…` query-param value out of a URL."""
+        match = re.search(r"[?&]token=([^&]+)", url)
+        assert match, f"No token found in URL: {url}"
+        return match.group(1)
+
 
 # ────────────────────────────────────────────────────────
 # Session-scoped DDL (sync fixture → asyncio.run)
@@ -112,8 +157,16 @@ async def mongo_db_conn(
 
 
 @pytest.fixture
-def app() -> FastAPI:
-    return create_app()
+def fake_email() -> FakeEmailStrategy:
+    """Provide a fresh FakeEmailStrategy for each test."""
+    return FakeEmailStrategy()
+
+
+@pytest.fixture
+def app(fake_email: FakeEmailStrategy) -> FastAPI:
+    application = create_app()
+    application.dependency_overrides[get_email_service] = lambda: fake_email
+    return application
 
 
 @pytest.fixture
@@ -196,6 +249,17 @@ class AuthActions:
         assert r.status_code == 200, f"Login failed: {r.text}"
         res = r.json()["data"]
         return res
+
+    async def login_raw(
+        self,
+        email: str = "e2e@test.com",
+        password: str = "Secure123!",
+    ) -> Any:
+        """Return the raw httpx Response (no assertions)."""
+        return await self.client.post(
+            "/api/auth/login",
+            json={"email": email, "password": password},
+        )
 
     async def register_and_login(
         self,

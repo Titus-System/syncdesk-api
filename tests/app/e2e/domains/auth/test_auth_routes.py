@@ -2,8 +2,10 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.app.e2e.conftest import AuthActions
+from tests.app.e2e.conftest import AuthActions, FakeEmailStrategy
 
 
 class TestRegister:
@@ -71,6 +73,56 @@ class TestRegister:
         roles = me_r.json()["data"]["roles"]
         role_names = {r["name"] for r in roles}
         assert "user" in role_names
+
+    @pytest.mark.asyncio
+    async def test_register_with_device_client_hints_headers(
+        self, client: AsyncClient
+    ) -> None:
+        """Regression: DeviceType enum from middleware must be JSON-serializable in session JSONB."""
+        r = await client.post(
+            "/api/auth/register",
+            json={
+                "email": "devicehints@test.com",
+                "username": "devicehints",
+                "password": "Pass1234!",
+            },
+            headers={
+                "user-agent": "Mozilla/5.0",
+                "sec-ch-ua": '"Chromium";v="146", "Not A(Brand)";v="24"',
+                "sec-ch-ua-mobile": "?1",
+                "sec-ch-ua-platform": '"Android"',
+            },
+        )
+        assert r.status_code == 201
+        data = r.json()["data"]
+        assert data["email"] == "devicehints@test.com"
+        assert "access_token" in data
+        assert "refresh_token" in data
+
+    @pytest.mark.asyncio
+    async def test_register_with_malformed_client_hints_still_succeeds(
+        self, client: AsyncClient
+    ) -> None:
+        """Malformed client hints should not break registration/session creation."""
+        r = await client.post(
+            "/api/auth/register",
+            json={
+                "email": "badch@test.com",
+                "username": "badch",
+                "password": "Pass1234!",
+            },
+            headers={
+                "user-agent": "OddAgent/1.0",
+                "sec-ch-ua": "not-a-valid-ch-ua-format",
+                "sec-ch-ua-mobile": "?2",
+                "sec-ch-ua-platform": "UnknownOS",
+            },
+        )
+        assert r.status_code == 201
+        data = r.json()["data"]
+        assert data["email"] == "badch@test.com"
+        assert "access_token" in data
+        assert "refresh_token" in data
 
     @pytest.mark.asyncio
     async def test_register_ignores_role_ids_field(
@@ -284,6 +336,53 @@ class TestRefresh:
         r = await client.post("/api/auth/refresh", json={"refresh_token": "nope"})
         assert r.status_code == 403
 
+    @pytest.mark.asyncio
+    async def test_refresh_token_replay_revokes_current_session(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        """Reusing an already-rotated refresh token should invalidate the session."""
+        tokens = await auth.register_and_login(email="replay@test.com", username="replay")
+        headers = auth.auth_headers(tokens["access_token"])
+
+        first = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+        assert first.status_code == 200
+
+        replay = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+        assert replay.status_code == 401
+
+        me_after_replay = await client.get("/api/auth/me", headers=headers)
+        assert me_after_replay.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_refresh_same_token_twice_immediately_only_first_succeeds(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        """Back-to-back refresh attempts with same token must not both succeed."""
+        tokens = await auth.register_and_login(email="race@test.com", username="race")
+        headers = auth.auth_headers(tokens["access_token"])
+
+        first = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+        second = await client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+            headers=headers,
+        )
+
+        assert first.status_code == 200
+        assert second.status_code in {401, 404}
+
 
 class TestLogout:
     """POST /api/auth/logout"""
@@ -309,6 +408,19 @@ class TestLogout:
     async def test_logout_no_token(self, client: AsyncClient) -> None:
         r = await client.post("/api/auth/logout")
         assert r.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_logout_twice_second_request_is_rejected(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login(email="logouttwice@test.com", username="logouttwice")
+        headers = auth.auth_headers(tokens["access_token"])
+
+        first = await client.post("/api/auth/logout", headers=headers)
+        assert first.status_code == 200
+
+        second = await client.post("/api/auth/logout", headers=headers)
+        assert second.status_code == 401
 
 
 class TestFullAuthFlow:
@@ -426,3 +538,575 @@ class TestFullAuthFlow:
         # 8. /me after logout should fail
         r = await client.get("/api/auth/me", headers=new_headers)
         assert r.status_code == 401
+
+
+# ────────────────────────────────────────────────────────
+# Admin Register
+# ────────────────────────────────────────────────────────
+
+
+class TestAdminRegister:
+    """POST /api/auth/admin/register"""
+
+    @pytest.mark.asyncio
+    async def test_admin_register_creates_user(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        admin_tokens = await auth.register_and_login_admin(
+            email="aradmin1@test.com", username="aradmin1"
+        )
+        headers = auth.auth_headers(admin_tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={"email": "aruser1@test.com", "name": "AR User 1"},
+            headers=headers,
+        )
+        assert r.status_code == 201
+        data = r.json()["data"]
+        assert data["email"] == "aruser1@test.com"
+        assert "id" in data
+        assert "password_hash" not in data
+
+    @pytest.mark.asyncio
+    async def test_admin_register_user_can_login_with_generated_password(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        """The auto-generated password sent in the welcome email must work."""
+        admin_tokens = await auth.register_and_login_admin(
+            email="aradmin2@test.com", username="aradmin2"
+        )
+        headers = auth.auth_headers(admin_tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={"email": "arlogin@test.com", "name": "AR Login"},
+            headers=headers,
+        )
+        assert r.status_code == 201
+
+        # Extract auto-generated password from the captured welcome email
+        welcome = fake_email.last_welcome()
+        assert welcome is not None
+        assert welcome.to == "arlogin@test.com"
+        otp = welcome.params.one_time_password
+
+        # Login with the generated password
+        tokens = await auth.login(email="arlogin@test.com", password=otp)
+        assert "access_token" in tokens
+
+    @pytest.mark.asyncio
+    async def test_admin_register_sets_must_change_password(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        admin_tokens = await auth.register_and_login_admin(
+            email="aradmin3@test.com", username="aradmin3"
+        )
+        headers = auth.auth_headers(admin_tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={"email": "arflag@test.com"},
+            headers=headers,
+        )
+        assert r.status_code == 201
+
+        # Extract password and login
+        otp = fake_email.last_welcome().params.one_time_password
+        login_r = await auth.login_raw(email="arflag@test.com", password=otp)
+        assert login_r.status_code == 200
+        assert login_r.json()["data"]["must_change_password"] is True
+
+    @pytest.mark.asyncio
+    async def test_admin_register_sends_welcome_email(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        admin_tokens = await auth.register_and_login_admin(
+            email="aradmin4@test.com", username="aradmin4"
+        )
+        headers = auth.auth_headers(admin_tokens["access_token"])
+
+        await client.post(
+            "/api/auth/admin/register",
+            json={"email": "arwelcome@test.com"},
+            headers=headers,
+        )
+
+        assert len([e for e in fake_email.sent if e.kind == "welcome"]) >= 1
+        welcome = fake_email.last_welcome()
+        assert welcome is not None
+        assert welcome.to == "arwelcome@test.com"
+        assert welcome.params.one_time_password  # non-empty
+        assert "token=" in welcome.params.login_url
+
+    @pytest.mark.asyncio
+    async def test_admin_register_with_role_ids(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        """Admin can assign specific roles during registration."""
+        admin_tokens = await auth.register_and_login_admin(
+            email="aradmin5@test.com", username="aradmin5"
+        )
+        headers = auth.auth_headers(admin_tokens["access_token"])
+
+        # Create a custom role
+        role_r = await client.post(
+            "/api/roles/", json={"name": "ar_custom_role"}, headers=headers
+        )
+        role_id = role_r.json()["data"]["id"]
+
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={"email": "arroles@test.com", "role_ids": [role_id]},
+            headers=headers,
+        )
+        assert r.status_code == 201
+
+        # Verify roles directly from the admin_register response
+        data = r.json()["data"]
+        role_names = {rl["name"] for rl in data["roles"]}
+        assert "ar_custom_role" in role_names
+
+    @pytest.mark.asyncio
+    async def test_admin_register_duplicate_email_fails(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        admin_tokens = await auth.register_and_login_admin(
+            email="aradmin6@test.com", username="aradmin6"
+        )
+        headers = auth.auth_headers(admin_tokens["access_token"])
+
+        await client.post(
+            "/api/auth/admin/register",
+            json={"email": "ardup@test.com"},
+            headers=headers,
+        )
+
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={"email": "ardup@test.com"},
+            headers=headers,
+        )
+        assert r.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_admin_register_requires_admin_permission(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        """Regular users must not be able to admin-register others."""
+        tokens = await auth.register_and_login(
+            email="arnonadmin@test.com", username="arnonadmin"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={"email": "shouldfail@test.com"},
+            headers=headers,
+        )
+        assert r.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_register_unauthenticated_fails(self, client: AsyncClient, auth: AuthActions) -> None:
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={"email": "unauth@test.com"},
+        )
+        assert r.status_code == 403
+
+
+# ────────────────────────────────────────────────────────
+# Change Password
+# ────────────────────────────────────────────────────────
+
+
+class TestChangePassword:
+    """POST /api/auth/change-password"""
+
+    @pytest.mark.asyncio
+    async def test_change_password_success(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login(
+            email="cpok@test.com", username="cpok", password="OldPass1!"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "OldPass1!", "new_password": "NewPass1!"},
+            headers=headers,
+        )
+        assert r.status_code == 200
+
+        # Old password no longer works
+        old_login = await auth.login_raw(email="cpok@test.com", password="OldPass1!")
+        assert old_login.status_code == 401
+
+        # New password works
+        new_tokens = await auth.login(email="cpok@test.com", password="NewPass1!")
+        assert "access_token" in new_tokens
+
+    @pytest.mark.asyncio
+    async def test_change_password_wrong_current(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login(
+            email="cpwrong@test.com", username="cpwrong", password="Correct1!"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "Wrong1!!!", "new_password": "NewPass1!"},
+            headers=headers,
+        )
+        assert r.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_change_password_clears_must_change_flag(
+        self, client: AsyncClient, auth: AuthActions, db_session: AsyncSession
+    ) -> None:
+        """After change-password, must_change_password flag is cleared."""
+        # Register normally (with username so can_login() works), then
+        # simulate admin-provisioned state by setting the flag via DB.
+        old_pw = "OldFlag1!"
+        await auth.register(
+            email="cpflag@test.com", username="cpflag", password=old_pw
+        )
+        login_r = await auth.login_raw(email="cpflag@test.com", password=old_pw)
+        user_id = login_r.json()["data"]["access_token"]  # just to confirm login works
+        assert login_r.status_code == 200
+
+        # Set must_change_password via DB
+        await db_session.execute(
+            text(
+                "UPDATE users SET must_change_password = true WHERE email = :email"
+            ),
+            {"email": "cpflag@test.com"},
+        )
+        await db_session.flush()
+
+        # Re-login — flag should be True
+        login_r = await auth.login_raw(email="cpflag@test.com", password=old_pw)
+        assert login_r.json()["data"]["must_change_password"] is True
+        headers = auth.auth_headers(login_r.json()["data"]["access_token"])
+
+        # Change password
+        r = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": old_pw, "new_password": "Changed1!"},
+            headers=headers,
+        )
+        assert r.status_code == 200
+
+        # Re-login – flag should now be False
+        login2 = await auth.login_raw(email="cpflag@test.com", password="Changed1!")
+        assert login2.status_code == 200
+        assert login2.json()["data"]["must_change_password"] is False
+
+    @pytest.mark.asyncio
+    async def test_change_password_unauthenticated(self, client: AsyncClient, auth: AuthActions) -> None:
+        r = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "x", "new_password": "y"},
+        )
+        assert r.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_change_password_weak_new_password(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login(
+            email="cpweak@test.com", username="cpweak", password="Strong1!"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "Strong1!", "new_password": "weak"},
+            headers=headers,
+        )
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_change_password_preserves_session(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        """The current session should still work after changing password."""
+        tokens = await auth.register_and_login(
+            email="cpsess@test.com", username="cpsess", password="Before1!"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": "Before1!", "new_password": "After1!!"},
+            headers=headers,
+        )
+        assert r.status_code == 200
+
+        # Session still valid
+        me_r = await client.get("/api/auth/me", headers=headers)
+        assert me_r.status_code == 200
+
+
+# ────────────────────────────────────────────────────────
+# Forgot Password
+# ────────────────────────────────────────────────────────
+
+
+class TestForgotPassword:
+    """POST /api/auth/forgot-password"""
+
+    @pytest.mark.asyncio
+    async def test_forgot_password_existing_email(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        await auth.register(email="fpexist@test.com", username="fpexist")
+
+        r = await client.post(
+            "/api/auth/forgot-password", json={"email": "fpexist@test.com"}
+        )
+        assert r.status_code == 200
+        assert "reset link has been sent" in r.json()["data"]["message"].lower()
+
+        reset_mail = fake_email.last_reset()
+        assert reset_mail is not None
+        assert reset_mail.to == "fpexist@test.com"
+        assert "token=" in reset_mail.params.reset_url
+
+    @pytest.mark.asyncio
+    async def test_forgot_password_nonexistent_email_no_leak(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        """Non-existent emails should get the same 200 response (no info leak)."""
+        r = await client.post(
+            "/api/auth/forgot-password", json={"email": "ghost@nowhere.com"}
+        )
+        assert r.status_code == 200
+        assert "reset link has been sent" in r.json()["data"]["message"].lower()
+
+        # No email should have been dispatched
+        assert fake_email.last_reset() is None
+
+    @pytest.mark.asyncio
+    async def test_forgot_password_missing_email_field(self, client: AsyncClient, auth: AuthActions) -> None:
+        r = await client.post("/api/auth/forgot-password", json={})
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_forgot_password_invalid_email_format(self, client: AsyncClient, auth: AuthActions) -> None:
+        r = await client.post("/api/auth/forgot-password", json={"email": "not-an-email"})
+        assert r.status_code == 422
+
+
+# ────────────────────────────────────────────────────────
+# Reset Password
+# ────────────────────────────────────────────────────────
+
+
+class TestResetPassword:
+    """POST /api/auth/reset-password"""
+
+    @pytest.mark.asyncio
+    async def test_reset_password_success(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        await auth.register(
+            email="rpok@test.com", username="rpok", password="Original1!"
+        )
+
+        # Trigger forgot-password
+        await client.post("/api/auth/forgot-password", json={"email": "rpok@test.com"})
+        reset_mail = fake_email.last_reset()
+        assert reset_mail is not None
+        raw_token = FakeEmailStrategy.extract_token_from_url(reset_mail.params.reset_url)
+
+        # Reset
+        r = await client.post(
+            "/api/auth/reset-password",
+            json={"token": raw_token, "new_password": "Reset1!!!"},
+        )
+        assert r.status_code == 200
+
+        # Login with new password
+        tokens = await auth.login(email="rpok@test.com", password="Reset1!!!")
+        assert "access_token" in tokens
+
+    @pytest.mark.asyncio
+    async def test_reset_password_old_password_stops_working(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        await auth.register(
+            email="rpold@test.com", username="rpold", password="OldPw1!!!"
+        )
+
+        await client.post("/api/auth/forgot-password", json={"email": "rpold@test.com"})
+        raw_token = FakeEmailStrategy.extract_token_from_url(
+            fake_email.last_reset().params.reset_url
+        )
+
+        await client.post(
+            "/api/auth/reset-password",
+            json={"token": raw_token, "new_password": "NewPw1!!!"},
+        )
+
+        old_login = await auth.login_raw(email="rpold@test.com", password="OldPw1!!!")
+        assert old_login.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_reset_password_invalid_token(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        r = await client.post(
+            "/api/auth/reset-password",
+            json={"token": "completely-invalid-token", "new_password": "Valid1!!!"},
+        )
+        assert r.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_reset_password_token_reuse(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        """Using the same reset token twice should fail on the second attempt."""
+        await auth.register(
+            email="rpreuse@test.com", username="rpreuse", password="First1!!"
+        )
+
+        await client.post("/api/auth/forgot-password", json={"email": "rpreuse@test.com"})
+        raw_token = FakeEmailStrategy.extract_token_from_url(
+            fake_email.last_reset().params.reset_url
+        )
+
+        # First use — should succeed
+        r1 = await client.post(
+            "/api/auth/reset-password",
+            json={"token": raw_token, "new_password": "Second1!"},
+        )
+        assert r1.status_code == 200
+
+        # Second use — must fail
+        r2 = await client.post(
+            "/api/auth/reset-password",
+            json={"token": raw_token, "new_password": "Third1!!"},
+        )
+        assert r2.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_reset_password_clears_must_change_flag(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        """Admin-registered user resets password via token → must_change_password cleared."""
+        admin_tokens = await auth.register_and_login_admin(
+            email="rpadmin@test.com", username="rpadmin"
+        )
+        admin_headers = auth.auth_headers(admin_tokens["access_token"])
+
+        await client.post(
+            "/api/auth/admin/register",
+            json={"email": "rpflag@test.com"},
+            headers=admin_headers,
+        )
+        otp = fake_email.last_welcome().params.one_time_password
+
+        # Confirm must_change_password is True
+        login_r = await auth.login_raw(email="rpflag@test.com", password=otp)
+        assert login_r.json()["data"]["must_change_password"] is True
+
+        # Trigger forgot-password and reset
+        await client.post("/api/auth/forgot-password", json={"email": "rpflag@test.com"})
+        raw_token = FakeEmailStrategy.extract_token_from_url(
+            fake_email.last_reset().params.reset_url
+        )
+
+        r = await client.post(
+            "/api/auth/reset-password",
+            json={"token": raw_token, "new_password": "ResetFlag1!"},
+        )
+        assert r.status_code == 200
+
+        # Re-login — flag should be cleared
+        login2 = await auth.login_raw(email="rpflag@test.com", password="ResetFlag1!")
+        assert login2.status_code == 200
+        assert login2.json()["data"]["must_change_password"] is False
+
+    @pytest.mark.asyncio
+    async def test_reset_password_weak_password(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        await auth.register(
+            email="rpweak@test.com", username="rpweak", password="Strong1!"
+        )
+
+        await client.post("/api/auth/forgot-password", json={"email": "rpweak@test.com"})
+        raw_token = FakeEmailStrategy.extract_token_from_url(
+            fake_email.last_reset().params.reset_url
+        )
+
+        r = await client.post(
+            "/api/auth/reset-password",
+            json={"token": raw_token, "new_password": "weak"},
+        )
+        assert r.status_code == 422
+
+
+# ────────────────────────────────────────────────────────
+# First Access Full Lifecycle
+# ────────────────────────────────────────────────────────
+
+
+class TestFirstAccessFlow:
+    """Complete first-access lifecycle: admin creates user → user logs in →
+    must_change_password is True → user changes password → flag cleared."""
+
+    @pytest.mark.asyncio
+    async def test_first_access_full_lifecycle(
+        self, client: AsyncClient, auth: AuthActions, db_session: AsyncSession
+    ) -> None:
+        """Simulates: admin provisions a user → user logs in →
+        must_change_password is True → user changes password → flag cleared
+        → user can access protected resources."""
+        initial_pw = "Initial1!"
+
+        # 1. Register user normally (username required by can_login()),
+        #    then set must_change_password=True to simulate admin provisioning
+        await auth.register(
+            email="fanew@test.com", username="fanew", password=initial_pw
+        )
+        await db_session.execute(
+            text(
+                "UPDATE users SET must_change_password = true WHERE email = :email"
+            ),
+            {"email": "fanew@test.com"},
+        )
+        await db_session.flush()
+
+        # 2. User logs in — must_change_password should be True
+        login_r = await auth.login_raw(email="fanew@test.com", password=initial_pw)
+        assert login_r.status_code == 200
+        login_data = login_r.json()["data"]
+        assert login_data["must_change_password"] is True
+        user_headers = auth.auth_headers(login_data["access_token"])
+
+        # 3. User changes password
+        r = await client.post(
+            "/api/auth/change-password",
+            json={"current_password": initial_pw, "new_password": "MyNew1!!!"},
+            headers=user_headers,
+        )
+        assert r.status_code == 200
+
+        # 4. Re-login — flag should be cleared
+        login2 = await auth.login_raw(email="fanew@test.com", password="MyNew1!!!")
+        assert login2.status_code == 200
+        assert login2.json()["data"]["must_change_password"] is False
+
+        # 5. Verify the user can access protected resources
+        r = await client.get(
+            "/api/auth/me",
+            headers=auth.auth_headers(login2.json()["data"]["access_token"]),
+        )
+        assert r.status_code == 200
+        assert r.json()["data"]["email"] == "fanew@test.com"
+

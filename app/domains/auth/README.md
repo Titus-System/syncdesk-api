@@ -245,11 +245,145 @@ Returns the authenticated user profile with roles.
 
 The `password_hash` field is never included in responses.
 
+### Admin Register User
+
+```
+POST /api/v1/auth/admin/register
+Authorization: Bearer <access_token>
+```
+
+Creates a new user account through an admin-only route.
+
+Required permission:
+- `user:create`
+
+**Request body:**
+```json
+{
+  "email": "new.user@example.com",
+  "username": "newuser",
+  "password": "SecureP@ss1",
+  "name": "New User"
+}
+```
+
+**Response `201`:**
+```json
+{
+  "data": {
+    "id": "uuid",
+    "email": "new.user@example.com",
+    "username": "newuser",
+    "name": "New User",
+    "is_active": true,
+    "is_verified": false
+  },
+  "meta": { "timestamp": "...", "success": true, "request_id": null }
+}
+```
+
+**Error responses:**
+- `400 Bad Request` - invalid registration data (for example duplicate email).
+- `403 Forbidden` - missing `user:create` permission.
+
+### Change Password
+
+```
+POST /api/v1/auth/change-password
+Authorization: Bearer <access_token>
+```
+
+Changes the authenticated user's password after validating the current password.
+
+Required permission:
+- `password:change`
+
+**Request body:**
+```json
+{
+  "current_password": "OldP@ss1",
+  "new_password": "NewP@ss2"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "data": null,
+  "meta": { "timestamp": "...", "success": true, "request_id": null }
+}
+```
+
+**Error responses:**
+- `400 Bad Request` - current password is incorrect.
+- `403 Forbidden` - missing `password:change` permission.
+- `404 Not Found` - user not found.
+
+### Forgot Password
+
+```
+POST /api/v1/auth/forgot-password
+```
+
+Starts the password reset pipeline for the given email address.
+
+**Request body:**
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "data": {
+    "message": "If the email exists, a reset link has been sent."
+  },
+  "meta": { "timestamp": "...", "success": true, "request_id": null }
+}
+```
+
+The endpoint intentionally returns success even when the email is not registered to reduce user enumeration risk.
+
+### Reset Password
+
+```
+POST /api/v1/auth/reset-password
+```
+
+Resets the user password using a reset token previously issued by the forgot-password flow.
+
+**Request body:**
+```json
+{
+  "token": "reset-token",
+  "new_password": "NewP@ss2"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "data": null,
+  "meta": { "timestamp": "...", "success": true, "request_id": null }
+}
+```
+
+**Error responses:**
+- `400 Bad Request` - invalid or expired reset token, or reset could not be completed.
+
 ---
 
 ## Protected Endpoints
 
-All endpoints outside of `/auth/login` and `/auth/register` require a valid access token via the `Authorization: Bearer <token>` header. Authentication is enforced through the `CurrentUserSessionDep` dependency, which:
+Public endpoints:
+- `/auth/login`
+- `/auth/register`
+- `/auth/forgot-password`
+- `/auth/reset-password`
+
+Protected endpoints require a valid access token via the `Authorization: Bearer <token>` header. Authentication is enforced through the `CurrentUserSessionDep` dependency, which:
 
 1. Extracts the bearer token from the `Authorization` header.
 2. Decodes and validates the JWT (signature, expiration, issuer, audience, token type).
@@ -401,4 +535,5 @@ The following security improvements are **deferred for a future release**:
 |---|----------|-------|-------|
 | 2 | 🔴 Critical | Hardcoded JWT secret default | `config.py` uses a placeholder if env vars are missing. Add startup validation before production. |
 | 3 | 🟠 High | No rate limiting on login/register | Middleware stub exists but is not implemented. Recommend Redis-backed sliding window. |
+| 4 | 🟠 High | Inline email sending can cause partial-success behavior | In admin invite and forgot-password flows, DB/token state may be committed while provider send fails. Move to persistent outbox + background worker with retries. |
 | 11 | 🔵 Low | HS256 symmetric algorithm | Consider RS256/ES256 for microservice architectures. |
