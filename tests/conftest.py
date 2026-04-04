@@ -20,13 +20,14 @@ from app.db.mongo.dependencies import get_mongo_session
 from app.db.postgres.base import Base
 from app.db.postgres.dependencies import get_postgres_session
 from app.domains.live_chat.entities import Conversation
+from app.domains.ticket.models import Ticket
 from app.main import create_app
 
 
 # Beanie initialization fixture
 @pytest_asyncio.fixture(autouse=True)
 async def init_beanie_for_tests(mongo_db_conn: AsyncIOMotorDatabase[dict[str,Any]]):
-    await init_beanie(database=mongo_db_conn, document_models=[Conversation])
+    await init_beanie(database=mongo_db_conn, document_models=[Conversation, Ticket])
     yield
     # No teardown needed for Beanie
 

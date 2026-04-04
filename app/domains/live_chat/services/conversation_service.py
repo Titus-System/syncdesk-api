@@ -40,6 +40,9 @@ class ConversationService:
     async def get_by_id(self, chat_id: PydanticObjectId) -> Conversation | None:
         return await self.repo.get_by_id(chat_id)
 
+    async def get_from_client(self, client_id: UUID) -> list[Conversation]:
+        return await self.repo.get_by_client_id(client_id)
+
     async def get_participants(self, chat_id: PydanticObjectId) -> ChatParticipants | None:
         return await self.repo.get_chat_participants(chat_id)
 

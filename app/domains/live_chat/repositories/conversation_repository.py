@@ -4,6 +4,7 @@ from uuid import UUID
 
 from beanie import PydanticObjectId
 from beanie.odm.queries.aggregation import AggregationQuery
+from bson import Binary
 from motor.motor_asyncio import AsyncIOMotorCommandCursor, AsyncIOMotorDatabase
 from pymongo.errors import (
     ConnectionFailure,
@@ -13,6 +14,7 @@ from pymongo.errors import (
 )
 
 from app.core.decorators import require_dto
+from app.core.logger import get_logger
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.live_chat.exceptions import ParentConversationNotFoundError
 
@@ -42,6 +44,14 @@ class ConversationRepository:
             return await c.insert()
 
         except DuplicateKeyError as err:
+            details = err.details or {}
+            get_logger().warning(
+                "Duplicate conversation key error: keyPattern=%s keyValue=%s ticket_id=%s sequential_index=%s",
+                details.get("keyPattern"),
+                details.get("keyValue"),
+                dto.ticket_id,
+                dto.sequential_index,
+            )
             raise ResourceAlreadyExistsError("Chat", "index") from err
 
     async def get_by_id(self, id: PydanticObjectId) -> Conversation | None:
@@ -49,6 +59,16 @@ class ConversationRepository:
 
     async def get_chat_participants(self, id: PydanticObjectId) -> ChatParticipants | None:
         return await Conversation.find_one(Conversation.id == id, projection_model=ChatParticipants)
+
+    async def get_by_client_id(self, client_id: UUID) -> list[Conversation]:
+        query: AggregationQuery[Conversation] = Conversation.aggregate(
+            [
+                {"$match": {"client_id": Binary(client_id.bytes, subtype=4)}},
+                {"$sort": {"sequential_index": 1}},
+            ],
+            projection_model=Conversation,
+        )
+        return await query.to_list()
 
     async def get_by_ticket_id(
         self, ticket_id: PydanticObjectId

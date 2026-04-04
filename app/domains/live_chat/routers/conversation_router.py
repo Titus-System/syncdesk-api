@@ -12,6 +12,7 @@ from app.domains.auth import CurrentUserSessionDep, UserServiceDep, require_perm
 from ..dependencies import ConversationServiceDep
 from ..schemas import CreateConversationDTO
 from .swagger_utils import (
+    get_client_convs_swagger,
     get_convs_swagger,
     get_messages_swagger,
     post_conv_swagger,
@@ -19,6 +20,26 @@ from .swagger_utils import (
 )
 
 conversation_router = APIRouter()
+
+
+@conversation_router.get(
+    "/client/{client_id}",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:read")],
+    **get_client_convs_swagger,
+)
+async def get_client_conversations(
+    client_id: UUID,
+    _auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    chats = await service.get_from_client(client_id)
+    if not chats:
+        return response.success(data=[], status_code=status.HTTP_200_OK)
+
+    data = [chat.model_dump(mode="json") for chat in chats]
+    return response.success(data=data, status_code=status.HTTP_200_OK)
 
 
 @conversation_router.get(

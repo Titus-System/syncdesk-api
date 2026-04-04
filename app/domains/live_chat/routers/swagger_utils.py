@@ -48,6 +48,31 @@ get_convs_responses: dict[int | str, dict[str, Any]] = {
     },
 }
 
+get_client_convs_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "List of conversations for the client retrieved successfully.",
+        "model": GenericSuccessContent[list[Conversation]],
+    },
+    403: {
+        "description": "The authenticated user does not have permission to read chats.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": "Path parameter validation failed.",
+        "model": ErrorContent,
+    },
+}
+
+get_client_convs_swagger: dict[str, Any] = {
+    "summary": "List conversations for a client",
+    "description": (
+        "Returns all conversations associated with the given client id. "
+        "Requires the 'chat:read' permission."
+    ),
+    "response_model": GenericSuccessContent[list[Conversation]],
+    "responses": get_client_convs_responses,
+}
+
 get_convs_swagger: dict[str, Any] = {
     "summary": "List conversations for a ticket",
     "description": (

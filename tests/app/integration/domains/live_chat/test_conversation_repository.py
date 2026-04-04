@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -341,3 +342,69 @@ class TestConversationRepository:
         new_agent = uuid4()
         with pytest.raises(ResourceNotFoundError):
             await conversation_repo.attribute_agent(invalid_id, new_agent)
+
+    async def test_get_by_client_id(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        # Edge: client_id com uma conversa
+        self.create_dto.client_id = uuid4()
+        c = await conversation_repo.create(self.create_dto)
+        assert c is not None
+
+        convos = await conversation_repo.get_by_client_id(self.create_dto.client_id)
+        assert convos
+        assert isinstance(convos, list)
+        assert convos[0].id
+        assert convos[0].client_id == self.create_dto.client_id
+
+    async def test_get_by_client_empty(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        # Edge: client_id nunca usado
+        convos = await conversation_repo.get_by_client_id(uuid4())
+        assert convos == []
+        assert len(convos) == 0
+        assert isinstance(convos, list)
+
+    async def test_get_by_client_multiple_conversations(self, conversation_repo: ConversationRepository) -> None:
+        # Edge: client_id com múltiplas conversas
+        client_id = uuid4()
+        dtos = [
+            CreateConversationDTO(ticket_id=PydanticObjectId(), agent_id=uuid4(), client_id=client_id, sequential_index=i)
+            for i in range(3)
+        ]
+        for dto in dtos:
+            await conversation_repo.create(dto)
+        convos = await conversation_repo.get_by_client_id(client_id)
+        assert len(convos) == 3
+        # Deve estar ordenado por sequential_index
+        indices = [c.sequential_index for c in convos]
+        assert indices == sorted(indices)
+
+    async def test_get_by_client_with_and_without_agent(self, conversation_repo: ConversationRepository) -> None:
+        # Edge: client_id com conversas com e sem agent_id
+        client_id = uuid4()
+        dto1 = CreateConversationDTO(ticket_id=PydanticObjectId(), agent_id=None, client_id=client_id)
+        dto2 = CreateConversationDTO(ticket_id=PydanticObjectId(), agent_id=uuid4(), client_id=client_id)
+        await conversation_repo.create(dto1)
+        await conversation_repo.create(dto2)
+        convos = await conversation_repo.get_by_client_id(client_id)
+        assert len(convos) == 2
+        agent_ids = [c.agent_id for c in convos]
+        assert any(a is None for a in agent_ids)
+        assert any(a is not None for a in agent_ids)
+
+    async def test_get_by_client_id_with_finalized_and_open_conversations(self, conversation_repo: ConversationRepository) -> None:
+        # Edge: client_id com conversas abertas e finalizadas
+        client_id = uuid4()
+        dto_open = CreateConversationDTO(ticket_id=PydanticObjectId(), agent_id=uuid4(), client_id=client_id)
+        dto_closed = CreateConversationDTO(ticket_id=PydanticObjectId(), agent_id=uuid4(), client_id=client_id)
+        open_conv = await conversation_repo.create(dto_open)
+        closed_conv = await conversation_repo.create(dto_closed)
+        # Finaliza uma conversa
+        closed_conv.finished_at = datetime.now()
+        await conversation_repo.update(closed_conv)
+        convos = await conversation_repo.get_by_client_id(client_id)
+        assert len(convos) == 2
+        assert any(c.finished_at is not None for c in convos)
+        assert any(c.finished_at is None for c in convos)

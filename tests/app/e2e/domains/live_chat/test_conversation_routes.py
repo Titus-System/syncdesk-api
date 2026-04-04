@@ -12,11 +12,22 @@ from app.domains.live_chat.schemas import CreateConversationDTO
 from tests.app.e2e.conftest import AuthActions
 
 
+async def cleanup_legacy_conversation_indexes() -> None:
+    collection = Conversation.get_motor_collection()
+    indexes = await collection.index_information()
+    legacy_indexes = ("service_session_id_1_sequential_index_1",)
+    for index_name in legacy_indexes:
+        if index_name in indexes:
+            await collection.drop_index(index_name)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def cleanup_conversation_collection():
+    await cleanup_legacy_conversation_indexes()
     await Conversation.delete_all()
     yield
     await Conversation.delete_all()
+    await cleanup_legacy_conversation_indexes()
 
 class TestConversationCRUD:
     create_dto = CreateConversationDTO(
@@ -312,3 +323,84 @@ class TestConversationCRUD:
             headers=auth.auth_headers(admin_user[1]),
         )
         assert patch_resp.status_code == 404
+
+
+    async def test_get_conversations_from_client(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        create_resp = await client.post(
+            "/api/conversations/",
+            json=self.create_dto.model_dump(mode="json"),
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert create_resp.status_code == 201
+        r = await client.get(
+            f"/api/conversations/client/{self.create_dto.client_id}",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        r = r.json()
+        data = r["data"]
+        assert isinstance(data, list)
+        assert data[0]["client_id"] == str(self.create_dto.client_id)
+
+    @pytest.mark.asyncio
+    async def test_get_conversations_from_client_empty(self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]) -> None:
+        # Edge: client_id nunca usado
+        fake_client_id = uuid4()
+        r = await client.get(
+            f"/api/conversations/client/{fake_client_id}",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data == []
+
+    @pytest.mark.asyncio
+    async def test_get_conversations_from_client_multiple(self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]) -> None:
+        # Edge: client_id com múltiplas conversas
+        client_id = uuid4()
+        for i in range(3):
+            dto = CreateConversationDTO(ticket_id=PydanticObjectId(), agent_id=uuid4(), client_id=client_id, sequential_index=i)
+            create_resp = await client.post(
+                "/api/conversations/",
+                json=dto.model_dump(mode="json"),
+                headers=auth.auth_headers(admin_user[1]),
+            )
+            assert create_resp.status_code == 201
+        r = await client.get(
+            f"/api/conversations/client/{client_id}",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 3
+        indices = [c["sequential_index"] for c in data]
+        assert indices == sorted(indices)
+
+    @pytest.mark.asyncio
+    async def test_get_conversations_from_client_different_tickets(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        client_id = uuid4()
+        ticket_ids = [PydanticObjectId() for _ in range(2)]
+        for t_id in ticket_ids:
+            dto = CreateConversationDTO(ticket_id=t_id, agent_id=uuid4(), client_id=client_id)
+            create_resp = await client.post(
+                "/api/conversations/",
+                json=dto.model_dump(mode="json"),
+                headers=auth.auth_headers(admin_user[1]),
+            )
+            assert create_resp.status_code == 201
+        r = await client.get(
+            f"/api/conversations/client/{client_id}",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 2
+        returned_tickets = {c["ticket_id"] for c in data}
+        assert set(str(t) for t in ticket_ids) == returned_tickets
+
+    
+
