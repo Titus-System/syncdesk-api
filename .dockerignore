@@ -27,3 +27,5 @@ docker-compose.yaml
 .vscode
 .idea
 *.DS_Store
+
+.digital-ocean

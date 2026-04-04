@@ -50,9 +50,10 @@ Each sub-module has its own README with detailed documentation:
 ## Prerequisites
 
 - **Python 3.12+**
+- **Poetry** (package manager) — [install guide](https://python-poetry.org/docs/#installation)
 - **PostgreSQL** (running locally or in a container)
 - **MongoDB** (running locally or in a container)
-- **Poetry** (package manager) — [install guide](https://python-poetry.org/docs/#installation)
+- **Docker + Docker Compose plugin** (recommended for quickest setup)
 
 ---
 
@@ -61,15 +62,21 @@ Each sub-module has its own README with detailed documentation:
 ### 1. Clone and install dependencies
 
 ```bash
-git clone <repository-url>
-cd backend
+git clone https://github.com/Titus-System/syncdesk-api.git
+cd syncdesk-api
 make install
 # or: poetry install
 ```
 
 ### 2. Configure environment variables
 
-Create a `.env` file in the project root. All variables have sensible defaults for local development, so a minimal `.env` can be empty — but you should at least set a proper JWT secret:
+Create a `.env` file in the project root:
+
+```bash
+cp .env.example .env
+```
+
+Use these values as a baseline for local development:
 
 ```dotenv
 # .env
@@ -85,13 +92,18 @@ POSTGRES_PORT=5432
 POSTGRES_DB=syncdesk_db
 
 # MongoDB
-MONGO_USER=
-MONGO_PASSWORD=
+MONGO_USER=mongouser
+MONGO_PASSWORD=mongopassword
 MONGO_HOST=localhost
 MONGO_PORT=27017
 MONGO_DB=syncdesk_db
 
+# Mongo root user (required when Mongo runs via docker compose)
+MONGO_INITDB_ROOT_USERNAME=mongouser
+MONGO_INITDB_ROOT_PASSWORD=mongopassword
+
 # JWT (change the secrets in any non-local environment)
+JWT_SECRET_KEY=change-me-in-production
 ACCESS_TOKEN_SIGNING_KEY=change-me-in-production
 REFRESH_TOKEN_SIGNING_KEY=change-me-in-production
 JWT_ALGORITHM=HS256
@@ -109,22 +121,32 @@ PROJECT_VERSION=0.1.0
 
 Full variable reference is in the [core/ docs](app/core/README.md#configuration-configpy).
 
+Important:
+
+- For Docker Compose, keep `MONGO_USER` / `MONGO_PASSWORD` equal to `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD`.
+- The app authenticates MongoDB using `authSource=admin` when credentials are present.
+
 ### 3. Set up the databases
 
-#### Option A: Development mode (auto-setup)
+#### Option A: Local API run (with local DB services)
 
 When `ENVIRONMENT=development`, the app:
 
 - connects to MongoDB on startup,
-- and **automatically creates the PostgreSQL database and all tables** (drops and recreates).
+- creates the PostgreSQL database if it does not exist,
+- and runs Alembic migrations if the schema is behind `head`.
 
-Make sure both PostgreSQL and MongoDB are running:
+Start databases first (one simple option is using Compose only for DB services):
+
+```bash
+docker compose up -d db mongo
+```
+
+Then run the API locally:
 
 ```bash
 make dev
 ```
-
-> **Warning:** Postgres auto-setup drops all tables every startup in development. Use only for local development.
 
 #### Option B: Using Alembic migrations (recommended for staging/production)
 
@@ -207,6 +229,10 @@ POSTGRES_DB=syncdesk_db
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 
+MONGO_INITDB_ROOT_USERNAME=mongouser
+MONGO_INITDB_ROOT_PASSWORD=mongopassword
+MONGO_USER=mongouser
+MONGO_PASSWORD=mongopassword
 MONGO_HOST=localhost
 MONGO_PORT=27017
 MONGO_DB=syncdesk_db
@@ -214,10 +240,24 @@ MONGO_DB=syncdesk_db
 
 `POSTGRES_HOST` is automatically overridden to `db`, and `MONGO_HOST` to `mongo`, inside the API container.
 
+`MONGO_INITDB_ROOT_*` is used to create the MongoDB root user on first startup. The API connects with `MONGO_USER`/`MONGO_PASSWORD` and authenticates against `admin`.
+
 ### 2. Start all services
 
 ```bash
 docker compose up --build
+```
+
+To run in detached mode:
+
+```bash
+docker compose up -d --build
+```
+
+To follow API logs:
+
+```bash
+docker compose logs -f api
 ```
 
 What happens automatically:
@@ -229,6 +269,15 @@ What happens automatically:
 - Alembic runs: `alembic upgrade head`
 - FastAPI starts on `http://localhost:8000`
 
+If you previously changed Mongo credentials and still get `Authentication failed`, recreate containers and volumes once:
+
+```bash
+docker compose down -v
+docker compose up --build
+```
+
+If ports are already in use locally, adjust host ports in `docker-compose.yaml`.
+
 ### 3. Stop services
 
 ```bash
@@ -238,6 +287,21 @@ docker compose down
 To also remove Postgres and Mongo persisted data:
 
 ```bash
+docker compose down -v
+```
+
+Data persistence behavior:
+
+- `docker compose down` keeps DB data (named volumes are preserved)
+- `docker compose down -v` removes DB data
+
+Quick reset commands:
+
+```bash
+# Stop and keep data
+docker compose down
+
+# Stop and delete database data
 docker compose down -v
 ```
 ---

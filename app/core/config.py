@@ -78,16 +78,16 @@ class Settings(BaseSettings):
         if self.MONGO_USER and self.MONGO_PASSWORD:
             return (
                 f"mongodb://{self.MONGO_USER}:{self.MONGO_PASSWORD}@"
-                f"{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}"
+                f"{self.MONGO_HOST}:{self.MONGO_PORT}/{self.MONGO_DB}?authSource=admin"
             )
-        return f"mongodb://{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}"
+        return f"mongodb://{self.MONGO_HOST}:{self.MONGO_PORT}/{self.MONGO_DB}"
 
     @property
     def test_mongo_bd_url(self) -> str:
         if self.MONGO_USER and self.MONGO_PASSWORD:
             return (
                 f"mongodb://{self.MONGO_USER}:{self.MONGO_PASSWORD}@"
-                f"{self.MONGO_HOST}:{self.MONGO_PORT}/{self.MONGO_DB}"
+                f"{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}?authSource=admin"
             )
         return f"mongodb://{self.MONGO_HOST}:{self.MONGO_PORT}/{self.mongo_db_test}"
 
