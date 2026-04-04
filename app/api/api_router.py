@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.core.dependencies import ResponseFactoryDep
 from app.domains.auth import auth_router, permission_router, role_router, user_router
 from app.domains.live_chat import chat_router, conversation_router
+from app.domains.ticket import ticket_router
 from app.schemas.response import ErrorContent, GenericSuccessContent
 
 api_router = APIRouter()
@@ -45,3 +46,5 @@ api_router.include_router(user_router, prefix="/users", tags=["Users"])
 
 api_router.include_router(chat_router, prefix="/live_chat", tags=["Live Chat"])
 api_router.include_router(conversation_router, prefix="/conversations", tags=["Conversations"])
+
+api_router.include_router(ticket_router, prefix="/tickets", tags=["Tickets"])
