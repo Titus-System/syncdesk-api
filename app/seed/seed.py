@@ -56,6 +56,10 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "chat:update", "description": "Update chat attributes"},
         {"name": "chat:add_message", "description": "Send messages in a Chat"},
         {"name": "chat:set_agent", "description": "Set agent to conversation"},
+        # Ticket
+        {"name": "ticket:read", "description": "Read tickets"},
+        {"name": "ticket:create", "description": "Create tickets"},
+        {"name": "ticket:update_status", "description": "Update ticket status"},
     ]
 
     await session.execute(insert(Permission).values(permissions))
@@ -63,9 +67,9 @@ async def seed_permissions(session: AsyncSession) -> None:
 
 async def seed_role_permissions(session: AsyncSession) -> None:
     relations = {
-        "admin": ["user:%", "role:%", "permission:%", "chat:%", "password:%"],
+        "admin": ["user:%", "role:%", "permission:%", "chat:%", "password:%", "ticket:%"],
         "user": ["session:%", "chat:%", "password:change"],
-        "agent": ["session:%", "chat:%", "password:change"],
+        "agent": ["session:%", "chat:%", "password:change", "ticket:%"],
         "client": ["session:%", "chat:%", "password:change"],
     }
 
