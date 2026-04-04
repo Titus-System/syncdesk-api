@@ -304,3 +304,11 @@ result = await ticket_service.create_ticket(dto)
 - o seed central deve conter essa permissao para ambientes novos
 - a consulta atual usa filtro exato para `product`
 - a rota GET retorna tickets completos, nao apenas resumo
+
+## Problemas Conhecidos (pendentes)
+
+Os pontos abaixo foram identificados em revisao tecnica e ainda nao foram corrigidos neste modulo:
+
+- Consulta sem paginação: `GET /api/tickets/` pode retornar toda a coleção sem limite, aumentando risco de degradação com o crescimento da base.
+- Campos de texto sem limite: `product` e `description` não possuem restrições de tamanho no schema, permitindo payloads excessivamente grandes.
+- Exposição de informações pessoais (PII): a resposta de tickets inclui `client.email` para qualquer usuário com permissão `ticket:read`; avaliar necessidade de mascaramento ou escopo mais restrito.

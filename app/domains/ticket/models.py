@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 from beanie import Document, PydanticObjectId
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TicketType(Enum):
@@ -27,7 +27,7 @@ class TicketStatus(Enum):
 
 
 class TicketComment(BaseModel):
-    comment_id: UUID = uuid4()
+    comment_id: UUID = Field(default_factory=uuid4)
     author: str
     text: str
     date: datetime
