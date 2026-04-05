@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -12,17 +13,15 @@ from starlette.types import ASGIApp
 from app.domains.auth.entities import UserWithRoles
 from app.domains.live_chat.entities import Conversation
 from app.domains.live_chat.schemas import CreateConversationDTO
+from app.domains.ticket.models import (
+    Ticket,
+    TicketClient,
+    TicketCompany,
+    TicketCriticality,
+    TicketStatus,
+    TicketType,
+)
 from tests.app.e2e.conftest import AuthActions
-
-# ── Async WebSocket test helper ─────────────────────────
-# Starlette's ``TestClient`` runs WebSocket connections in a
-# **separate thread / event-loop**, which prevents it from
-# sharing the savepoint-isolated Postgres ``AsyncSession``
-# provided by the test fixtures.
-#
-# ``AsyncWebSocket`` talks to the ASGI app directly inside the
-# **same** event-loop so all dependency overrides (DB sessions,
-# Mongo connections) work transparently.
 
 
 class WebSocketDeniedError(Exception):
@@ -59,15 +58,11 @@ class AsyncWebSocket:
         self._to_client: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
 
-    # -- ASGI callbacks (called by the app) -------------------
-
     async def _receive(self) -> dict[str, Any]:
         return await self._to_server.get()
 
     async def _send(self, message: dict[str, Any]) -> None:
         await self._to_client.put(message)
-
-    # -- public API -------------------------------------------
 
     async def send_json(self, data: Any) -> None:
         await self._to_server.put({"type": "websocket.receive", "text": json.dumps(data)})
@@ -87,8 +82,6 @@ class AsyncWebSocket:
                 await asyncio.wait_for(self._task, timeout=2.0)
             except (TimeoutError, Exception):
                 self._task.cancel()
-
-    # -- context manager --------------------------------------
 
     async def __aenter__(self) -> "AsyncWebSocket":
         parsed = urlparse(self._path)
@@ -111,19 +104,12 @@ class AsyncWebSocket:
             "root_path": "",
             "headers": headers_bytes,
             "subprotocols": [],
-            # Needed so Starlette's send_denial_response sends an HTTP
-            # body instead of a bare close frame.
             "extensions": {"websocket.http.response": {}},
         }
 
-        # Queue the initial connect event *before* starting the app task
-        # Wait for the server to accept, reject, or deny the connection.
-        # so the app's first ``receive()`` returns immediately.
         await self._to_server.put({"type": "websocket.connect"})
-
         self._task = asyncio.create_task(self._app(scope, self._receive, self._send))
 
-        # Wait for the server to accept, reject, or deny the connection.
         response = await asyncio.wait_for(self._to_client.get(), timeout=5.0)
 
         if response["type"] == "websocket.accept":
@@ -146,10 +132,12 @@ class AsyncWebSocket:
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def cleanup_conversation_collection():
+async def cleanup_live_chat_collections():
     await Conversation.delete_all()
+    await Ticket.delete_all()
     yield
     await Conversation.delete_all()
+    await Ticket.delete_all()
 
 
 class TestWebSocketChat:
@@ -157,32 +145,63 @@ class TestWebSocketChat:
 
     @staticmethod
     async def _register_client_user(auth: AuthActions) -> tuple[UserWithRoles, str]:
-        """Register a user with the admin role (has chat:add_message) and return (user, token)."""
         tokens = await auth.register_and_login_admin(
-            email="ws_client@test.com", username="wsclient"
+            email="ws_client@test.com",
+            username="wsclient",
         )
         user = await auth.me(tokens["access_token"])
         return user, tokens["access_token"]
 
     @staticmethod
     async def _register_agent_user(auth: AuthActions) -> tuple[UserWithRoles, str]:
-        """Register a user with the agent role and return (user, token)."""
         await auth.register_agent(email="ws_agent@test.com", username="wsagent")
         tokens = await auth.login(email="ws_agent@test.com")
         user = await auth.me(tokens["access_token"])
         return user, tokens["access_token"]
 
     @staticmethod
+    async def _create_ticket(
+        client_id: Any,
+        status: TicketStatus = TicketStatus.OPEN,
+    ) -> PydanticObjectId:
+        ticket = Ticket(
+            triage_id=PydanticObjectId(),
+            type=TicketType.ISSUE,
+            criticality=TicketCriticality.MEDIUM,
+            product="WebSocket Test Product",
+            status=status,
+            creation_date=datetime.now(UTC),
+            description="Ticket created for live chat websocket tests",
+            chat_ids=[],
+            agent_history=[],
+            client=TicketClient(
+                id=client_id,
+                name="WS Client",
+                email="ws_client@test.com",
+                company=TicketCompany(
+                    id=client_id,
+                    name="Test Company",
+                ),
+            ),
+            comments=[],
+        )
+        await ticket.insert()
+        return ticket.id
+
+    @classmethod
     async def _create_conversation(
+        cls,
         client: AsyncClient,
         auth: AuthActions,
         token: str,
         client_id: Any,
         agent_id: Any | None = None,
+        ticket_status: TicketStatus = TicketStatus.OPEN,
     ) -> str:
-        """Create a conversation via REST and return its id."""
+        ticket_id = await cls._create_ticket(client_id=client_id, status=ticket_status)
+
         dto = CreateConversationDTO(
-            ticket_id=PydanticObjectId(),
+            ticket_id=ticket_id,
             client_id=client_id,
             agent_id=agent_id,
         )
@@ -208,14 +227,12 @@ class TestWebSocketChat:
             f"/api/live_chat/room/{conv_id}",
             headers={"Authorization": f"Bearer {token}"},
         ) as ws:
-            # First message: personal join confirmation
             join_msg = await ws.receive_json()
             assert join_msg["meta"]["success"] is True
             assert join_msg["data"]["sender_id"] == "System"
             assert "Joined to chat room" in join_msg["data"]["content"]
             assert join_msg["data"]["conversation_id"] == conv_id
 
-            # Second message: broadcast "<name> Joined chat room."
             broadcast_join = await ws.receive_json()
             assert broadcast_join["data"]["sender_id"] == "System"
             assert "Joined chat room" in broadcast_join["data"]["content"]
@@ -230,7 +247,12 @@ class TestWebSocketChat:
         agent_user, agent_token = await self._register_agent_user(auth)
 
         conv_id = await self._create_conversation(
-            client, auth, client_token, client_user.id, agent_id=agent_user.id
+            client,
+            auth,
+            client_token,
+            client_user.id,
+            agent_id=agent_user.id,
+            ticket_status=TicketStatus.OPEN,
         )
 
         async with AsyncWebSocket(
@@ -238,25 +260,20 @@ class TestWebSocketChat:
             f"/api/live_chat/room/{conv_id}",
             headers={"Authorization": f"Bearer {client_token}"},
         ) as ws_client:
-            await ws_client.receive_json()  # personal join confirmation
-            await ws_client.receive_json()  # broadcast join
+            await ws_client.receive_json()
+            await ws_client.receive_json()
 
             async with AsyncWebSocket(
                 app,
                 f"/api/live_chat/room/{conv_id}",
                 headers={"Authorization": f"Bearer {agent_token}"},
             ) as ws_agent:
-                # Drain agent's own join messages
-                await ws_agent.receive_json()  # personal join confirmation
-                await ws_agent.receive_json()  # broadcast join
+                await ws_agent.receive_json()
+                await ws_agent.receive_json()
+                await ws_client.receive_json()
 
-                # Client also receives agent's join broadcast
-                await ws_client.receive_json()  # agent join broadcast
-
-                # ── Client sends a message ──
                 await ws_client.send_json({"type": "text", "content": "Hello from client!"})
 
-                # Both should receive the broadcasted message
                 msg_client = await ws_client.receive_json()
                 msg_agent = await ws_agent.receive_json()
 
@@ -267,7 +284,6 @@ class TestWebSocketChat:
                     assert msg["data"]["type"] == "text"
                     assert msg["data"]["conversation_id"] == conv_id
 
-                # ── Agent replies ──
                 await ws_agent.send_json({"type": "text", "content": "Hello from agent!"})
 
                 reply_client = await ws_client.receive_json()
@@ -285,18 +301,24 @@ class TestWebSocketChat:
         auth: AuthActions,
     ) -> None:
         user, token = await self._register_client_user(auth)
-        conv_id = await self._create_conversation(client, auth, token, user.id)
+        conv_id = await self._create_conversation(
+            client,
+            auth,
+            token,
+            user.id,
+            ticket_status=TicketStatus.OPEN,
+        )
 
         async with AsyncWebSocket(
             app,
             f"/api/live_chat/room/{conv_id}",
             headers={"Authorization": f"Bearer {token}"},
         ) as ws:
-            await ws.receive_json()  # join confirmation
-            await ws.receive_json()  # broadcast join
+            await ws.receive_json()
+            await ws.receive_json()
 
             await ws.send_json({"type": "text", "content": "Persisted message"})
-            await ws.receive_json()  # broadcasted message
+            await ws.receive_json()
 
         conv = await Conversation.get(PydanticObjectId(conv_id))
         assert conv is not None
@@ -312,15 +334,21 @@ class TestWebSocketChat:
         auth: AuthActions,
     ) -> None:
         user, token = await self._register_client_user(auth)
-        conv_id = await self._create_conversation(client, auth, token, user.id)
+        conv_id = await self._create_conversation(
+            client,
+            auth,
+            token,
+            user.id,
+            ticket_status=TicketStatus.OPEN,
+        )
 
         async with AsyncWebSocket(
             app,
             f"/api/live_chat/room/{conv_id}",
             headers={"Authorization": f"Bearer {token}"},
         ) as ws:
-            await ws.receive_json()  # join confirmation
-            await ws.receive_json()  # broadcast join
+            await ws.receive_json()
+            await ws.receive_json()
 
             await ws.send_json({"wrong_field": "oops"})
             error_msg = await ws.receive_json()
@@ -344,20 +372,49 @@ class TestWebSocketChat:
             )
             error_msg = await ws.receive_json()
             assert error_msg["status"] == 1003
-            assert (
-                "mime_type and filename fields are not allowed"
-                in error_msg["detail"]
-            )
+            assert "mime_type and filename fields are not allowed" in error_msg["detail"]
 
             await ws.send_json(
                 {"type": "file", "content": "ADFGER234TWERGW234", "filename": "file.pdf"}
             )
             error_msg = await ws.receive_json()
             assert error_msg["status"] == 1003
-            assert (
-                "mime_type and filename fields are required when type='file'"
-                in error_msg["detail"]
-            )
+            assert "mime_type and filename fields are required when type='file'" in error_msg["detail"]
+
+    async def test_cannot_send_message_when_ticket_is_finished(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+    ) -> None:
+        user, token = await self._register_client_user(auth)
+        conv_id = await self._create_conversation(
+            client,
+            auth,
+            token,
+            user.id,
+            ticket_status=TicketStatus.FINISHED,
+        )
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json({"type": "text", "content": "Should be blocked"})
+            error_msg = await ws.receive_json()
+
+            assert error_msg["meta"]["success"] is False
+            assert error_msg["status"] == 1008
+            assert "finished" in error_msg["detail"].lower()
+
+        conv = await Conversation.get(PydanticObjectId(conv_id))
+        assert conv is not None
+        blocked_messages = [m for m in conv.messages if m.content == "Should be blocked"]
+        assert blocked_messages == []
 
     async def test_non_participant_cannot_connect(
         self,
@@ -369,7 +426,8 @@ class TestWebSocketChat:
         conv_id = await self._create_conversation(client, auth, creator_token, creator.id)
 
         outsider_tokens = await auth.register_and_login_admin(
-            email="outsider@test.com", username="outsider"
+            email="outsider@test.com",
+            username="outsider",
         )
 
         with pytest.raises(WebSocketDeniedError) as exc_info:

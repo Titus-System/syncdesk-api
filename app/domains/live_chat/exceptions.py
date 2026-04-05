@@ -25,3 +25,10 @@ class ParentConversationNotFoundError(Exception):
     ) -> None:
         self.errors = errors
         super().__init__("Parent Conversation does not exist.")
+
+
+class TicketClosedForNewMessagesError(Exception):
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message or "Cannot send new messages because the ticket is finished."
+        )

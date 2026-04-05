@@ -12,7 +12,11 @@ from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
 
 from ..chat_manager import ChatConnection, get_chat_manager
 from ..dependencies import ConversationServiceDep
-from ..exceptions import ChatRoomNotFoundError, InvalidMessageError
+from ..exceptions import (
+    ChatRoomNotFoundError,
+    InvalidMessageError,
+    TicketClosedForNewMessagesError,
+)
 
 
 def ensure_ws_request_id(ws: WebSocket) -> None:
@@ -67,6 +71,8 @@ async def connect_to_conversation(
                 break
             except (InvalidMessageError, ValidationError) as e:
                 await conn.send_error(WebSocketException(code=1003, reason=str(e) or ""))
+            except TicketClosedForNewMessagesError as e:
+                await conn.send_error(WebSocketException(code=1008, reason=str(e)))
             except ValueError as e:
                 await conn.send_error(WebSocketException(code=1008, reason=str(e)))
             except RuntimeError as e:
