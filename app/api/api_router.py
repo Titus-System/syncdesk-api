@@ -11,6 +11,8 @@ from app.domains.live_chat import chat_router, conversation_router
 from app.domains.ticket import ticket_router
 from app.schemas.response import ErrorContent, GenericSuccessContent
 
+from app.domains.chatbot.routers import router as chatbot_router
+
 api_router = APIRouter()
 
 
@@ -48,3 +50,5 @@ api_router.include_router(chat_router, prefix="/live_chat", tags=["Live Chat"])
 api_router.include_router(conversation_router, prefix="/conversations", tags=["Conversations"])
 
 api_router.include_router(ticket_router, prefix="/tickets", tags=["Tickets"])
+
+api_router.include_router(chatbot_router)
