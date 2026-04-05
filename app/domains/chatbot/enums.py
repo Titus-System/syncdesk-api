@@ -13,3 +13,9 @@ class TriageState(str, Enum):
     ANYTHING_ELSE = "H"             
     TICKET_CREATED = "E"                 
     SERVICE_FINISHED = "I"
+
+
+class AttendanceStatus(Enum):
+    OPENED = "opened"
+    IN_PROGRESS = "in_progress"
+    FINISHED = "finished"

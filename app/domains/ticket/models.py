@@ -67,3 +67,6 @@ class Ticket(Document):
     agent_history: list[TicketHistory]
     client: TicketClient
     comments: list[TicketComment]
+
+    class Settings:
+        name = "tickets"

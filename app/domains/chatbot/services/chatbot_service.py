@@ -1,33 +1,62 @@
 import uuid
-from typing import Any
+from typing import Any, cast
 from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
+from beanie import PydanticObjectId
+from bson import ObjectId
+from fastapi import status
+
+from app.core.exceptions import AppHTTPException
 from app.domains.chatbot.enums import TriageState
 from app.domains.chatbot.schemas import (
-    TriageInputDTO, TriageResponseDTO, TriageData, TriageInputDef, 
+    AttendanceClient, CreateAttendanceDTO, TriageInputDTO, TriageResponseDTO, TriageData, TriageInputDef, 
     QuickReply, TriageResponseMeta, TriageResult
 )
 from app.domains.chatbot.fsm import ChatbotFSM
 from app.domains.chatbot.repositories.chatbot_repository import ChatbotRepository
+from app.domains.ticket.models import (
+    Ticket,
+    TicketClient,
+    TicketCompany,
+    TicketCriticality,
+    TicketStatus,
+    TicketType,
+)
 
 class ChatbotService:
     def __init__(self, repository: ChatbotRepository) -> None:
         self.repository = repository
 
+    async def create_attendance(
+        self,
+        client: AttendanceClient,
+        triage_id: str | None = None,
+    ) -> dict[str, Any]:
+        dto = CreateAttendanceDTO(
+            client = client
+        )
+        final_triage_id = triage_id or str(ObjectId())
+        return await self.repository.create_attendance(dto, final_triage_id)
+
     async def process_message(self, payload: TriageInputDTO) -> TriageResponseDTO:
         attendance_db = await self.repository.find_attendance(payload.triage_id)
-        
-        attendance: dict[str, Any] = {}
+
         if attendance_db is None:
-            attendance = {
-                "_id": payload.triage_id, 
-                "triage": [],
-                "client": {}, 
-                "status": "in_progress",
-                "start_date": datetime.now(timezone.utc).isoformat()
-            }
-        else:
-            attendance = attendance_db
+            bootstrap_client = self._build_attendance_client_from_payload(payload)
+            await self.create_attendance(bootstrap_client, payload.triage_id)
+            attendance_db = await self.repository.find_attendance(payload.triage_id)
+
+            if attendance_db is None:
+                raise AppHTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "Attendance was created but could not be loaded afterward. "
+                        "Please try again."
+                    ),
+                )
+
+        attendance: dict[str, Any] = attendance_db
         
         triage: list[dict[str, Any]] = attendance.get("triage", [])
         current_state: TriageState | None = None
@@ -122,24 +151,114 @@ class ChatbotService:
                     demand_type = "new_feature"
                     criticality = "low"
 
-        client_data: dict[str, Any] = attendance.get("client", {})
-        
-        mock_ticket_id = str(uuid.uuid4()) 
+        triage_object_id = self._resolve_triage_object_id(attendance, attendance_id)
+        ticket = Ticket(
+            triage_id=triage_object_id,
+            type=self._resolve_ticket_type(demand_type),
+            criticality=self._resolve_ticket_criticality(criticality),
+            product=product,
+            status=TicketStatus.OPEN,
+            creation_date=datetime.now(timezone.utc),
+            description=free_text,
+            chat_ids=[],
+            agent_history=[],
+            client=self._build_ticket_client(attendance),
+            comments=[],
+        )
 
-        new_ticket: dict[str, Any] = {
-            "_id": mock_ticket_id,
-            "triage_id": attendance_id,
-            "type": demand_type,
-            "criticality": criticality,
-            "product": product,
-            "status": "Open",
-            "creation_date": datetime.now(timezone.utc).isoformat(),
-            "description": free_text,
-            "chat_id": None,
-            "agent_history": [],
-            "client": client_data,
-            "comments": []
-        }
+        return await self.repository.create_ticket(ticket)
 
-        await self.repository.create_ticket(new_ticket)
-        return mock_ticket_id
+    def _resolve_triage_object_id(self, attendance: dict[str, Any], attendance_id: str) -> PydanticObjectId:
+        raw_id = attendance.get("_id", attendance_id)
+        if isinstance(raw_id, ObjectId):
+            return cast(PydanticObjectId, raw_id)
+
+        raw_id_str = str(raw_id)
+        if ObjectId.is_valid(raw_id_str):
+            return cast(PydanticObjectId, ObjectId(raw_id_str))
+
+        raise ValueError("triage_id must be a valid ObjectId to create a ticket")
+
+    def _resolve_ticket_type(self, demand_type: str) -> TicketType:
+        if demand_type == TicketType.ACCESS.value:
+            return TicketType.ACCESS
+        if demand_type == TicketType.NEW_FEATURE.value:
+            return TicketType.NEW_FEATURE
+        return TicketType.ISSUE
+
+    def _resolve_ticket_criticality(self, criticality: str) -> TicketCriticality:
+        if criticality == TicketCriticality.MEDIUM.value:
+            return TicketCriticality.MEDIUM
+        if criticality == TicketCriticality.LOW.value:
+            return TicketCriticality.LOW
+        return TicketCriticality.HIGH
+
+    def _build_ticket_client(self, attendance: dict[str, Any]) -> TicketClient:
+        client_data_raw = attendance.get("client", {})
+        client_data: dict[str, Any] = (
+            cast(dict[str, Any], client_data_raw) if isinstance(client_data_raw, dict) else {}
+        )
+
+        client_id = self._parse_uuid(client_data.get("id")) or uuid4()
+        company_data_raw = client_data.get("company", {})
+        company_data: dict[str, Any] = (
+            cast(dict[str, Any], company_data_raw) if isinstance(company_data_raw, dict) else {}
+        )
+        company_id = self._parse_uuid(company_data.get("id")) or client_id
+
+        email_raw = client_data.get("email")
+        email = str(email_raw) if email_raw else f"{client_id}@unknown.local"
+        name_raw = client_data.get("name") or client_data.get("username") or email
+        name = str(name_raw)
+        company_name_raw = company_data.get("name")
+        company_name = str(company_name_raw) if company_name_raw else "Unknown company"
+
+        return TicketClient(
+            id=client_id,
+            name=name,
+            email=email,
+            company=TicketCompany(id=company_id, name=company_name),
+        )
+
+    def _parse_uuid(self, raw_value: Any) -> UUID | None:
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, UUID):
+            return raw_value
+        try:
+            return UUID(str(raw_value))
+        except (TypeError, ValueError):
+            return None
+
+    def _build_attendance_client_from_payload(self, payload: TriageInputDTO) -> AttendanceClient:
+        missing_fields: list[str] = []
+        if payload.client_id is None:
+            missing_fields.append("client_id")
+        if not payload.client_name:
+            missing_fields.append("client_name")
+        if not payload.client_email:
+            missing_fields.append("client_email")
+
+        if missing_fields:
+            raise AppHTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "triage_id was not found. To auto-create attendance, provide fields: "
+                    + ", ".join(missing_fields)
+                ),
+            )
+
+        client_id = payload.client_id
+        client_name = payload.client_name
+        client_email = payload.client_email
+        if client_id is None or client_name is None or client_email is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Missing client data to create attendance.",
+            )
+
+        return AttendanceClient(
+            id=client_id,
+            name=client_name,
+            email=client_email,
+        )
