@@ -46,7 +46,7 @@ async def connect_to_conversation(
         )
         return
 
-    await ws.accept()
+    await ws.accept(subprotocol="access_token")
     conn = ChatConnection(ws, response, user)
     joined = False
 
