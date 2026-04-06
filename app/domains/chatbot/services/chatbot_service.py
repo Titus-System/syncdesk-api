@@ -67,36 +67,43 @@ class ChatbotService:
             
             current_state = TriageState(step) if step is not None else None
             
-            if payload.answer_text:
+            if payload.answer_text is not None:
                 last_interaction["answer_text"] = payload.answer_text
-            if payload.answer_value:
+            if payload.answer_value is not None:
                 last_interaction["answer_value"] = payload.answer_value
 
         user_message = payload.answer_value if payload.answer_value else (payload.answer_text or "")
 
         bot_response = ChatbotFSM.process_interaction(current_state, user_message)
 
-        new_question: dict[str, Any] = {
-            "step": bot_response.new_state.value,
-            "question": bot_response.response_text,
-            "answer_text": None,
-            "answer_value": None,
-            "type": "free_text" if bot_response.is_free_text else "quick_replies"
-        }
-        
-        triage.append(new_question)
-        attendance["triage"] = triage
+        if not bot_response.is_finished:
+            new_question: dict[str, Any] = {
+                "step": bot_response.new_state.value if bot_response.new_state else "UNKNOWN",
+                "question": bot_response.response_text,
+                "answer_text": None,
+                "answer_value": None,
+                "type": "free_text" if bot_response.is_free_text else "quick_replies"
+            }
+            triage.append(new_question)
 
-        await self.repository.save_attendance(payload.triage_id, attendance)
+        attendance["triage"] = triage
 
         ticket_id = None
         if bot_response.new_state == TriageState.TICKET_CREATED:
             free_text_context = payload.answer_text if payload.answer_text else "Solicitação criada via URA"
             ticket_id = await self._generate_ticket_with_context(attendance, free_text_context, payload.triage_id)
 
-        formatted_step_id = f"step_{bot_response.new_state.value.lower()}"
+        # Resolve o format do step id atual (fallback para unknown se for nulo)
+        formatted_step_id = f"step_{bot_response.new_state.value.lower()}" if bot_response.new_state else "step_unknown"
         
         if bot_response.is_finished:
+            attendance["status"] = "finished" 
+            attendance["end_date"] = datetime.now(timezone.utc)
+            attendance["result"] = {
+                "type": "Ticket" if ticket_id else "Resolved",
+                "closure_message": bot_response.response_text
+            }
+            
             data = TriageData(
                 triage_id=payload.triage_id,
                 finished=True,
@@ -114,6 +121,8 @@ class ChatbotService:
                 message=bot_response.response_text,
                 input=input_def
             )
+
+        await self.repository.save_attendance(payload.triage_id, attendance)
 
         meta = TriageResponseMeta(
             timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
