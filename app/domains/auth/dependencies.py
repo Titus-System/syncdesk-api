@@ -162,7 +162,21 @@ async def get_current_user_session_ws(
     ws: WebSocket,
     service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> tuple[UserWithRoles, Session]:
-    token = _extract_bearer_token(ws.headers.get("Authorization"))
+    # Extract from custom subprotocol "access_token, <token>" since browsers block auth headers
+    token = None
+    subprotocols = ws.headers.get("Sec-WebSocket-Protocol")
+    if subprotocols:
+        parts = [p.strip() for p in subprotocols.split(",")]
+        if "access_token" in parts:
+            idx = parts.index("access_token")
+            # The token should be the next part in the sequence
+            if len(parts) > idx + 1:
+                token = parts[idx + 1]
+
+    # Fallback to standard Authorization header
+    if not token:
+        token = _extract_bearer_token(ws.headers.get("Authorization"))
+        
     try:
         return await service.load_current_user_session(token)
     except (
