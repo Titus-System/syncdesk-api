@@ -398,6 +398,11 @@ Built on `prometheus_client` with a custom `Prometheus` abstraction that manages
 | `background_job_runs_total`        | Counter   | `job_name`                          | Background job execution count    |
 | `background_job_failures_total`    | Counter   | `job_name`                          | Background job failure count      |
 | `background_job_duration_seconds`  | Histogram | `job_name`                          | Background job duration           |
+| `db_postgres_poolsize`             | Gauge     | —                                   | Total connections in the pool     |
+| `db_postgres_pool_checked_out`     | Gauge     | —                                   | Connections currently in use      |
+| `db_postgres_pool_overflow`        | Gauge     | —                                   | Connections beyond pool size      |
+| `db_postgres_query_duration_seconds` | Histogram | `operation`                       | PostgreSQL query execution time   |
+| `db_mongo_command_duration_seconds`  | Histogram | `command`, `collection`           | MongoDB command execution time    |
 
 ### Middleware (`metrics_middleware.py`)
 
@@ -405,7 +410,44 @@ Automatically records `app_requests_total`, `app_request_latency_seconds`, and `
 
 ### Background task (`metrics_background_tasks.py`)
 
-`update_system_metrics()` runs in an infinite loop (every 5 s), updating memory and CPU gauges via `psutil`.
+`update_system_metrics()` runs in an infinite loop (every 5 s), updating memory/CPU gauges via `psutil` and Postgres connection pool gauges (`db_postgres_poolsize`, `db_postgres_pool_checked_out`, `db_postgres_pool_overflow`) from the SQLAlchemy `QueuePool`. It receives the `AsyncEngine` as a parameter — wired in `main.py` — so `core/` never imports from `db/`.
+
+### Database metrics in domains
+
+Database query/command metrics are collected at the `db/` layer, **not** inside `core/`. The metrics objects are defined in `core/metrics/global_metrics.py`, but the instrumentation lives in:
+
+- **Postgres** — `app/db/postgres/engine.py` uses SQLAlchemy `event.listens_for` hooks (`before_cursor_execute` / `after_cursor_execute`) to observe `db_postgres_query_duration_seconds` per SQL operation (SELECT, INSERT, UPDATE, DELETE).
+- **MongoDB** — `app/db/mongo/monitoring.py` implements a `pymongo.monitoring.CommandListener` to observe `db_mongo_command_duration_seconds` per command and collection.
+
+This keeps the dependency direction correct: `db/` imports metric objects from `core/`, never the other way around.
+
+#### Using metrics inside a domain
+
+Domains can import and use any metric from `global_metrics.py`, or register new domain-specific metrics via the `prometheus` singleton:
+
+```python
+from app.core.metrics.global_metrics import request_count
+
+# Use a pre-registered metric
+request_count.labels(method="POST", endpoint="/api/tickets", status="201").inc()
+```
+
+To register a new domain-specific metric:
+
+```python
+from app.core.metrics.prometheus import prometheus
+
+tickets_created = prometheus.register_counter(
+    "domain_tickets_created_total",
+    "Total tickets created",
+    ["criticality"],
+)
+
+# Then use it in your service
+tickets_created.labels(criticality="high").inc()
+```
+
+**Naming convention:** prefix domain metrics with `domain_` to distinguish them from infrastructure metrics (`app_`, `db_`, `system_`).
 
 ### `@track_background_job(job_name)` decorator
 

@@ -29,7 +29,7 @@ def track_background_job(
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
             job_runs.labels(job_name=job_name).inc()
-            start_time = time.time()
+            start_time = time.perf_counter()
             try:
                 result = await func(*args, **kwargs)
                 return result
@@ -40,7 +40,7 @@ def track_background_job(
                 )
                 raise
             finally:
-                elapsed = time.time() - start_time
+                elapsed = time.perf_counter() - start_time
                 job_duration.labels(job_name=job_name).observe(elapsed)
 
         return wrapper

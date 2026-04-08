@@ -13,7 +13,7 @@ error_count = prometheus.register_counter(
 )
 
 system_memory_usage = prometheus.register_gauge(
-    "system_memory_usage_percentage", "System memory usage in bytes", ["type"]
+    "system_memory_usage_percentage", "System memory usage percentage", ["type"]
 )
 
 system_cpu_usage = prometheus.register_gauge(
@@ -32,4 +32,28 @@ job_duration = prometheus.register_histogram(
     "background_job_duration_seconds",
     "Execution duration of background jobs in seconds",
     ["job_name"],
+)
+
+db_pool_size = prometheus.register_gauge(
+    "db_postgres_poolsize", "Total connections in the pool"
+)
+
+db_pool_checked_out = prometheus.register_gauge(
+    "db_postgres_pool_checked_out", "Connections currently in use"
+)
+
+db_pool_overflow = prometheus.register_gauge(
+    "db_postgres_pool_overflow", "Connections beyond pool size"
+)
+
+db_query_latency = prometheus.register_histogram(
+    "db_postgres_query_duration_seconds",
+    "PostgreSQL query execution time",
+    ["operation"],
+)
+
+mongo_command_latency = prometheus.register_histogram(
+    "db_mongo_command_duration_seconds",
+    "MongoDB command execution time",
+    ["command", "collection"],
 )
