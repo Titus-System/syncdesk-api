@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from app.core.config import get_settings
+from app.core.logger import request_id_ctx
 
 from .http.device import get_device_info
 from .metrics import add_metrics_middleware
@@ -36,6 +37,7 @@ def _add_http_middlewares(app: FastAPI) -> None:
     ) -> Response:
         request_id = request.headers.get("X-Request-ID", str(uuid4()))
         request.state.request_id = request_id
+        request_id_ctx.set(request_id)
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response

@@ -3,6 +3,8 @@ from collections.abc import Callable, Coroutine
 from functools import wraps
 from typing import Any, TypeVar
 
+from app.core.logger import get_logger
+
 from .global_metrics import job_duration, job_failures, job_runs
 
 T = TypeVar("T")
@@ -33,6 +35,9 @@ def track_background_job(
                 return result
             except Exception:
                 job_failures.labels(job_name=job_name).inc()
+                get_logger("app.background").exception(
+                    f"Background job '{job_name}' failed"
+                )
                 raise
             finally:
                 elapsed = time.time() - start_time
