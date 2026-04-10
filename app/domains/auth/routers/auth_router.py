@@ -194,7 +194,7 @@ async def forgot_password(
     try:
         await service.forgot_password(dto.email)
     except Exception:
-        get_logger().error("Failed forgot-password pipeline.", exc_info=True)
+        get_logger("app.auth.router").exception("Failed forgot-password pipeline.")
     return response.success(
         data={"message": "If the email exists, a reset link has been sent."},
         status_code=status.HTTP_200_OK,

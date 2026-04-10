@@ -24,6 +24,7 @@ from ..schemas import (
     RegisterUserRequest,
     UserLoginRequest,
 )
+from ..metrics import login_total, registration_total, token_refresh_total
 from ..services.session_service import SessionService
 from .role_service import RoleService
 from .user_service import UserService
@@ -45,7 +46,7 @@ class AuthService:
         self.passwordSecurity = password_security
         self.role_service = role_service
         self.password_service = password_service
-        self.logger = get_logger()
+        self.logger = get_logger("app.auth.service")
 
     async def register(
         self, dto: RegisterUserRequest, device_info: SessionDeviceInfo | None = None
@@ -68,6 +69,10 @@ class AuthService:
         access_token, refresh_token = await self.session_service.init_session(
             user.id, role_names, device_info
         )
+
+        registration_total.labels(method="self").inc()
+        self.logger.info("User registered", extra={"user_id": str(user.id), "email": user.email})
+
         return {
             "id": str(user.id),
             "email": user.email,
@@ -81,20 +86,28 @@ class AuthService:
     ) -> LoginResponse:
         user = await self.user_service.get_by_email_with_roles(email=dto.email)
         if user is None:
+            login_total.labels(status="user_not_found").inc()
             raise UserNotFoundError()
 
         password_hash = user.password_hash
         if not password_hash:
+            login_total.labels(status="no_password").inc()
             raise UserPasswordNotConfiguredError()
 
         is_authenticated = self.passwordSecurity.verify_password(dto.password, password_hash)
         if not is_authenticated:
+            login_total.labels(status="invalid_password").inc()
+            self.logger.warning("Failed login attempt", extra={"email": dto.email})
             raise InvalidPasswordError(user.email)
 
         role_names = [r.name for r in user.roles] if user.roles is not None else []
         access_token, refresh_token = await self.session_service.init_session(
             user.id, role_names, device_info
         )
+
+        login_total.labels(status="success").inc()
+        self.logger.info("User logged in", extra={"user_id": str(user.id)})
+
         response = LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -134,6 +147,11 @@ class AuthService:
             current_session, current_user.id, dto, device_info
         )
         if not valid_refresh:
+            token_refresh_total.labels(status="invalid").inc()
+            self.logger.warning(
+                "Invalid refresh attempt, session revoked",
+                extra={"user_id": str(current_user.id), "session_id": str(current_session.id)},
+            )
             await self.session_service.revoke(current_session.id)
             raise InvalidSessionError("New login required.")
 
@@ -148,6 +166,7 @@ class AuthService:
         time_delta = get_settings().refresh_token_timedelta
         await self.session_service.refresh(current_session, new_refresh_token_hash, time_delta)
 
+        token_refresh_total.labels(status="success").inc()
         return {"access_token": access_token, "refresh_token": new_refresh_token}
 
     async def load_current_user_session(self, access_token: str) -> tuple[UserWithRoles, Session]:
@@ -179,7 +198,7 @@ class AuthService:
 
         return user, session
 
-    async def logout(self, user: User, session: Session) -> None:
+    async def logout(self, _user: User, session: Session) -> None:
         await self.session_service.revoke(session.id)
 
     async def admin_register(self, dto: AdminRegisterUserRequest) -> UserWithRoles:
@@ -196,11 +215,14 @@ class AuthService:
 
         user = await self.user_service.create(create_dto)
 
+        registration_total.labels(method="admin").inc()
+        self.logger.info("Admin registered user", extra={"user_id": str(user.id), "email": dto.email})
+
         raw_token = await self.password_service.create_reset_token(user.id, TokenPurpose.INVITE)
 
         try:
             await self.password_service.send_welcome_email(user, raw_token, password)
         except Exception:
-            self.logger.error("Welcome email dispatch failed after admin_register", exc_info=True)
+            self.logger.exception("Welcome email dispatch failed after admin_register")
 
         return user

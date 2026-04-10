@@ -9,6 +9,7 @@ from app.core.logger import get_logger
 from app.core.response import WSResponseFactory
 from app.domains.auth.entities import User, UserWithRoles
 from app.domains.live_chat.exceptions import ChatRoomNotFoundError, InvalidMessageError
+from app.domains.live_chat.metrics import messages_broadcast_total, ws_connections_active
 
 from .entities import ChatMessage
 
@@ -57,6 +58,7 @@ class ChatRoom:
 
     async def join(self, conn: ChatConnection) -> None:
         self.connections.append(conn)
+        ws_connections_active.inc()
         await conn.room_join_confirmation(self.id)
         content = f"{conn.user.name if conn.user else ''} Joined chat room."
         message = ChatMessage.create(self.id, "System", "text", content)
@@ -65,6 +67,7 @@ class ChatRoom:
     async def leave(self, conn: ChatConnection) -> None:
         if conn in self.connections:
             self.connections.remove(conn)
+            ws_connections_active.dec()
         if conn.ws.client_state == WebSocketState.CONNECTED:
             await conn.close()
 
@@ -82,6 +85,7 @@ class ChatRoom:
         self.dead = []
 
     async def broadcast(self, message: ChatMessage) -> None:
+        messages_broadcast_total.inc()
         for conn in self.connections:
             try:
                 await conn.send(message)
@@ -89,9 +93,8 @@ class ChatRoom:
                 self.dead.append(conn)
             except Exception:
                 # Keep unexpected failures visible instead of silently dropping them.
-                get_logger().error(
+                get_logger("app.live_chat.room").exception(
                     f"Unexpected error broadcasting message {message.id} in room {self.id}.",
-                    exc_info=True,
                 )
                 self.dead.append(conn)
         self._drop_dead_connections()
@@ -100,7 +103,7 @@ class ChatRoom:
 class ChatManager:
     def __init__(self) -> None:
         self.rooms: dict[PydanticObjectId, ChatRoom] = {}
-        self.logger = get_logger()
+        self.logger = get_logger("app.live_chat.manager")
 
     def open_room(self, id: PydanticObjectId | None) -> PydanticObjectId:
         if id is None:

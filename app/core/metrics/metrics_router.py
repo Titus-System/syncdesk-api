@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, Response
 
 from .prometheus import prometheus
 
-metrics_router = APIRouter()
+metrics_router = APIRouter(include_in_schema=False)
 
 
 @metrics_router.get("/metrics", tags=["Metrics"])

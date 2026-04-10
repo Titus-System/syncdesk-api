@@ -23,8 +23,14 @@ class ContextQueueHandler(QueueHandler):
 
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         record = super().prepare(record)
-        record.request_id = request_id_ctx.get()  # type: ignore[attr-defined]
-        record.user_id = user_id_ctx.get()  # type: ignore[attr-defined]
+        ctx_request_id = request_id_ctx.get()
+        if ctx_request_id:
+            record.request_id = ctx_request_id  # type: ignore[attr-defined]
+
+        ctx_user_id = user_id_ctx.get()
+        if ctx_user_id:
+            record.user_id = ctx_user_id  # type: ignore[attr-defined]
+
         return record
 
 

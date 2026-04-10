@@ -9,6 +9,7 @@ from app.core.email import EmailStrategy, ResetPasswordEmailParams
 from app.core.email.renderer import render_password_reset_email, render_welcome_email
 from app.core.email.schemas import WelcomeEmailParams
 from app.core.logger import get_logger
+from app.infra.email.metrics import emails_sent_total
 
 settings = get_settings()
 
@@ -20,7 +21,7 @@ class ResendEmailService(EmailStrategy):
     def __init__(self) -> None:
         resend.api_key = settings.RESEND_API_KEY
         self.from_email = settings.RESEND_FROM_EMAIL
-        self.logger = get_logger()
+        self.logger = get_logger("app.infra.email")
 
     async def _send(self, to: str, subject: str, html: str) -> None:
         last_error: Exception = RuntimeError("Email send failed before exception capture")
@@ -74,7 +75,17 @@ class ResendEmailService(EmailStrategy):
             await asyncio.sleep(2**attempt)
 
     async def send_reset_email(self, to: str, email_params: ResetPasswordEmailParams) -> None:
-        await self._send(to, "Reset Your Password", render_password_reset_email(email_params))
+        try:
+            await self._send(to, "Reset Your Password", render_password_reset_email(email_params))
+            emails_sent_total.labels(type="reset_password", status="success").inc()
+        except Exception:
+            emails_sent_total.labels(type="reset_password", status="failure").inc()
+            raise
 
     async def send_welcome_email(self, to: str, email_params: WelcomeEmailParams) -> None:
-        await self._send(to, "Welcome to SyncDesk!", render_welcome_email(email_params))
+        try:
+            await self._send(to, "Welcome to SyncDesk!", render_welcome_email(email_params))
+            emails_sent_total.labels(type="welcome", status="success").inc()
+        except Exception:
+            emails_sent_total.labels(type="welcome", status="failure").inc()
+            raise

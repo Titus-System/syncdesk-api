@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from app.core.logger import get_logger
 from app.db.exceptions import ResourceNotFoundError
 from app.domains.auth.exceptions import UserCannotLoseLoginMethodError
 from app.domains.auth.repositories.user_repository import UserRepository
@@ -11,6 +12,7 @@ from ..schemas import CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
 class UserService:
     def __init__(self, repo: UserRepository):
         self.repo: UserRepository = repo
+        self.logger = get_logger("app.auth.user_service")
 
     async def create(self, dto: CreateUserDTO) -> UserWithRoles:
         return await self.repo.create(dto)
@@ -44,9 +46,11 @@ class UserService:
         return await self.repo.update(id, dto)
 
     async def delete(self, id: UUID) -> User | None:
+        self.logger.info("User soft-deleted", extra={"user_id": str(id)})
         return await self.repo.soft_delete(id)
 
     async def hard_delete(self, id: UUID) -> User | None:
+        self.logger.warning("User hard-deleted", extra={"user_id": str(id)})
         return await self.repo.hard_delete(id)
 
     async def add_roles(self, id: UUID, role_ids: list[int]) -> UserWithRoles:
@@ -55,6 +59,7 @@ class UserService:
             raise ResourceNotFoundError("User", str(id))
         if missing_ids is not None:
             raise ValueError(f"Roles not found: {missing_ids}")
+        self.logger.info("Roles assigned to user", extra={"user_id": str(id), "role_ids": role_ids})
         return user
 
     async def get_user_permissions(self, id: UUID) -> list[Permission]:

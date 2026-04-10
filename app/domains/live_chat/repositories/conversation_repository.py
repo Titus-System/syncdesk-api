@@ -45,7 +45,7 @@ class ConversationRepository:
 
         except DuplicateKeyError as err:
             details = err.details or {}
-            get_logger().warning(
+            get_logger("app.live_chat.repository").warning(
                 "Duplicate conversation key error: keyPattern=%s keyValue=%s ticket_id=%s sequential_index=%s",
                 details.get("keyPattern"),
                 details.get("keyValue"),
@@ -213,11 +213,14 @@ class ConversationRepository:
         conversation = await Conversation.get(id)
         if not conversation:
             raise ValueError(f"Conversation {id} not found")
+        logger = get_logger("app.live_chat.repository")
         try:
             await conversation.update({"$push": {"messages": message.model_dump()}})
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+            logger.error("MongoDB connection error on add_message", extra={"conversation_id": str(id)}, exc_info=e)
             raise RuntimeError("Connection error when saving the message") from e
         except WriteError as e:
+            logger.error("MongoDB write error on add_message", extra={"conversation_id": str(id)}, exc_info=e)
             raise RuntimeError("Error persisting message") from e
 
     async def attribute_agent(self, conversation_id: PydanticObjectId, agent_id: UUID) -> None:

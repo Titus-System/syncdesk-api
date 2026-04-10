@@ -10,6 +10,7 @@ from app.core.dependencies import (
     ResetTokenSecurityDep,
 )
 from app.core.exceptions import AppHTTPException
+from app.core.logger import user_id_ctx
 from app.db.postgres.dependencies import PgSessionDep
 from app.domains.auth.repositories.password_reset_token_repository import (
     PasswordResetTokenRepository,
@@ -130,7 +131,7 @@ async def get_current_user_session(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
 ) -> tuple[UserWithRoles, Session]:
     try:
-        return await service.load_current_user_session(credentials.credentials)
+        user, session = await service.load_current_user_session(credentials.credentials)
     except (
         InvalidCredentialsError,
         InvalidSessionError,
@@ -138,6 +139,9 @@ async def get_current_user_session(
         UserNotFoundError,
     ) as e:
         raise AppHTTPException(status_code=401, detail=str(e)) from e
+
+    user_id_ctx.set(str(user.id))
+    return user, session
 
 
 async def get_user_compliance(
@@ -178,7 +182,7 @@ async def get_current_user_session_ws(
         token = _extract_bearer_token(ws.headers.get("Authorization"))
         
     try:
-        return await service.load_current_user_session(token)
+        user, session = await service.load_current_user_session(token)
     except (
         InvalidCredentialsError,
         InvalidSessionError,
@@ -186,6 +190,9 @@ async def get_current_user_session_ws(
         UserNotFoundError,
     ) as e:
         raise WebSocketException(code=1008, reason=str(e)) from e
+
+    user_id_ctx.set(str(user.id))
+    return user, session
 
 
 async def get_user_permissions(

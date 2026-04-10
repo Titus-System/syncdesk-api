@@ -8,7 +8,9 @@ from bson import ObjectId
 from fastapi import status
 
 from app.core.exceptions import AppHTTPException
+from app.core.logger import get_logger
 from app.domains.chatbot.enums import TriageState
+from app.domains.chatbot.metrics import chatbot_messages_total, chatbot_tickets_total
 from app.domains.chatbot.schemas import (
     AttendanceClient, CreateAttendanceDTO, TriageInputDTO, TriageResponseDTO, TriageData, TriageInputDef, 
     QuickReply, TriageResponseMeta, TriageResult
@@ -27,6 +29,7 @@ from app.domains.ticket.models import (
 class ChatbotService:
     def __init__(self, repository: ChatbotRepository) -> None:
         self.repository = repository
+        self.logger = get_logger("app.chatbot.service")
 
     async def create_attendance(
         self,
@@ -76,6 +79,9 @@ class ChatbotService:
 
         bot_response = ChatbotFSM.process_interaction(current_state, user_message)
 
+        step_label = bot_response.new_state.value if bot_response.new_state else "unknown"
+        chatbot_messages_total.labels(step=step_label).inc()
+
         if not bot_response.is_finished:
             new_question: dict[str, Any] = {
                 "step": bot_response.new_state.value if bot_response.new_state else "UNKNOWN",
@@ -92,12 +98,15 @@ class ChatbotService:
         if bot_response.new_state == TriageState.TICKET_CREATED:
             free_text_context = payload.answer_text if payload.answer_text else "Solicitação criada via URA"
             ticket_id = await self._generate_ticket_with_context(attendance, free_text_context, payload.triage_id)
+            chatbot_tickets_total.inc()
+            self.logger.info("Ticket created from triage", extra={"triage_id": payload.triage_id, "ticket_id": ticket_id})
 
         # Resolve o format do step id atual (fallback para unknown se for nulo)
         formatted_step_id = f"step_{bot_response.new_state.value.lower()}" if bot_response.new_state else "step_unknown"
         
         if bot_response.is_finished:
-            attendance["status"] = "finished" 
+            self.logger.info("Triage finished", extra={"triage_id": payload.triage_id})
+            attendance["status"] = "finished"
             attendance["end_date"] = datetime.now(timezone.utc)
             attendance["result"] = {
                 "type": "Ticket" if ticket_id else "Resolved",
