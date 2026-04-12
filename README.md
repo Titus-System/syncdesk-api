@@ -262,12 +262,24 @@ docker compose logs -f api
 
 What happens automatically:
 
-- PostgreSQL container starts and becomes healthy
-- MongoDB container starts and becomes healthy
-- API container waits for PostgreSQL readiness
-- API container waits for MongoDB readiness
+- PostgreSQL and MongoDB containers start and become healthy
+- API container waits for PostgreSQL and MongoDB readiness
 - Alembic runs: `alembic upgrade head`
 - FastAPI starts on `http://localhost:8000`
+- Prometheus starts collecting metrics from the API
+- Grafana, Loki, AlertManager, and Promtail start for observability
+
+### Access the services:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **API** | http://localhost:8000 | — |
+| **API Docs** | http://localhost:8000/docs | — |
+| **Grafana** | http://localhost:3000 | Username: `admin` / Password: `admin` |
+| **Prometheus** | http://localhost:9090 | — |
+| **AlertManager** | http://localhost:9093 | — |
+
+**Grafana dashboards:** The "SyncDesk Overview" dashboard shows API health, latency, error rates, and logs. Access via Configuration → Dashboards.
 
 If you previously changed Mongo credentials and still get `Authentication failed`, recreate containers and volumes once:
 
@@ -276,7 +288,7 @@ docker compose down -v
 docker compose up --build
 ```
 
-If ports are already in use locally, adjust host ports in `docker-compose.yaml`.
+If ports are already in use locally, adjust host ports in `docker-compose.yaml`. See [deploy/README.md](deploy/README.md) for detailed observability stack documentation.
 
 ### 3. Stop services
 
