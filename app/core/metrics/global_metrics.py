@@ -16,8 +16,16 @@ system_memory_usage = prometheus.register_gauge(
     "system_memory_usage_percentage", "System memory usage percentage", ["type"]
 )
 
+system_memory_bytes = prometheus.register_gauge(
+    "system_memory_bytes", "System memory in bytes", ["type"]
+)
+
 system_cpu_usage = prometheus.register_gauge(
     "system_cpu_usage_percentage", "System CPU usage percentage"
+)
+
+system_cpu_count = prometheus.register_gauge(
+    "system_cpu_count", "Number of CPU cores"
 )
 
 job_runs = prometheus.register_counter(
