@@ -43,7 +43,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: deploy/Dockerfile
     container_name: syncdesk_api
     restart: unless-stopped
     env_file:
@@ -67,8 +67,8 @@ services:
     container_name: syncdesk_prometheus
     restart: unless-stopped
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus-rules.yml:/etc/prometheus/rules.yml
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./deploy/prometheus/rules.yml:/etc/prometheus/rules.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -80,7 +80,7 @@ services:
     container_name: syncdesk_alertmanager
     restart: unless-stopped
     volumes:
-      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./deploy/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
     ports:
@@ -91,7 +91,7 @@ services:
     container_name: syncdesk_loki
     restart: unless-stopped
     volumes:
-      - ./loki-config.yml:/etc/loki/local-config.yaml
+      - ./deploy/loki/loki-config.yml:/etc/loki/local-config.yaml
       - loki_data:/loki
     command: -config.file=/etc/loki/local-config.yaml
 
@@ -101,7 +101,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./logs:/var/log/api
-      - ./promtail-config.yml:/etc/promtail/config.yml
+      - ./deploy/promtail/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail_data:/run/promtail
     command: -config.file=/etc/promtail/config.yml
@@ -117,8 +117,8 @@ services:
       - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
       - loki
