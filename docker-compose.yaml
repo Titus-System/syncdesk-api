@@ -41,9 +41,6 @@ services:
       start_period: 10s
 
   api:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
     container_name: syncdesk_api
     restart: unless-stopped
     env_file:
@@ -51,11 +48,8 @@ services:
     environment:
       POSTGRES_HOST: db
       MONGO_HOST: mongo
-      UVICORN_RELOAD: "true"
     ports:
       - "8000:8000"
-    volumes:
-      - .:/app
     depends_on:
       db:
         condition: service_healthy
