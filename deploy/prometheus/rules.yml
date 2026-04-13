@@ -1,0 +1,27 @@
+groups:
+  - name: syncdesk-availability
+    rules:
+      - alert: SyncdeskApiDown
+        expr: up{job="syncdesk_api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: syncdesk_api
+        annotations:
+          summary: "Syncdesk API is down"
+          description: "Prometheus could not scrape the /metrics endpoint for 1 minute."
+
+      - alert: SyncdeskApiHighErrorRate
+        expr: |
+          (
+            sum(rate(app_requests_total{job="syncdesk_api",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(app_requests_total{job="syncdesk_api"}[5m])), 0.001)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: syncdesk_api
+        annotations:
+          summary: "High 5xx error rate"
+          description: "5xx responses are above 5% over the last 5 minutes."

@@ -11,19 +11,20 @@ from app.core import (
 )
 from app.core.background_tasks import global_background_tasks
 from app.core.init_routers import initiate_routers
-from app.core.logger import get_logger
+from app.core.logger import get_logger, stop_logger
 from app.core.middleware import add_middlewares
 from app.db import close_postgres_db, init_postgres_db, mongo_db
+from app.db.postgres.engine import engine as pg_engine
 from app.domains.live_chat import Conversation
 from app.domains.ticket import Ticket
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    logger = get_logger()
+    logger = get_logger("app.main")
     settings = get_settings()
     logger.info("Starting Application...")
-    tasks = global_background_tasks()
+    tasks = global_background_tasks(pg_engine)
 
     try:
         if settings.ENVIRONMENT == "development":
@@ -40,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await asyncio.gather(*tasks, return_exceptions=True)
         await close_postgres_db()
         await mongo_db.disconnect()
-        logger.stop()
+        stop_logger()
 
 
 def create_app() -> FastAPI:

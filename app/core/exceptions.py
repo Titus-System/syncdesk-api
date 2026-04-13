@@ -29,7 +29,7 @@ class AppHTTPException(HTTPException):
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    logger = get_logger()
+    logger = get_logger("app.core.exceptions")
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:

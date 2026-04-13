@@ -8,7 +8,10 @@ from fastapi.websockets import WebSocketState
 from pydantic import ValidationError
 
 from app.core.dependencies import WSResponseFactoryDep
+from app.core.logger import get_logger
 from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
+
+logger = get_logger("app.live_chat.router")
 
 from ..chat_manager import ChatConnection, get_chat_manager
 from ..dependencies import ConversationServiceDep
@@ -72,6 +75,7 @@ async def connect_to_conversation(
             except RuntimeError as e:
                 await conn.send_error(WebSocketException(code=1011, reason=str(e)))
     except ChatRoomNotFoundError as e:
+        logger.warning("Chat room not found during connection", extra={"chat_id": str(chat_id)})
         await conn.send_error(WebSocketException(code=1011, reason=str(e)))
         await conn.close(code=1011, reason="Chat room unavailable")
     finally:

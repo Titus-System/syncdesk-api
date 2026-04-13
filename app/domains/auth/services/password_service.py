@@ -9,6 +9,7 @@ from app.core.email.schemas import WelcomeEmailParams
 from app.core.logger import get_logger
 from app.core.security import PasswordSecurity, ResetTokenSecurity
 from ..enums import TokenPurpose
+from ..metrics import password_reset_total
 from ..entities import PasswordResetToken, User, UserWithRoles
 from ..exceptions import InvalidPasswordError, InvalidResetTokenError
 from ..schemas.reset_password_token_schemas import CreatePasswordResetTokenDTO
@@ -30,7 +31,7 @@ class PasswordService:
         self.password_security = password_security
         self.email_strategy = email_strategy
         self.reset_token_security = reset_token_security
-        self.logger = get_logger()
+        self.logger = get_logger("app.auth.password_service")
 
     def generate_random_password(self, length: int = 16) -> str:
         """Generate a cryptographically secure random password."""
@@ -67,6 +68,7 @@ class PasswordService:
 
         await self.token_repo.invalidate_user_tokens(user_id, purpose)
         await self.token_repo.create(dto)
+        password_reset_total.labels(stage="token_created").inc()
         return raw_token
 
     async def consume_token(self, raw_token: str) -> PasswordResetToken:
@@ -75,11 +77,14 @@ class PasswordService:
         token = await self.token_repo.consume_by_hash(token_hash)
 
         if not token:
+            self.logger.warning("Invalid or expired reset token consumed")
             raise InvalidResetTokenError()
 
         if token.purpose not in {TokenPurpose.RESET, TokenPurpose.INVITE}:
+            self.logger.warning("Reset token has unexpected purpose", extra={"purpose": token.purpose.value})
             raise InvalidResetTokenError()
 
+        password_reset_total.labels(stage="token_consumed").inc()
         return token
 
     async def change_password(
@@ -89,14 +94,19 @@ class PasswordService:
             raise InvalidPasswordError("User does not have a password set.")
 
         if not self.password_security.verify_password(current_password, user.password_hash):
+            self.logger.warning("Change password failed: wrong current password", extra={"user_id": str(user.id)})
             raise InvalidPasswordError("Current password is incorrect.")
 
         new_password_hash = self.password_security.generate_password_hash(new_password)
+        password_reset_total.labels(stage="password_changed").inc()
+        self.logger.info("Password changed", extra={"user_id": str(user.id)})
         return await self.user_service.update_password(user.id, new_password_hash)
 
     async def reset_password(self, raw_token: str, new_password: str) -> User | None:
         token = await self.consume_token(raw_token)
         new_password_hash = self.password_security.generate_password_hash(new_password)
+        password_reset_total.labels(stage="password_reset").inc()
+        self.logger.info("Password reset via token", extra={"user_id": str(token.user_id)})
         return await self.user_service.update_password(token.user_id, new_password_hash)
 
     async def send_welcome_email(self, user: UserWithRoles, raw_token: str, password: str) -> None:
@@ -139,4 +149,4 @@ class PasswordService:
             raw_token = await self.create_reset_token(user.id, TokenPurpose.RESET)
             await self.send_reset_password_email(user, raw_token)
         except Exception:
-            self.logger.error("Failed forgot-password pipeline for existing user", exc_info=True)
+            self.logger.exception("Failed forgot-password pipeline for existing user")

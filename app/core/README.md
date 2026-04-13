@@ -13,7 +13,7 @@ core/
 ├── dependencies.py        # FastAPI Depends wrappers for core services
 ├── exceptions.py          # Centralized exception handling
 ├── init_routers.py        # Router registration + root endpoint
-├── logger.py              # Async JSON logger
+├── logger.py              # Async structured logger with context propagation
 ├── middleware.py           # HTTP middleware orchestration
 ├── response.py            # ResponseFactory (success/error envelopes)
 ├── schemas.py             # Base DTO class
@@ -40,6 +40,7 @@ from app.core import (
     get_settings,
     Settings,
     get_logger,
+    stop_logger,
     register_exception_handlers,
     global_background_tasks,
     ResponseFactory,
@@ -91,29 +92,92 @@ print(settings.database_url)
 
 ## Logger (`logger.py`)
 
-`AsyncLogger` writes structured JSON logs to three destinations:
+Structured, async-safe logging with per-domain names, automatic request/user context, and environment-aware formatting.
 
-| Destination          | Level   | File                   |
-| -------------------- | ------- | ---------------------- |
-| Rotating file        | INFO+   | `logs/app.json`        |
-| Rotating error file  | ERROR+  | `logs/error.json`      |
-| Console (stderr)     | DEBUG+  | —                      |
+### Output destinations
 
-Files rotate at **10 MB** with up to **5 backups**. All output uses a `JsonFormatter` that produces records with `timestamp`, `message`, `level`, `logger`, `module`, `function`, `line`, and optional `exception`.
+| Destination          | Level   | File             | Format    |
+| -------------------- | ------- | ---------------- | --------- |
+| Rotating file        | INFO+   | `logs/app.json`  | JSON      |
+| Rotating error file  | ERROR+  | `logs/error.json`| JSON      |
+| Console (stderr)     | DEBUG+  | —                | JSON in production, plaintext with colors in development |
 
-Log writing is non-blocking: records go through a `QueueHandler` → `QueueListener` pipeline so the calling coroutine is not held up by I/O.
+Files rotate at **10 MB** with up to **5 backups**.
+
+Log writing is non-blocking: records go through a `ContextQueueHandler` → `QueueListener` pipeline so the calling coroutine is not held up by I/O. The custom `ContextQueueHandler` snapshots `request_id` and `user_id` from `ContextVar` onto each record before enqueuing, so the values are preserved when the listener thread processes them.
+
+### JSON log fields
+
+| Field        | Source             | Always present |
+| ------------ | ------------------ | -------------- |
+| `timestamp`  | UTC ISO 8601       | yes            |
+| `message`    | Log message        | yes            |
+| `level`      | INFO, ERROR, etc.  | yes            |
+| `logger`     | Logger name        | yes            |
+| `module`     | Python module      | yes            |
+| `function`   | Function name      | yes            |
+| `line`       | Line number        | yes            |
+| `request_id` | `request_id_ctx`   | when in request scope |
+| `user_id`    | `user_id_ctx`      | when authenticated    |
+| `extra`      | `extra={...}` kwarg| when provided  |
+| `exception`  | Traceback          | on `.exception()` or `exc_info=True` |
 
 ### Usage
 
-```python
-from app.core import get_logger
+Always pass a **domain-scoped name** to `get_logger()`:
 
-logger = get_logger()   # singleton via @lru_cache
-logger.info("Server started")
-logger.error("Something broke", extra={"path": "/api/items"})
+```python
+from app.core.logger import get_logger
+
+logger = get_logger("app.auth.service")
 ```
 
-Call `logger.stop()` during shutdown to flush the listener queue.
+**Naming convention:** `app.<domain>.<layer>` — e.g. `app.auth.service`, `app.live_chat.manager`, `app.infra.email`, `app.db.postgres`.
+
+### Log levels
+
+```python
+logger.debug("Verbose detail for local debugging")
+logger.info("Normal operation event")
+logger.warning("Unexpected but recoverable situation")
+logger.error("Error without traceback")
+logger.exception("Error with automatic traceback")  # exc_info=True by default
+```
+
+### Adding contextual data
+
+Pass structured data via `extra`:
+
+```python
+logger.warning("Retrying email send", extra={"to": email, "attempt": 2, "reason": "timeout"})
+```
+
+These appear under the `"extra"` key in JSON output.
+
+### Context propagation (request_id & user_id)
+
+Both values are stored in `ContextVar` — isolated per asyncio task, so concurrent requests never interfere:
+
+```python
+from app.core.logger import request_id_ctx, user_id_ctx
+```
+
+- **`request_id_ctx`** is set automatically by the Request ID middleware for every HTTP request.
+- **`user_id_ctx`** is set automatically by `get_current_user_session` / `get_current_user_session_ws` dependencies when the user is authenticated.
+
+You do **not** need to pass these manually — every log call within a request automatically includes them.
+
+### Shutdown
+
+Call `stop_logger()` during application shutdown to flush the listener queue:
+
+```python
+from app.core.logger import stop_logger
+
+stop_logger()
+```
+
+This is already handled in the application lifespan (`main.py`).
 
 ---
 
@@ -206,7 +270,7 @@ async def list_items(response_factory: ResponseFactoryDep):
 
 1. **CORS** — configured from `Settings.CORS_*` variables.
 2. **Metrics** — tracks request count, latency, and errors (see [Metrics](#metrics-metrics) below).
-3. **Request ID** — reads `X-Request-ID` from the incoming header or generates a UUID v4. Stores it in `request.state.request_id` and echoes it back in the response header.
+3. **Request ID** — reads `X-Request-ID` from the incoming header or generates a UUID v4. Stores it in `request.state.request_id`, sets `request_id_ctx` for log propagation, and echoes it back in the response header.
 4. **Device Info** — parses `User-Agent`, `Sec-CH-UA`, `Sec-CH-UA-Platform`, and `Sec-CH-UA-Mobile` headers into a `SessionDeviceInfo` object stored in `request.state.device_info`.
 5. **Security Headers** — sets `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin` on all responses.
 6. **Rate Limiting** — stub middleware targeting `/api/auth/login` and `/api/auth/register` (not yet implemented — see [Known Security Limitations](#known-security-limitations)).
@@ -334,6 +398,11 @@ Built on `prometheus_client` with a custom `Prometheus` abstraction that manages
 | `background_job_runs_total`        | Counter   | `job_name`                          | Background job execution count    |
 | `background_job_failures_total`    | Counter   | `job_name`                          | Background job failure count      |
 | `background_job_duration_seconds`  | Histogram | `job_name`                          | Background job duration           |
+| `db_postgres_poolsize`             | Gauge     | —                                   | Total connections in the pool     |
+| `db_postgres_pool_checked_out`     | Gauge     | —                                   | Connections currently in use      |
+| `db_postgres_pool_overflow`        | Gauge     | —                                   | Connections beyond pool size      |
+| `db_postgres_query_duration_seconds` | Histogram | `operation`                       | PostgreSQL query execution time   |
+| `db_mongo_command_duration_seconds`  | Histogram | `command`, `collection`           | MongoDB command execution time    |
 
 ### Middleware (`metrics_middleware.py`)
 
@@ -341,7 +410,44 @@ Automatically records `app_requests_total`, `app_request_latency_seconds`, and `
 
 ### Background task (`metrics_background_tasks.py`)
 
-`update_system_metrics()` runs in an infinite loop (every 5 s), updating memory and CPU gauges via `psutil`.
+`update_system_metrics()` runs in an infinite loop (every 5 s), updating memory/CPU gauges via `psutil` and Postgres connection pool gauges (`db_postgres_poolsize`, `db_postgres_pool_checked_out`, `db_postgres_pool_overflow`) from the SQLAlchemy `QueuePool`. It receives the `AsyncEngine` as a parameter — wired in `main.py` — so `core/` never imports from `db/`.
+
+### Database metrics in domains
+
+Database query/command metrics are collected at the `db/` layer, **not** inside `core/`. The metrics objects are defined in `core/metrics/global_metrics.py`, but the instrumentation lives in:
+
+- **Postgres** — `app/db/postgres/engine.py` uses SQLAlchemy `event.listens_for` hooks (`before_cursor_execute` / `after_cursor_execute`) to observe `db_postgres_query_duration_seconds` per SQL operation (SELECT, INSERT, UPDATE, DELETE).
+- **MongoDB** — `app/db/mongo/monitoring.py` implements a `pymongo.monitoring.CommandListener` to observe `db_mongo_command_duration_seconds` per command and collection.
+
+This keeps the dependency direction correct: `db/` imports metric objects from `core/`, never the other way around.
+
+#### Using metrics inside a domain
+
+Domains can import and use any metric from `global_metrics.py`, or register new domain-specific metrics via the `prometheus` singleton:
+
+```python
+from app.core.metrics.global_metrics import request_count
+
+# Use a pre-registered metric
+request_count.labels(method="POST", endpoint="/api/tickets", status="201").inc()
+```
+
+To register a new domain-specific metric:
+
+```python
+from app.core.metrics.prometheus import prometheus
+
+tickets_created = prometheus.register_counter(
+    "domain_tickets_created_total",
+    "Total tickets created",
+    ["criticality"],
+)
+
+# Then use it in your service
+tickets_created.labels(criticality="high").inc()
+```
+
+**Naming convention:** prefix domain metrics with `domain_` to distinguish them from infrastructure metrics (`app_`, `db_`, `system_`).
 
 ### `@track_background_job(job_name)` decorator
 

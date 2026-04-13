@@ -8,7 +8,7 @@ from app.domains.live_chat.exceptions import ParentConversationNotFoundError
 from app.domains.live_chat.schemas import CreateConversationDTO, IncomingMessage, PaginatedMessages
 
 from ..repositories import ConversationRepository
-
+from ..metrics import chat_messages_total
 
 class ConversationService:
     def __init__(self, repository: ConversationRepository) -> None:
@@ -67,4 +67,5 @@ class ConversationService:
     async def add_message_to_conversation(
         self, chat_id: PydanticObjectId, message: ChatMessage
     ) -> None:
+        chat_messages_total.inc()
         await self.repo.add_message(chat_id, message)

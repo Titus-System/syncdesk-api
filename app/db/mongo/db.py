@@ -1,8 +1,10 @@
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pymongo import monitoring
 
 from app.core import get_logger, get_settings
+from app.db.mongo.monitoring import MongoMetricsListener
 
 
 class MongoDb:
@@ -10,10 +12,11 @@ class MongoDb:
     db: AsyncIOMotorDatabase[dict[str, Any]] | None = None
 
     async def connect(self) -> None:
+        monitoring.register(MongoMetricsListener())
         self.client = AsyncIOMotorClient(get_settings().mongo_database_url)
         self.db = self.client[get_settings().MONGO_DB]
         await self.client.admin.command("ping")
-        get_logger().info(f"✓ MongoDB connected: {get_settings().MONGO_DB}")
+        get_logger("app.db.mongo").info(f"✓ MongoDB connected: {get_settings().MONGO_DB}")
 
     async def disconnect(self) -> None:
         if self.client:

@@ -5,7 +5,9 @@ from beanie import PydanticObjectId
 from fastapi import status
 
 from app.core.exceptions import AppHTTPException
+from app.core.logger import get_logger
 from app.domains.auth.services.user_service import UserService
+from app.domains.ticket.metrics import tickets_created_total, tickets_status_changed_total
 from app.domains.ticket.models import Ticket, TicketClient, TicketCompany, TicketStatus
 from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
@@ -41,6 +43,7 @@ class TicketService:
     def __init__(self, repository: TicketRepository, user_service: UserService):
         self.repo = repository
         self.user_service = user_service
+        self.logger = get_logger("app.ticket.service")
 
     async def create_ticket(self, dto: CreateTicketDTO) -> CreateTicketResponseDTO:
         client = await self._build_ticket_client(dto.client_id)
@@ -58,6 +61,13 @@ class TicketService:
             comments=[],
         )
         created_ticket = await self.repo.create_ticket(ticket)
+
+        tickets_created_total.labels(source="api", criticality=dto.criticality.value).inc()
+        self.logger.info(
+            "Ticket created",
+            extra={"ticket_id": str(created_ticket.id), "type": dto.type.value, "criticality": dto.criticality.value},
+        )
+
         return CreateTicketResponseDTO(
             id=str(created_ticket.id),
             status=created_ticket.status,
@@ -96,6 +106,19 @@ class TicketService:
             )
 
         updated_ticket = await self.repo.update_status(ticket, dto.status)
+
+        tickets_status_changed_total.labels(
+            from_status=previous_status.value, to_status=dto.status.value
+        ).inc()
+        self.logger.info(
+            "Ticket status updated",
+            extra={
+                "ticket_id": str(ticket_id),
+                "from": previous_status.value,
+                "to": dto.status.value,
+            },
+        )
+
         return UpdateTicketStatusResponseDTO(
             id=str(updated_ticket.id),
             previous_status=previous_status,
