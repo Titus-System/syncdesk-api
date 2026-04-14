@@ -1,3 +1,8 @@
 services:
   api:
     image: ghcr.io/titus-system/syncdesk-api:staging
+    volumes:
+      - app_logs:/app/logs
+
+volumes:
+  app_logs:
