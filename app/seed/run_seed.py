@@ -23,16 +23,16 @@ async def run() -> None:
         await seed.seed_permissions(db)
         await seed.seed_role_permissions(db)
         await seed.seed_users(db)
-        await seed_example_users(db)
-        await seed_example_user_roles(db)
+        # await seed_example_users(db)
+        # await seed_example_user_roles(db)
 
     # --- MongoDB ---
     await mongo_db.connect()
     try:
         mongo = mongo_db.get_db()
-        await seed_example_attendances(mongo)
-        await seed_example_tickets(mongo)
-        await seed_example_conversations(mongo)
+        # await seed_example_attendances(mongo)
+        # await seed_example_tickets(mongo)
+        # await seed_example_conversations(mongo)
     finally:
         await mongo_db.disconnect()
 
