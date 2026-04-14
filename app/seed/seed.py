@@ -64,7 +64,11 @@ async def seed_permissions(session: AsyncSession) -> None:
         # Ticket
         {"name": "ticket:read", "description": "Read tickets"},
         {"name": "ticket:create", "description": "Create tickets"},
-        {"name": "ticket:update_status", "description": "Update ticket status"},
+        {"name": "ticket:update", "description": "Update ticket fields"},
+        {"name": "ticket:queue", "description": "Read ticket queue"},
+        {"name": "ticket:assign", "description": "Assign tickets"},
+        {"name": "ticket:transfer", "description": "Transfer tickets"},
+        {"name": "ticket:escalate", "description": "Escalate tickets"},
     ]
 
     insert_stmt = pg_insert(Permission).values(permissions).on_conflict_do_nothing()
