@@ -17,9 +17,8 @@ async def seed_roles(session: AsyncSession) -> None:
         {"id": 3, "name": "agent", "description": "attends to the clients problems"},
         {"id": 4, "name": "client", "description": "end user of the application"},
     ]
-
-    await session.execute(insert(Role).values(roles))
-
+    stmt = pg_insert(Role).values(roles).on_conflict_do_nothing()
+    await session.execute(stmt)
 
 async def seed_permissions(session: AsyncSession) -> None:
     permissions = [
