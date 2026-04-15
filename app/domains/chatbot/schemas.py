@@ -5,7 +5,9 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 
+from app.core.schemas import BaseDTO
 from app.domains.chatbot.enums import AttendanceStatus
+from app.domains.chatbot.models import *
 
 # --- ENTRADA (Frontend -> Backend) ---
 class TriageInputDTO(BaseModel):
@@ -27,31 +29,10 @@ class TriageInputDTO(BaseModel):
     )
 
     @model_validator(mode='after')
-    def check_answers(self):
+    def check_answers(self) -> "TriageInputDTO":
         if self.answer_text is not None and self.answer_value is not None:
             raise ValueError("answer_text e answer_value não devem ser enviados juntos.")
         return self
-
-
-class AttendanceCompany(BaseModel):
-    id: UUID
-    name: str
-
-
-class AttendanceClient(BaseModel):
-    id: UUID
-    name: str
-    email: str
-    company: AttendanceCompany | None = None
-
-
-class AttendanceResult(BaseModel):
-    type: str
-    closure_message: str
-
-
-class AttendanceEvaluation(BaseModel):
-    rating: int
 
 
 class CreateAttendanceDTO(BaseModel):
@@ -85,14 +66,6 @@ class TriageData(BaseModel):
     closure_message: Optional[str] = None
     result: Optional[TriageResult] = None
 
-class TriageResponseMeta(BaseModel):
-    timestamp: str
-    success: bool
-    request_id: str
-
-class TriageResponseDTO(BaseModel):
-    data: TriageData
-    meta: TriageResponseMeta
 
 class InternalBotResponseDTO(BaseModel):
     new_state: Any  # TriageState
@@ -100,3 +73,52 @@ class InternalBotResponseDTO(BaseModel):
     is_free_text: bool = False
     quick_replies: Optional[List[Dict[str, str]]] = None
     is_finished: bool = False
+
+
+class AttendanceSearchFiltersDTO(BaseDTO):
+    client_id: UUID | None = Field(default=None)
+    client_name: str | None = Field(default=None)
+    status: AttendanceStatus | None = Field(default=None)
+    result_type: str | None = Field(default=None)
+    start_date_from: datetime | None = Field(default=None)
+    start_date_to: datetime | None = Field(default=None)
+    has_evaluation: bool | None = Field(default=None)
+    rating: int | None = Field(default=None, ge=1, le=5)
+
+
+class TriageStepSchema(BaseModel):
+    step: str
+    question: str
+    answer_value: str | None = None
+    answer_text: str | None = None
+
+
+class EvaluationRequest(BaseModel):
+    rating: int = Field(..., ge=1, le=5, description="Nota de satisfacao (1-5)")
+
+
+class EvaluationResponse(BaseModel):
+    triage_id: str
+    rating: int
+    evaluated_at: datetime
+
+
+class AttendanceResponse(BaseModel):
+    triage_id: str
+    status: AttendanceStatus
+    start_date: datetime
+    end_date: datetime | None = None
+    client: AttendanceClient
+    triage: list[TriageStepSchema] = Field(default_factory=list[TriageStepSchema])
+    result: AttendanceResult | None = None
+    evaluation: AttendanceEvaluation | None = None
+    needs_evaluation: bool = False
+
+    @model_validator(mode="after")
+    def compute_needs_evaluation(self) -> "AttendanceResponse":
+        self.needs_evaluation = (
+            self.status == AttendanceStatus.FINISHED and self.evaluation is None
+        )
+        return self
+
+
