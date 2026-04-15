@@ -77,10 +77,10 @@ class TestChatbotService:
 		response = await service.process_message(payload)
 		stored = await service.repository.find_attendance(triage_id)
 
-		assert response.data.triage_id == triage_id
-		assert response.data.step_id == "step_a"
-		assert response.data.input is not None
-		assert response.data.input.mode == "quick_replies"
+		assert response.triage_id == triage_id
+		assert response.step_id == "step_a"
+		assert response.input is not None
+		assert response.input.mode == "quick_replies"
 
 		assert stored is not None
 		assert str(stored["_id"]) == triage_id
@@ -177,11 +177,11 @@ class TestChatbotService:
 
 		stored = await service.repository.find_attendance(triage_id)
 
-		assert final_response.data.finished is True
-		assert final_response.data.result is not None
-		assert final_response.data.result.type == "Ticket"
-		assert final_response.data.result.id
-		assert final_response.data.closure_message is not None
+		assert final_response.finished is True
+		assert final_response.result is not None
+		assert final_response.result.type == "Ticket"
+		assert final_response.result.id
+		assert final_response.closure_message is not None
 
 		assert stored is not None
 		assert len(stored["triage"]) == 4
@@ -193,7 +193,7 @@ class TestChatbotService:
 		assert stored["triage"][2]["type"] == "free_text"
 		assert "freezes" in stored["triage"][2]["answer_text"]
 
-		ticket = await Ticket.get(PydanticObjectId(final_response.data.result.id))
+		ticket = await Ticket.get(PydanticObjectId(final_response.result.id))
 		assert ticket is not None
 		assert ticket.status == TicketStatus.OPEN
 		assert str(ticket.triage_id) == triage_id

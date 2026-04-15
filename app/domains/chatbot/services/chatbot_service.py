@@ -1,4 +1,3 @@
-import uuid
 from typing import Any, cast
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -12,8 +11,8 @@ from app.core.logger import get_logger
 from app.domains.chatbot.enums import TriageState
 from app.domains.chatbot.metrics import chatbot_messages_total, chatbot_tickets_total
 from app.domains.chatbot.schemas import (
-    AttendanceClient, CreateAttendanceDTO, TriageInputDTO, TriageResponseDTO, TriageData, TriageInputDef, 
-    QuickReply, TriageResponseMeta, TriageResult
+    AttendanceClient, CreateAttendanceDTO, TriageInputDTO, TriageData, TriageInputDef, 
+    QuickReply, TriageResult
 )
 from app.domains.chatbot.fsm import ChatbotFSM
 from app.domains.chatbot.repositories.chatbot_repository import ChatbotRepository
@@ -42,7 +41,7 @@ class ChatbotService:
         final_triage_id = triage_id or str(ObjectId())
         return await self.repository.create_attendance(dto, final_triage_id)
 
-    async def process_message(self, payload: TriageInputDTO) -> TriageResponseDTO:
+    async def process_message(self, payload: TriageInputDTO) -> TriageData:
         attendance_db = await self.repository.find_attendance(payload.triage_id)
 
         if attendance_db is None:
@@ -133,13 +132,7 @@ class ChatbotService:
 
         await self.repository.save_attendance(payload.triage_id, attendance)
 
-        meta = TriageResponseMeta(
-            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            success=True,
-            request_id=str(uuid.uuid4())
-        )
-
-        return TriageResponseDTO(data=data, meta=meta)
+        return data
 
     async def _generate_ticket_with_context(self, attendance: dict[str, Any], free_text: str, attendance_id: str) -> str:
         full_triage: list[dict[str, Any]] = attendance.get("triage", [])
