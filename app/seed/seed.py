@@ -7,6 +7,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import PasswordSecurity
+import app.domains.companies.models  # noqa: F401
+import app.domains.products.models  # noqa: F401
 from app.domains.auth.models import Permission, Role, User, role_permissions, user_roles
 
 
