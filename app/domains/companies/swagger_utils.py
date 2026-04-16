@@ -208,6 +208,72 @@ remove_product_swagger: dict[str, Any] = {
     "responses": remove_product_responses,
 }
 
+add_users_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Users assigned to the company successfully.",
+        "model": GenericSuccessContent[None],
+    },
+    404: {
+        "description": "Company or one of the referenced users not found.",
+        "model": ErrorContent,
+    },
+    409: {
+        "description": "One or more users are already assigned to this company.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": "Request body validation failed.",
+        "model": ErrorContent,
+    },
+}
+
+add_users_swagger: dict[str, Any] = {
+    "summary": "Assign users to a company",
+    "description": "Sets the company_id on one or more users, associating them with this company.",
+    "response_model": GenericSuccessContent[None],
+    "responses": add_users_responses,
+}
+
+remove_user_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "User removed from the company successfully.",
+        "model": GenericSuccessContent[None],
+    },
+    404: {
+        "description": "Company or user not found, or user is not assigned to this company.",
+        "model": ErrorContent,
+    },
+}
+
+remove_user_swagger: dict[str, Any] = {
+    "summary": "Remove a user from a company",
+    "description": "Clears the company_id on a specific user, disassociating them from company.",
+    "response_model": GenericSuccessContent[None],
+    "responses": remove_user_responses,
+}
+
+remove_users_batch_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Users removed from the company successfully.",
+        "model": GenericSuccessContent[None],
+    },
+    404: {
+        "description": "Company or one of the referenced users not found.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": "Request body validation failed.",
+        "model": ErrorContent,
+    },
+}
+
+remove_users_batch_swagger: dict[str, Any] = {
+    "summary": "Remove users from a company (batch)",
+    "description": "Clears the company_id on one or more users, disassociating them from company.",
+    "response_model": GenericSuccessContent[None],
+    "responses": remove_users_batch_responses,
+}
+
 get_company_users_responses: dict[int | str, dict[str, Any]] = {
     200: {
         "description": "List of users belonging to the company.",

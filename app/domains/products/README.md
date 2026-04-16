@@ -36,7 +36,7 @@ products/
 
 ## CRUD Endpoints
 
-All endpoints are mounted under `/api/v1/products` and require authentication via `Authorization: Bearer <access_token>`.
+All endpoints are mounted under `/api/products` and require authentication via `Authorization: Bearer <access_token>`.
 
 ### Products
 
@@ -65,7 +65,7 @@ All endpoints are mounted under `/api/v1/products` and require authentication vi
 ### Create Product
 
 ```
-POST /api/v1/products/
+POST /api/products/
 Authorization: Bearer <access_token>
 ```
 
@@ -97,7 +97,7 @@ Authorization: Bearer <access_token>
 ### List Products (Paginated)
 
 ```
-GET /api/v1/products/?page=1&limit=20
+GET /api/products/?page=1&limit=20
 Authorization: Bearer <access_token>
 ```
 
@@ -123,7 +123,7 @@ Authorization: Bearer <access_token>
 ### Partial Update
 
 ```
-PATCH /api/v1/products/{product_id}
+PATCH /api/products/{product_id}
 Authorization: Bearer <access_token>
 ```
 
@@ -155,7 +155,7 @@ Authorization: Bearer <access_token>
 ### Add Companies to a Product
 
 ```
-POST /api/v1/products/{product_id}/companies
+POST /api/products/{product_id}/companies
 Authorization: Bearer <access_token>
 ```
 

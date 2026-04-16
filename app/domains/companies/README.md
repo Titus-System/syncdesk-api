@@ -47,7 +47,7 @@ companies/
 
 ## CRUD Endpoints
 
-All endpoints are mounted under `/api/v1/companies` and require authentication via `Authorization: Bearer <access_token>`.
+All endpoints are mounted under `/api/companies` and require authentication via `Authorization: Bearer <access_token>`.
 
 ### Companies
 
@@ -70,9 +70,12 @@ All endpoints are mounted under `/api/v1/companies` and require authentication v
 
 ### Company Users
 
-| Method   | Path                              | Permission              | Description                        |
-|----------|-----------------------------------|-------------------------|------------------------------------|
-| `GET`    | `/{company_id}/users`             | `company:list_users`    | List users of a company (paginated)|
+| Method   | Path                                    | Permission              | Description                        |
+|----------|-----------------------------------------|-------------------------|------------------------------------|
+| `POST`   | `/{company_id}/users`                   | `company:add_users`     | Assign users to a company          |
+| `DELETE` | `/{company_id}/users`                   | `company:remove_users`  | Remove users (batch)               |
+| `DELETE` | `/{company_id}/users/{user_id}`         | `company:remove_user`   | Remove a single user               |
+| `GET`    | `/{company_id}/users`                   | `company:list_users`    | List users of a company (paginated)|
 
 ---
 
@@ -81,7 +84,7 @@ All endpoints are mounted under `/api/v1/companies` and require authentication v
 ### Create Company
 
 ```
-POST /api/v1/companies/
+POST /api/companies/
 Authorization: Bearer <access_token>
 ```
 
@@ -115,7 +118,7 @@ Authorization: Bearer <access_token>
 ### List Companies (Paginated)
 
 ```
-GET /api/v1/companies/?page=1&limit=20
+GET /api/companies/?page=1&limit=20
 Authorization: Bearer <access_token>
 ```
 
@@ -142,7 +145,7 @@ Authorization: Bearer <access_token>
 ### Get Company by ID
 
 ```
-GET /api/v1/companies/{company_id}
+GET /api/companies/{company_id}
 Authorization: Bearer <access_token>
 ```
 
@@ -166,7 +169,7 @@ Authorization: Bearer <access_token>
 ### Add Products to a Company
 
 ```
-POST /api/v1/companies/{company_id}/products
+POST /api/companies/{company_id}/products
 Authorization: Bearer <access_token>
 ```
 
@@ -192,7 +195,7 @@ Authorization: Bearer <access_token>
 ### Soft-Delete a Company
 
 ```
-DELETE /api/v1/companies/{company_id}
+DELETE /api/companies/{company_id}
 Authorization: Bearer <access_token>
 ```
 
@@ -207,10 +210,54 @@ Authorization: Bearer <access_token>
 **Error responses:**
 - `404 Not Found` — company not found.
 
+### Assign Users to a Company
+
+```
+POST /api/companies/{company_id}/users
+Authorization: Bearer <access_token>
+```
+
+**Request body:**
+```json
+{
+  "user_ids": ["uuid-1", "uuid-2"]
+}
+```
+
+**Response `200`:**
+```json
+{
+  "data": null,
+  "meta": { "timestamp": "...", "success": true, "request_id": null }
+}
+```
+
+**Error responses:**
+- `404 Not Found` — company or one of the referenced users not found.
+- `409 Conflict` — one or more users are already assigned to this company.
+
+### Remove a User from a Company
+
+```
+DELETE /api/companies/{company_id}/users/{user_id}
+Authorization: Bearer <access_token>
+```
+
+**Response `200`:**
+```json
+{
+  "data": null,
+  "meta": { "timestamp": "...", "success": true, "request_id": null }
+}
+```
+
+**Error responses:**
+- `404 Not Found` — company or user not found, or user is not assigned to this company.
+
 ### List Company Users (Paginated)
 
 ```
-GET /api/v1/companies/{company_id}/users?page=1&limit=20
+GET /api/companies/{company_id}/users?page=1&limit=20
 Authorization: Bearer <access_token>
 ```
 

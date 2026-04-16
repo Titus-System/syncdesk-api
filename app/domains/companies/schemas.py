@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import model_validator
 
 from app.core.schemas import BaseDTO, PaginatedItems
@@ -79,5 +81,14 @@ CreateCompanyResponse = GenericSuccessContent[Company]
 GetCompaniesResponse = GenericSuccessContent[PaginatedItems[Company]]
 
 GetCompanyResponse = GenericSuccessContent[Company]
+
+
+class AddCompanyUsersDTO(BaseDTO):
+    user_ids: list[UUID]
+
+
+class RemoveCompanyUsersDTO(AddCompanyUsersDTO):
+    pass
+
 
 GetCompanyUsersResponse = GenericSuccessContent[PaginatedItems[User]]

@@ -8,19 +8,24 @@ from app.domains.auth.dependencies import CurrentUserSessionDep, require_permiss
 from app.domains.companies.dependencies import CompanyServiceDep
 from app.domains.companies.schemas import (
     AddCompanyProductDTO,
+    AddCompanyUsersDTO,
     CreateCompanyDTO,
     RemoveCompanyProductDTO,
+    RemoveCompanyUsersDTO,
     ReplaceCompanyDTO,
     UpdateCompanyDTO,
 )
 from app.domains.companies.swagger_utils import (
     add_products_swagger,
+    add_users_swagger,
     create_company_swagger,
     get_companies_swagger,
     get_company_swagger,
     get_company_users_swagger,
     remove_product_swagger,
     remove_products_batch_swagger,
+    remove_user_swagger,
+    remove_users_batch_swagger,
     replace_company_swagger,
     soft_delete_company_swagger,
     update_company_swagger,
@@ -154,6 +159,51 @@ async def remove_company_products_batch(
 async def remove_company_product(
     company_id: UUID,
     product_id: int,
+    auth: CurrentUserSessionDep,
+    service: CompanyServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    return response.error(exc=HTTPException(status_code=501, detail="Not implemented"))
+
+
+@company_router.post(
+    "/{company_id}/users",
+    dependencies=[require_permission("company:add_users")],
+    **add_users_swagger,
+)
+async def add_company_users(
+    company_id: UUID,
+    dto: AddCompanyUsersDTO,
+    auth: CurrentUserSessionDep,
+    service: CompanyServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    return response.error(exc=HTTPException(status_code=501, detail="Not implemented"))
+
+
+@company_router.delete(
+    "/{company_id}/users",
+    dependencies=[require_permission("company:remove_users")],
+    **remove_users_batch_swagger,
+)
+async def remove_company_users_batch(
+    company_id: UUID,
+    dto: RemoveCompanyUsersDTO,
+    auth: CurrentUserSessionDep,
+    service: CompanyServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    return response.error(exc=HTTPException(status_code=501, detail="Not implemented"))
+
+
+@company_router.delete(
+    "/{company_id}/users/{user_id}",
+    dependencies=[require_permission("company:remove_user")],
+    **remove_user_swagger,
+)
+async def remove_company_user(
+    company_id: UUID,
+    user_id: UUID,
     auth: CurrentUserSessionDep,
     service: CompanyServiceDep,
     response: ResponseFactoryDep,
