@@ -1,0 +1,10 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    volumes:
+      - .:/app
+      - app_logs:/app/logs
+    environment:
+      UVICORN_RELOAD: "true"

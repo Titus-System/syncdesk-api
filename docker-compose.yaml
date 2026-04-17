@@ -41,9 +41,6 @@ services:
       start_period: 10s
 
   api:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
     container_name: syncdesk_api
     restart: unless-stopped
     env_file:
@@ -51,11 +48,10 @@ services:
     environment:
       POSTGRES_HOST: db
       MONGO_HOST: mongo
-      UVICORN_RELOAD: "true"
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
+      - app_logs:/app/logs
     depends_on:
       db:
         condition: service_healthy
@@ -100,7 +96,7 @@ services:
     container_name: syncdesk_promtail
     restart: unless-stopped
     volumes:
-      - ./logs:/var/log/api
+      - app_logs:/var/log/api
       - ./deploy/promtail/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail_data:/run/promtail
@@ -125,6 +121,7 @@ services:
       - alertmanager
 
 volumes:
+  app_logs:
   postgres_data:
   mongo_data:
   prometheus_data:

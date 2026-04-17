@@ -22,6 +22,10 @@ from app.core.email.schemas import ResetPasswordEmailParams, WelcomeEmailParams
 from app.core.email.strategy import EmailStrategy
 from app.db.mongo.dependencies import get_mongo_session
 from app.db.postgres.base import Base
+
+import app.domains.auth.models  # noqa: F401 — register models with Base.metadata
+import app.domains.companies.models  # noqa: F401 — register models with Base.metadata
+import app.domains.products.models  # noqa: F401 — register models with Base.metadata
 from app.db.postgres.dependencies import get_postgres_session
 from app.domains.auth.entities import UserWithRoles
 from app.main import create_app

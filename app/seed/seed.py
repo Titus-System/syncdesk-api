@@ -2,11 +2,13 @@ import secrets
 import string
 from typing import Any
 
-from sqlalchemy import insert, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import PasswordSecurity
+import app.domains.companies.models  # noqa: F401
+import app.domains.products.models  # noqa: F401
 from app.domains.auth.models import Permission, Role, User, role_permissions, user_roles
 
 
@@ -17,8 +19,8 @@ async def seed_roles(session: AsyncSession) -> None:
         {"id": 3, "name": "agent", "description": "attends to the clients problems"},
         {"id": 4, "name": "client", "description": "end user of the application"},
     ]
-
-    await session.execute(insert(Role).values(roles))
+    stmt = pg_insert(Role).values(roles).on_conflict_do_nothing()
+    await session.execute(stmt)
 
 
 async def seed_permissions(session: AsyncSession) -> None:
@@ -69,6 +71,31 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "ticket:assign", "description": "Assign tickets"},
         {"name": "ticket:transfer", "description": "Transfer tickets"},
         {"name": "ticket:escalate", "description": "Escalate tickets"},
+        # Company
+        {"name": "company:create", "description": "Create companies"},
+        {"name": "company:read", "description": "Read company details"},
+        {"name": "company:list", "description": "List companies"},
+        {"name": "company:replace", "description": "Replace companies"},
+        {"name": "company:update", "description": "Update companies"},
+        {"name": "company:soft_delete", "description": "Soft delete companies"},
+        {"name": "company:add_product", "description": "Add product to company"},
+        {"name": "company:remove_products", "description": "Remove products from company in batch"},
+        {"name": "company:remove_product", "description": "Remove single product from company"},
+        {"name": "company:add_users", "description": "Add users to company"},
+        {"name": "company:remove_users", "description": "Remove users from company in batch"},
+        {"name": "company:remove_user", "description": "Remove single user from company"},
+        {"name": "company:list_users", "description": "List company users"},
+        # Product
+        {"name": "product:create", "description": "Create products"},
+        {"name": "product:read", "description": "Read product details"},
+        {"name": "product:list", "description": "List products"},
+        {"name": "product:replace", "description": "Replace products"},
+        {"name": "product:update", "description": "Update products"},
+        {"name": "product:soft_delete", "description": "Soft delete products"},
+        {"name": "product:add_companies", "description": "Add product to companies"},
+        {"name": "product:remove_companies", "description": "Remove product from companies in batch"},
+        {"name": "product:remove_company", "description": "Remove product from single company"},
+        {"name": "product:list_companies", "description": "List product companies"},
     ]
 
     insert_stmt = pg_insert(Permission).values(permissions).on_conflict_do_nothing()
@@ -77,10 +104,19 @@ async def seed_permissions(session: AsyncSession) -> None:
 
 async def seed_role_permissions(session: AsyncSession) -> None:
     relations = {
-        "admin": ["user:%", "role:%", "permission:%", "chat:%", "password:%", "ticket:%"],
+        "admin": ["user:%", "role:%", "permission:%", "chat:%", "password:%", "ticket:%", "company:%", "product:%"],
         "user": ["session:%", "chat:%", "password:change"],
-        "agent": ["session:%", "chat:%", "password:change", "ticket:%"],
-        "client": ["session:%", "chat:%", "password:change"],
+        "agent": [
+            "session:%",
+            "chat:%",
+            "password:change",
+            "ticket:%",
+            "company:read",
+            "company:list",
+            "product:read",
+            "product:list",
+        ],
+        "client": ["session:%", "chat:%", "password:change", "company:read", "product:read", "product:list"],
     }
 
     for role_name, patterns in relations.items():
@@ -132,7 +168,7 @@ async def seed_users(session: AsyncSession) -> None:
                 "username": name,
                 "name": name,
                 "must_change_password": False,
-                "must_accept_terms": False
+                "must_accept_terms": False,
             }
         )
 
