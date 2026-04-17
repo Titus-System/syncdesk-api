@@ -3,7 +3,7 @@ from typing import Any
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.domains.ticket.models import Ticket, TicketStatus
+from app.domains.ticket.models import Ticket
 from app.domains.ticket.schemas import TicketSearchFiltersDTO
 
 
@@ -15,7 +15,30 @@ class TicketRepository:
         await ticket.insert()
         return ticket
 
-    async def search_tickets(self, filters: TicketSearchFiltersDTO) -> list[Ticket]:
+    async def list_tickets_paginated(self, filters: TicketSearchFiltersDTO) -> tuple[list[Ticket], int]:
+        query = self._build_query(filters)
+        page = filters.page
+        page_size = filters.page_size
+        offset = (page - 1) * page_size
+
+        if not query:
+            total = await Ticket.find_all().count()
+            items = await Ticket.find_all().skip(offset).limit(page_size).to_list()
+            return items, total
+
+        total = await Ticket.find(query).count()
+        items = await Ticket.find(query).skip(offset).limit(page_size).to_list()
+        return items, total
+
+    async def get_by_id(self, ticket_id: PydanticObjectId) -> Ticket | None:
+        return await Ticket.get(ticket_id)
+
+    async def save(self, ticket: Ticket) -> Ticket:
+        await ticket.save()
+        return ticket
+
+    @staticmethod
+    def _build_query(filters: TicketSearchFiltersDTO) -> dict[str, Any]:
         query: dict[str, Any] = {}
 
         if filters.ticket_id is not None:
@@ -33,15 +56,4 @@ class TicketRepository:
         if filters.product is not None:
             query["product"] = filters.product
 
-        if not query:
-            return await Ticket.find_all().to_list()
-
-        return await Ticket.find(query).to_list()
-
-    async def get_by_id(self, ticket_id: PydanticObjectId) -> Ticket | None:
-        return await Ticket.get(ticket_id)
-
-    async def update_status(self, ticket: Ticket, status: TicketStatus) -> Ticket:
-        ticket.status = status
-        await ticket.save()
-        return ticket
+        return query

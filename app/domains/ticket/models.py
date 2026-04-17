@@ -20,6 +20,7 @@ class TicketCriticality(Enum):
 
 class TicketStatus(Enum):
     OPEN = "open"
+    AWAITING_ASSIGNMENT = "awaiting_assignment"
     IN_PROGRESS = "in_progress"
     WAITING_FOR_PROVIDER = "waiting_for_provider"
     WAITING_FOR_VALIDATION = "waiting_for_validation"

@@ -2,7 +2,7 @@ import secrets
 import string
 from typing import Any
 
-from sqlalchemy import insert, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ async def seed_roles(session: AsyncSession) -> None:
     ]
     stmt = pg_insert(Role).values(roles).on_conflict_do_nothing()
     await session.execute(stmt)
+
 
 async def seed_permissions(session: AsyncSession) -> None:
     permissions = [
@@ -65,7 +66,11 @@ async def seed_permissions(session: AsyncSession) -> None:
         # Ticket
         {"name": "ticket:read", "description": "Read tickets"},
         {"name": "ticket:create", "description": "Create tickets"},
-        {"name": "ticket:update_status", "description": "Update ticket status"},
+        {"name": "ticket:update", "description": "Update ticket fields"},
+        {"name": "ticket:queue", "description": "Read ticket queue"},
+        {"name": "ticket:assign", "description": "Assign tickets"},
+        {"name": "ticket:transfer", "description": "Transfer tickets"},
+        {"name": "ticket:escalate", "description": "Escalate tickets"},
         # Company
         {"name": "company:create", "description": "Create companies"},
         {"name": "company:read", "description": "Read company details"},
@@ -101,7 +106,16 @@ async def seed_role_permissions(session: AsyncSession) -> None:
     relations = {
         "admin": ["user:%", "role:%", "permission:%", "chat:%", "password:%", "ticket:%", "company:%", "product:%"],
         "user": ["session:%", "chat:%", "password:change"],
-        "agent": ["session:%", "chat:%", "password:change", "ticket:%", "company:read", "company:list", "product:read", "product:list"],
+        "agent": [
+            "session:%",
+            "chat:%",
+            "password:change",
+            "ticket:%",
+            "company:read",
+            "company:list",
+            "product:read",
+            "product:list",
+        ],
         "client": ["session:%", "chat:%", "password:change", "company:read", "product:read", "product:list"],
     }
 
@@ -154,7 +168,7 @@ async def seed_users(session: AsyncSession) -> None:
                 "username": name,
                 "name": name,
                 "must_change_password": False,
-                "must_accept_terms": False
+                "must_accept_terms": False,
             }
         )
 
