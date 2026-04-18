@@ -10,6 +10,8 @@ from app.core import (
     register_exception_handlers,
 )
 from app.core.background_tasks import global_background_tasks
+from app.core.event_dispatcher import get_event_dispatcher
+from app.core.event_dispatcher.event_dispatcher import EventDispatcher
 from app.core.init_routers import initiate_routers
 from app.core.logger import get_logger, stop_logger
 from app.core.middleware import add_middlewares
@@ -20,12 +22,19 @@ from app.domains.live_chat import Conversation
 from app.domains.ticket import Ticket
 
 
+def register_app_events_listeners(dispatcher: EventDispatcher) -> None:
+    logger = get_logger("app.main")
+    logger.info("Registering event listeners to EventDispatcher.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger = get_logger("app.main")
     settings = get_settings()
     logger.info("Starting Application...")
     tasks = global_background_tasks(pg_engine)
+
+    dispatcher = get_event_dispatcher()
 
     try:
         if settings.ENVIRONMENT == "development":
@@ -36,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             database=mongo_db.get_db(),
             document_models=[Conversation, Ticket, Attendance]
         )
+        register_app_events_listeners(dispatcher)    
         yield
 
     finally:
