@@ -37,11 +37,12 @@ An async lightweight dispatcher implemented in `app/core/event_dispatcher/`. No 
 
 ```
 app/core/event_dispatcher/
-├── __init__.py          # Re-exports: EventDispatcher, get_event_dispatcher
+├── __init__.py          # Re-exports: EventDispatcher, get_event_dispatcher, EventDispatcherDep
 ├── enums.py             # AppEvent enum (event catalog)
 ├── schemas.py           # DispatcherSchema base, typed payloads, EVENT_PAYLOAD_MAP
 ├── exceptions.py        # EventSchemaError, InvalidHandlerError
 ├── decorators.py        # @event_handler decorator
+├── metrics.py           # Prometheus counters and histograms
 └── event_dispatcher.py  # EventDispatcher (subscribe, publish), get_event_dispatcher
 ```
 

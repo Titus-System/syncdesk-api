@@ -24,7 +24,7 @@ from app.domains.ticket import Ticket
 
 def register_app_events_listeners(dispatcher: EventDispatcher) -> None:
     logger = get_logger("app.main")
-    logger.info("Registering event listeners to EventDispatcher.")
+    logger.info("Registered event listeners to EventDispatcher.")
 
 
 @asynccontextmanager

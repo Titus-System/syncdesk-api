@@ -1,11 +1,16 @@
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
+
+from fastapi import Depends
 
 from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.exceptions import EventSchemaError, InvalidHandlerError
 from app.core.event_dispatcher.schemas import EVENT_PAYLOAD_MAP, DispatcherSchema
+from app.core.logger import Logger, get_logger
+
+from .metrics import events_published_total
 
 EventHandler = Callable[..., Coroutine[Any, Any, None]]
 
@@ -17,9 +22,12 @@ class EventDispatcher:
     Use ``get_event_dispatcher()`` to obtain the singleton instance.
     """
 
-    def __init__(self, payload_map: Mapping[AppEvent, type[DispatcherSchema]]) -> None:
+    def __init__(
+        self, payload_map: Mapping[AppEvent, type[DispatcherSchema]], logger: Logger
+    ) -> None:
         self._handlers: dict[AppEvent, list[EventHandler]] = {}
         self._payload_map = payload_map
+        self.logger = logger
 
     def subscribe(self, event: AppEvent, handler: EventHandler) -> None:
         """Register a handler to react to an event.
@@ -32,13 +40,22 @@ class EventDispatcher:
         """
         handler_schema = getattr(handler, "__event_payload_types__", None)
         if handler_schema is None:
-            raise InvalidHandlerError(
-                f"{handler.__name__} must be decorated with @event_handler"
+            self.logger.error(
+                "Handler '%s' rejected: missing @event_handler decorator",
+                handler.__name__,
             )
+            raise InvalidHandlerError(f"{handler.__name__} must be decorated with @event_handler")
 
         event_schema = self._payload_map[event]
         if event_schema not in handler_schema:
             expected = ", ".join(t.__name__ for t in handler_schema)
+            self.logger.error(
+                "Handler '%s' rejected: expects (%s), but event '%s' emits %s",
+                handler.__name__,
+                expected,
+                event.value,
+                event_schema.__name__,
+            )
             raise InvalidHandlerError(
                 f"Handler '{handler.__name__}' expects ({expected}), "
                 f"but event '{event.value}' emits {event_schema.__name__}"
@@ -49,6 +66,12 @@ class EventDispatcher:
         else:
             if handler not in self._handlers[event]:
                 self._handlers[event].append(handler)
+
+        self.logger.info(
+            "Handler '%s' subscribed to '%s'",
+            handler.__name__,
+            event.value,
+        )
 
     async def publish(self, event: AppEvent, payload: DispatcherSchema) -> None:
         """Emit an event to all subscribed handlers.
@@ -61,14 +84,32 @@ class EventDispatcher:
         """
         expected = self._payload_map[event]
         if not isinstance(payload, expected):
+            self.logger.error(
+                "Publish rejected: '%s' expects %s, received %s",
+                event.value,
+                expected.__name__,
+                type(payload).__name__,
+            )
             raise EventSchemaError(
                 f"{event.value} expects {expected.__name__}, received {type(payload).__name__}"
             )
 
-        for handler in self._handlers.get(event, []):
+        handlers = self._handlers.get(event, [])
+        self.logger.info(
+            "Publishing '%s' to %d handler(s), payload=%s",
+            event.value,
+            len(handlers),
+            type(payload).__name__,
+        )
+        events_published_total.labels(event=event.value).inc()
+
+        for handler in handlers:
             asyncio.create_task(handler(payload))
 
 
 @lru_cache
 def get_event_dispatcher() -> EventDispatcher:
-    return EventDispatcher(EVENT_PAYLOAD_MAP)
+    return EventDispatcher(EVENT_PAYLOAD_MAP, get_logger("app.event_dispatcher"))
+
+
+EventDispatcherDep = Annotated[EventDispatcher, Depends(get_event_dispatcher)]
