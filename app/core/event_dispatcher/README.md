@@ -17,11 +17,12 @@ Some business actions trigger consequences in other domains. Direct service inje
 
 ```
 app/core/event_dispatcher/
-├── __init__.py          # Re-exports: EventDispatcher, get_event_dispatcher
+├── __init__.py          # Re-exports: EventDispatcher, get_event_dispatcher, EventDispatcherDep
 ├── enums.py             # AppEvent enum (event catalog)
 ├── schemas.py           # DispatcherSchema base, typed payloads, EVENT_PAYLOAD_MAP
 ├── exceptions.py        # EventSchemaError, InvalidHandlerError
 ├── decorators.py        # @event_handler decorator
+├── metrics.py           # Prometheus counters and histograms
 └── event_dispatcher.py  # EventDispatcher (subscribe, publish), get_event_dispatcher
 ```
 
@@ -33,6 +34,16 @@ app/core/event_dispatcher/
 from app.core.event_dispatcher import EventDispatcher, get_event_dispatcher
 
 dispatcher = get_event_dispatcher()  # singleton via @lru_cache
+```
+
+For FastAPI route injection, use `EventDispatcherDep`:
+
+```python
+from app.core.event_dispatcher import EventDispatcherDep
+
+@router.post("/tickets/{ticket_id}/close")
+async def close_ticket(dispatcher: EventDispatcherDep):
+    ...
 ```
 
 #### `subscribe(event: AppEvent, handler: EventHandler) -> None`
@@ -274,6 +285,18 @@ Key points:
 - The `@event_handler` decorator validates the payload type and wraps the body in `try/except` with structured logging. Handlers do not need manual error handling.
 - The listener receives the `dispatcher` to publish chained events (`ticket.created`).
 - Payload field access is typed: `payload.attendance_id`, not `kwargs["attendance_id"]`.
+
+## Metrics
+
+The dispatcher exposes Prometheus metrics via `app/core/event_dispatcher/metrics.py`:
+
+| Metric | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `events_published_total` | Counter | `event` | Number of times each event was published |
+| `event_handler_failures_total` | Counter | `handler` | Number of times each handler failed |
+| `event_handler_duration_seconds` | Histogram | `handler` | Handler execution latency |
+
+`events_published_total` is recorded in `publish`. Handler failures and duration are recorded by the `@event_handler` decorator.
 
 ## Rules
 

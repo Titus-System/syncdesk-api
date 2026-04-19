@@ -1,8 +1,13 @@
+import time
 from collections.abc import Callable, Coroutine
 from functools import wraps
 from typing import Any, ParamSpec
 
 from app.core.event_dispatcher.exceptions import EventSchemaError
+from app.core.event_dispatcher.metrics import (
+    event_handler_duration_seconds,
+    event_handler_failures_total,
+)
 from app.core.event_dispatcher.schemas import DispatcherSchema
 from app.core.logger import get_logger
 
@@ -32,14 +37,16 @@ def event_handler(
     Example::
 
         @event_handler(TriageFinishedEventSchema)
-        async def on_triage_finished(self, payload: TriageFinishedEventSchema) -> None:
-            ...
+        async def on_triage_finished(self, payload: TriageFinishedEventSchema) -> None: ...
     """
+
     def decorator(
-        fn: Callable[P, Coroutine[Any, Any, None]]
+        fn: Callable[P, Coroutine[Any, Any, None]],
     ) -> Callable[P, Coroutine[Any, Any, None]]:
         @wraps(fn)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> None:
+            start_time = time.perf_counter()
+
             payload = args[-1] if args else kwargs.get("payload")
             if payload_types and not isinstance(payload, payload_types):
                 expected = ", ".join(t.__name__ for t in payload_types)
@@ -49,7 +56,11 @@ def event_handler(
 
             try:
                 await fn(*args, **kwargs)
+                elapsed = time.perf_counter() - start_time
+                event_handler_duration_seconds.labels(handler=fn.__qualname__).observe(elapsed)
             except Exception:
+                event_handler_failures_total.labels(handler=fn.__qualname__).inc()
+
                 logger.exception(
                     "Event handler failed: %s",
                     fn.__qualname__,
@@ -59,6 +70,7 @@ def event_handler(
                         else None
                     },
                 )
+
         wrapper.__event_payload_types__ = payload_types  # type: ignore[attr-defined]
         return wrapper
 

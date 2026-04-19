@@ -7,6 +7,7 @@ from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
 from app.core.event_dispatcher.exceptions import EventSchemaError, InvalidHandlerError
 from app.core.event_dispatcher.schemas import DispatcherSchema
+from app.core.logger import get_logger
 
 
 class FakePayload(DispatcherSchema):
@@ -27,7 +28,7 @@ PAYLOAD_MAP = {
 
 @pytest.fixture
 def dispatcher() -> EventDispatcher:
-    return EventDispatcher(PAYLOAD_MAP)
+    return EventDispatcher(PAYLOAD_MAP, get_logger("test.event_dispatcher"))
 
 
 class TestEventDispatcher:

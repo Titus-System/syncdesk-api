@@ -58,11 +58,11 @@ class TicketAssigneeUpdatedEventSchema(DispatcherSchema):
 
 class TicketStatusUpdatedEventSchema(DispatcherSchema):
     """Emitted by ``TicketService`` when a ticket's status changes.
-    
+
     Listeners:
         - ``ConversationListener`` - updates message history with a system message
         - ``ChatbotService`` - Updates attendance status
-        
+
     """
 
     ticket_id: PydanticObjectId
