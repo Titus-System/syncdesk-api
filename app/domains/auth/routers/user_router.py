@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
-from app.core.dependencies import ResponseFactoryDep
+from app.core.dependencies import PasswordSecurityDep, ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.dependencies import CurrentUserSessionDep, UserServiceDep, require_permission
@@ -21,6 +21,24 @@ from .swagger_utils import (
 user_router = APIRouter()
 
 
+async def serialize_user_with_roles(user: object, service: UserServiceDep) -> dict:
+    payload = user.to_response_dict()
+    roles = await service.get_user_roles(user.id)
+
+    payload["roles"] = [
+        {
+            "id": role.id,
+            "name": role.name,
+            "description": getattr(role, "description", None),
+        }
+        for role in roles
+    ]
+    payload["role_ids"] = [role.id for role in roles]
+    payload["role_names"] = [role.name for role in roles]
+
+    return payload
+
+
 @user_router.post(
     "/",
     tags=["Users"],
@@ -32,10 +50,20 @@ async def create_user(
     _auth: CurrentUserSessionDep,
     service: UserServiceDep,
     response: ResponseFactoryDep,
+    password_security: PasswordSecurityDep,
 ) -> JSONResponse:
     try:
-        user = await service.create(dto)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_201_CREATED)
+        dto_to_create = dto
+
+        if dto.password_hash:
+            dto_to_create = dto.model_copy(
+                update={"password_hash": password_security.generate_password_hash(dto.password_hash)}
+            )
+
+        user = await service.create(dto_to_create)
+        data = await serialize_user_with_roles(user, service)
+
+        return response.success(data=data, status_code=status.HTTP_201_CREATED)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -53,13 +81,15 @@ async def get_users(
     _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
     users = await service.get_all()
-    return response.success(
-        data=[user.to_response_dict() for user in users], status_code=status.HTTP_200_OK
-    )
+    data = [await serialize_user_with_roles(user, service) for user in users]
+
+    return response.success(data=data, status_code=status.HTTP_200_OK)
 
 
 @user_router.get(
-    "/{id}", tags=["Users"], dependencies=[require_permission("user:read")],
+    "/{id}",
+    tags=["Users"],
+    dependencies=[require_permission("user:read")],
     **get_user_swagger,
 )
 async def get_user(
@@ -68,13 +98,18 @@ async def get_user(
     user = await service.get_by_id(id)
     if not user:
         raise AppHTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id '{id}' was not found.",
         )
-    return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+
+    data = await serialize_user_with_roles(user, service)
+    return response.success(data=data, status_code=status.HTTP_200_OK)
 
 
 @user_router.put(
-    "/{id}", tags=["Users"], dependencies=[require_permission("user:replace")],
+    "/{id}",
+    tags=["Users"],
+    dependencies=[require_permission("user:replace")],
     **replace_user_swagger,
 )
 async def replace_user(
@@ -87,16 +122,18 @@ async def replace_user(
     user = await service.update(id, dto)
     if user is None:
         raise AppHTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id '{id}' was not found.",
         )
-    return response.success(
-        data=user.to_response_dict(),
-        status_code=status.HTTP_200_OK,
-    )
+
+    data = await serialize_user_with_roles(user, service)
+    return response.success(data=data, status_code=status.HTTP_200_OK)
 
 
 @user_router.patch(
-    "/{id}", tags=["Users"], dependencies=[require_permission("user:update")],
+    "/{id}",
+    tags=["Users"],
+    dependencies=[require_permission("user:update")],
     **update_user_swagger,
 )
 async def update_user(
@@ -109,16 +146,18 @@ async def update_user(
     user = await service.update(id, dto)
     if user is None:
         raise AppHTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id '{id}' was not found.",
         )
-    return response.success(
-        data=user.to_response_dict(),
-        status_code=status.HTTP_200_OK,
-    )
+
+    data = await serialize_user_with_roles(user, service)
+    return response.success(data=data, status_code=status.HTTP_200_OK)
 
 
 @user_router.post(
-    "/{id}/roles", tags=["users", "Roles"], dependencies=[require_permission("user:add_roles")],
+    "/{id}/roles",
+    tags=["users", "Roles"],
+    dependencies=[require_permission("user:add_roles")],
     **add_user_roles_swagger,
 )
 async def add_user_roles(
@@ -130,14 +169,18 @@ async def add_user_roles(
 ) -> JSONResponse:
     if not dto.role_ids:
         raise AppHTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="No role ids were informed"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No role ids were informed",
         )
+
     try:
         user = await service.add_roles(id, dto.role_ids)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+        data = await serialize_user_with_roles(user, service)
+        return response.success(data=data, status_code=status.HTTP_200_OK)
     except ResourceNotFoundError as e:
         raise AppHTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id '{id}' was not found.",
         ) from e
     except ValueError as e:
         raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e

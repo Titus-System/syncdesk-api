@@ -31,8 +31,8 @@ class AttendanceEvaluation(BaseModel):
 class Triage(BaseModel):
     step: str
     question: str
-    answer_value: str
-    answer_text: str
+    answer_value: str | None = None
+    answer_text: str | None = None
 
 
 class Attendance(Document):
@@ -43,6 +43,11 @@ class Attendance(Document):
     triage: list[Triage] = Field(default_factory=list[Triage])
     result: AttendanceResult | None = None
     evaluation: AttendanceEvaluation | None = None
+
+    current_step_id: str | None = None
+    current_message: str | None = None
+    current_input_mode: str | None = None
+    current_quick_replies: list[dict[str, str]] = Field(default_factory=list)
 
     class Settings:
         name = "attendances"

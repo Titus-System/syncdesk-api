@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import UUID
 
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -19,7 +20,7 @@ class TicketRepository:
         query: dict[str, Any] = {}
 
         if filters.ticket_id is not None:
-            query["_id"] = filters.ticket_id
+          query["_id"] = filters.ticket_id
         if filters.client_id is not None:
             query["client.id"] = filters.client_id
         if filters.triage_id is not None:
@@ -43,5 +44,21 @@ class TicketRepository:
 
     async def update_status(self, ticket: Ticket, status: TicketStatus) -> Ticket:
         ticket.status = status
+        await ticket.save()
+        return ticket
+
+    async def assign_ticket(
+        self,
+        ticket: Ticket,
+        agent_id: UUID,
+        agent_name: str,
+        status: TicketStatus | None = None,
+    ) -> Ticket:
+        ticket.assigned_agent_id = agent_id
+        ticket.assigned_agent_name = agent_name
+
+        if status is not None:
+            ticket.status = status
+
         await ticket.save()
         return ticket

@@ -3,12 +3,19 @@ from uuid import UUID
 
 from beanie import PydanticObjectId
 
+from app.domains.auth.entities import UserWithRoles
 from app.domains.live_chat.entities import ChatMessage, ChatParticipants, Conversation
 from app.domains.live_chat.exceptions import ParentConversationNotFoundError
-from app.domains.live_chat.schemas import CreateConversationDTO, IncomingMessage, PaginatedMessages
+from app.domains.live_chat.schemas import (
+    ActiveConversationSummary,
+    CreateConversationDTO,
+    IncomingMessage,
+    PaginatedMessages,
+)
 
-from ..repositories import ConversationRepository
 from ..metrics import chat_messages_total
+from ..repositories import ConversationRepository
+
 
 class ConversationService:
     def __init__(self, repository: ConversationRepository) -> None:
@@ -49,9 +56,7 @@ class ConversationService:
     async def attribute_agent(self, chat_id: PydanticObjectId, agent_id: UUID) -> None:
         return await self.repo.attribute_agent(chat_id, agent_id)
 
-    async def get_chats_from_ticket(
-        self, ticket_id: PydanticObjectId
-    ) -> list[Conversation]:
+    async def get_chats_from_ticket(self, ticket_id: PydanticObjectId) -> list[Conversation]:
         return await self.repo.get_by_ticket_id(ticket_id)
 
     async def get_paginated_messages(
@@ -69,3 +74,59 @@ class ConversationService:
     ) -> None:
         chat_messages_total.inc()
         await self.repo.add_message(chat_id, message)
+
+    async def get_active_conversations(
+        self, user: UserWithRoles, search: str | None = None
+    ) -> list[ActiveConversationSummary]:
+        is_admin = "admin" in user.roles_names()
+        chats = await self.repo.get_active_conversations(user.id, is_admin, search)
+
+        result: list[ActiveConversationSummary] = []
+        for chat in chats:
+            can_join_live = is_admin or chat.agent_id == user.id
+            needs_assume = (not is_admin) and chat.agent_id is None
+
+            result.append(
+                chat.model_copy(
+                    update={
+                        "can_join_live": can_join_live,
+                        "needs_assume": needs_assume,
+                    }
+                )
+            )
+
+        return result
+
+    async def assume_conversation(
+        self, chat_id: PydanticObjectId, user: UserWithRoles
+    ) -> Conversation | None:
+        chat = await self.repo.get_by_id(chat_id)
+        if chat is None:
+            return None
+
+        if not chat.is_opened():
+            raise ValueError("Conversation is already closed.")
+
+        is_admin = "admin" in user.roles_names()
+
+        if chat.agent_id is None:
+            await self.repo.attribute_agent(chat_id, user.id)
+            chat.agent_id = user.id
+            return chat
+
+        if chat.agent_id == user.id:
+            return chat
+
+        if is_admin:
+            await self.repo.attribute_agent(chat_id, user.id)
+            chat.agent_id = user.id
+            return chat
+
+        raise PermissionError("Conversation is already assigned to another agent.")
+
+    async def get_latest_open_by_ticket_id(self, ticket_id: PydanticObjectId) -> Conversation | None:
+      return await self.repo.get_latest_open_by_ticket_id(ticket_id)
+
+
+    async def get_current_ticket_agent_id(self, ticket_id: PydanticObjectId) -> UUID | None:
+      return await self.repo.get_current_ticket_agent_id(ticket_id)

@@ -25,7 +25,6 @@ router = APIRouter(prefix="/chatbot", tags=["Chatbot URA"])
 
 @router.post(
     "/",
-    # dependencies=[require_permission("chatbot:create")],
     **create_attendance_swagger,
 )
 async def create_triage(
@@ -41,14 +40,13 @@ async def create_triage(
     )
     res = await service.create_attendance(c)
     return response.success(
-        data=res,
+        data=res.model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
     )
 
 
 @router.get(
     "/",
-    # dependencies=[require_permission("chatbot:list")],
     **list_attendances_swagger,
 )
 async def get_attendances(
@@ -57,12 +55,15 @@ async def get_attendances(
     service: ChatbotServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    ...
+    data = await service.list_attendances(filters)
+    return response.success(
+        data=[item.model_dump(mode="json") for item in data],
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post(
     "/webhook",
-    # dependencies=[require_permission("chatbot:interact")],
     **webhook_swagger,
 )
 async def send_message(
@@ -72,14 +73,13 @@ async def send_message(
 ) -> JSONResponse:
     data = await service.process_message(payload)
     return response.success(
-        data = data,
+        data=data.model_dump(mode="json"),
         status_code=status.HTTP_200_OK
     )
 
 
 @router.get(
     "/{triage_id}",
-    # dependencies=[require_permission("chatbot:read")],
     **get_attendance_swagger,
 )
 async def get_attendance(
@@ -88,19 +88,26 @@ async def get_attendance(
     service: ChatbotServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    ...
+    data = await service.get_attendance(triage_id)
+    return response.success(
+        data=data.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post(
     "/{triage_id}/evaluation",
-    # dependencies=[require_permission("chatbot:evaluate")],
     **evaluation_swagger,
 )
 async def set_evaluation(
+    triage_id: str,
     auth: CurrentUserSessionDep,
     payload: EvaluationRequest,
     service: ChatbotServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    ...
-
+    data = await service.set_evaluation(triage_id, payload)
+    return response.success(
+        data=data.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )

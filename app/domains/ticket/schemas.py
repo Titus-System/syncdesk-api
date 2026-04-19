@@ -90,6 +90,8 @@ class TicketResponseDTO(BaseModel):
     agent_history: list[TicketHistoryResponseDTO]
     client: TicketClientResponseDTO
     comments: list[TicketCommentResponseDTO]
+    assigned_agent_id: UUID | None = None
+    assigned_agent_name: str | None = None
 
 
 class UpdateTicketStatusDTO(BaseDTO):

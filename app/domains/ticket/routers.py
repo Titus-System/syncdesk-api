@@ -39,6 +39,25 @@ async def get_tickets(
     )
 
 
+@ticket_router.get(
+    "/{ticket_id}",
+    tags=["Tickets"],
+    response_model=GenericSuccessContent[TicketResponseDTO],
+    dependencies=[require_permission("ticket:read")],
+)
+async def get_ticket_by_id(
+    ticket_id: PydanticObjectId,
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    result = await service.get_ticket_by_id(ticket_id)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
 @ticket_router.post(
     "/",
     tags=["Tickets"],
@@ -52,7 +71,30 @@ async def create_ticket(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     result = await service.create_ticket(dto)
-    return response.success(data=result.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_201_CREATED,
+    )
+
+
+@ticket_router.post(
+    "/{ticket_id}/take",
+    tags=["Tickets"],
+    response_model=GenericSuccessContent[TicketResponseDTO],
+    dependencies=[require_permission("ticket:update_status")],
+)
+async def take_ticket(
+    ticket_id: PydanticObjectId,
+    auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    user = auth[0]
+    result = await service.take_ticket(ticket_id, user)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.patch(
@@ -64,9 +106,13 @@ async def create_ticket(
 async def update_ticket_status(
     ticket_id: PydanticObjectId,
     dto: UpdateTicketStatusDTO,
-    _auth: CurrentUserSessionDep,
+    auth: CurrentUserSessionDep,
     service: TicketServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    result = await service.update_status(ticket_id, dto)
-    return response.success(data=result.model_dump(mode="json"), status_code=status.HTTP_200_OK)
+    user = auth[0]
+    result = await service.update_status(ticket_id, dto, user)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )

@@ -23,17 +23,46 @@ conversation_router = APIRouter()
 
 
 @conversation_router.get(
-    "/client/{client_id}",
+    "/active",
     tags=["Conversations"],
     dependencies=[require_permission("chat:read")],
+)
+async def get_active_conversations(
+    auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+    search: str = Query(default="", description="Search by client name, email or last message."),
+) -> JSONResponse:
+    user = auth[0]
+    chats = await service.get_active_conversations(user, search)
+
+    return response.success(
+        data=[chat.model_dump(mode="json") for chat in chats],
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@conversation_router.get(
+    "/client/{client_id}",
+    tags=["Conversations"],
     **get_client_convs_swagger,
 )
 async def get_client_conversations(
     client_id: UUID,
-    _auth: CurrentUserSessionDep,
+    auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
+    user = auth[0]
+    roles_names = user.roles_names()
+    is_privileged = "admin" in roles_names or "agent" in roles_names
+
+    if not is_privileged and user.id != client_id:
+        raise AppHTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not allowed to access conversations from another client.",
+        )
+
     chats = await service.get_from_client(client_id)
     if not chats:
         return response.success(data=[], status_code=status.HTTP_200_OK)
@@ -45,12 +74,11 @@ async def get_client_conversations(
 @conversation_router.get(
     "/ticket/{ticket_id}",
     tags=["Conversations"],
-    dependencies=[require_permission("chat:read")],
     **get_convs_swagger,
 )
 async def get_conversations(
     ticket_id: PydanticObjectId,
-    _auth: CurrentUserSessionDep,
+    auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
@@ -58,7 +86,7 @@ async def get_conversations(
     if not chats:
         return response.success(data=[], status_code=status.HTTP_200_OK)
 
-    user = _auth[0]
+    user = auth[0]
     roles_names = user.roles_names()
     if "admin" not in roles_names and user.id not in chats[-1].participants():
         raise AppHTTPException(
@@ -73,12 +101,11 @@ async def get_conversations(
 @conversation_router.get(
     "/ticket/{ticket_id}/messages",
     tags=["Conversations", "Messages"],
-    dependencies=[require_permission("chat:read")],
     **get_messages_swagger,
 )
 async def get_paginated_messages(
     ticket_id: PydanticObjectId,
-    _auth: CurrentUserSessionDep,
+    auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)."),
@@ -88,7 +115,7 @@ async def get_paginated_messages(
     if participants is None:
         return response.success(data=[], status_code=status.HTTP_200_OK)
 
-    user = _auth[0]
+    user = auth[0]
     roles_names = user.roles_names()
     if "admin" not in roles_names and user.id not in participants:
         raise AppHTTPException(
@@ -123,7 +150,8 @@ async def create_conversation(
 
         chat = await service.create(dto)
         return response.success(
-            data=chat.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+            data=chat.model_dump(mode="json"),
+            status_code=status.HTTP_201_CREATED,
         )
 
     except ResourceAlreadyExistsError as e:
@@ -131,6 +159,44 @@ async def create_conversation(
             status_code=status.HTTP_409_CONFLICT,
             detail="Chat already exists.",
         ) from e
+
+
+@conversation_router.post(
+    "/{chat_id}/assume",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:set_agent")],
+)
+async def assume_conversation(
+    chat_id: PydanticObjectId,
+    auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    user = auth[0]
+
+    try:
+        chat = await service.assume_conversation(chat_id, user)
+
+        if chat is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation {chat_id} does not exist.",
+            )
+
+        return response.success(
+            data=chat.model_dump(mode="json"),
+            status_code=status.HTTP_200_OK,
+        )
+    except PermissionError as err:
+        raise AppHTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(err),
+        ) from err
+    except ValueError as err:
+        raise AppHTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(err),
+        ) from err
 
 
 @conversation_router.patch(
@@ -142,13 +208,13 @@ async def create_conversation(
 async def set_conversation_agent(
     chat_id: PydanticObjectId,
     agent_id: UUID,
-    _auth: CurrentUserSessionDep,
+    auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     user_service: UserServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     try:
-        user = _auth[0]
+        user = auth[0]
 
         chat = await service.get_by_id(chat_id)
         if chat is None:

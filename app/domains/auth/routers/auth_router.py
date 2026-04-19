@@ -133,7 +133,22 @@ async def get_me(
     user_with_roles = await service.get_by_id_with_roles(user.id)
     if user_with_roles is None:
         raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    return response.success(data=user_with_roles.to_response_dict(), status_code=status.HTTP_200_OK)
+
+    roles = await service.get_user_roles(user.id)
+
+    payload = user_with_roles.to_response_dict()
+    payload["roles"] = [
+        {
+            "id": role.id,
+            "name": role.name,
+            "description": getattr(role, "description", None),
+        }
+        for role in roles
+    ]
+    payload["role_ids"] = [role.id for role in roles]
+    payload["role_names"] = [role.name for role in roles]
+
+    return response.success(data=payload, status_code=status.HTTP_200_OK)
 
 
 @auth_router.post(
