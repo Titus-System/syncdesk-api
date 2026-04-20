@@ -154,6 +154,7 @@ Payload: `TicketAssigneeUpdatedEventSchema`
 | Field | Type | Description |
 | --- | --- | --- |
 | `ticket_id` | `PydanticObjectId` | Ticket ID |
+| `client_id` | `UUID` | Client ID |
 | `new_agent_id` | `UUID` | New responsible agent |
 | `reason` | `str \| None` | Reassignment reason |
 
@@ -169,6 +170,7 @@ Payload: `TicketEscalatedEventSchema`
 | Field | Type | Description |
 | --- | --- | --- |
 | `ticket_id` | `PydanticObjectId` | Ticket ID |
+| `client_id` | `UUID` | Client ID |
 | `new_agent_id` | `UUID \| None` | Agent at the new level (None if pending) |
 | `new_agent_name` | `str \| None` | New agent name |
 | `new_level` | `str` | Target support level |

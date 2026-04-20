@@ -70,9 +70,7 @@ class ConversationRepository:
         )
         return await query.to_list()
 
-    async def get_by_ticket_id(
-        self, ticket_id: PydanticObjectId
-    ) -> list[Conversation]:
+    async def get_by_ticket_id(self, ticket_id: PydanticObjectId) -> list[Conversation]:
         query: AggregationQuery[Conversation] = Conversation.aggregate(
             [
                 {"$match": {"ticket_id": ticket_id}},
@@ -83,29 +81,6 @@ class ConversationRepository:
             projection_model=Conversation,
         )
         return await query.to_list()
-
-    # async def get_paginated_messages(
-    #     self, ticket_id: PydanticObjectId, page: int, limit: int
-    # ) -> PaginatedMessages:
-    #     query: AggregationQuery[Conversation] = Conversation.aggregate(
-    #         [
-    #             {"$match": {"ticket_id": ticket_id}},
-    #             {"$sort": {"sequential_index": 1}},
-    #         ],
-    #         projection_model=Conversation,
-    #     )
-    #     conversations = await query.to_list()
-    #     messages: list[ChatMessage] = []
-    #     for c in conversations:
-    #         messages.extend(c.messages)
-    #     total = len(messages)
-    #     ceiling = max(len(messages) - (page - 1) * limit, 0)
-    #     floor = max(ceiling - limit, 0)
-    #     messages = messages[floor:ceiling]
-
-    #     return PaginatedMessages(
-    #         messages=messages, total=total, page=page, limit=limit, has_next=floor > 0
-    #     )
 
     async def get_paginated_messages(
         self, ticket_id: PydanticObjectId, page: int, limit: int
@@ -138,7 +113,8 @@ class ConversationRepository:
                                         {
                                             "$subtract": [
                                                 {"$max": [{"$subtract": ["$count", skip]}, 0]},
-                                                {"$max": [
+                                                {
+                                                    "$max": [
                                                         {"$subtract": ["$count", skip + limit]},
                                                         0,
                                                     ]
@@ -200,6 +176,16 @@ class ConversationRepository:
         doc = await self.db["conversations"].find_one({"_id": id}, {"_id": 1})
         return doc is not None
 
+    async def ticket_has_conversation(self, ticket_id: PydanticObjectId) -> bool:
+        doc = await self.db["conversations"].find_one({"ticket_id": ticket_id}, {"_id": 1})
+        return doc is not None
+
+    async def get_last_by_ticket_id(self, ticket_id: PydanticObjectId) -> Conversation | None:
+        return await Conversation.find_one(
+            Conversation.ticket_id == ticket_id,
+            sort=[("sequential_index", -1)],
+        )
+
     async def update(self, conversation: Conversation) -> Conversation | None:
         return cast(Conversation | None, await conversation.save())
 
@@ -217,11 +203,23 @@ class ConversationRepository:
         try:
             await conversation.update({"$push": {"messages": message.model_dump()}})
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-            logger.error("MongoDB connection error on add_message", extra={"conversation_id": str(id)}, exc_info=e)
+            logger.error(
+                "MongoDB connection error on add_message",
+                extra={"conversation_id": str(id)},
+                exc_info=e,
+            )
             raise RuntimeError("Connection error when saving the message") from e
         except WriteError as e:
-            logger.error("MongoDB write error on add_message", extra={"conversation_id": str(id)}, exc_info=e)
+            logger.error(
+                "MongoDB write error on add_message", extra={"conversation_id": str(id)}, exc_info=e
+            )
             raise RuntimeError("Error persisting message") from e
+
+    async def add_child(self, parent_id: PydanticObjectId, child_id: PydanticObjectId) -> None:
+        await self.db["conversations"].update_one(
+            {"_id": parent_id},
+            {"$push": {"children_ids": child_id}},
+        )
 
     async def attribute_agent(self, conversation_id: PydanticObjectId, agent_id: UUID) -> None:
         conversation = await Conversation.get(conversation_id)

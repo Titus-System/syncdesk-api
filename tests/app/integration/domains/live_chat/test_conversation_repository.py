@@ -408,3 +408,157 @@ class TestConversationRepository:
         assert len(convos) == 2
         assert any(c.finished_at is not None for c in convos)
         assert any(c.finished_at is None for c in convos)
+
+    # --- ticket_has_conversation ---
+
+    @pytest.mark.asyncio
+    async def test_ticket_has_conversation_true(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        await conversation_repo.create(self.create_dto)
+        assert await conversation_repo.ticket_has_conversation(self.create_dto.ticket_id) is True
+
+    @pytest.mark.asyncio
+    async def test_ticket_has_conversation_false(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        assert await conversation_repo.ticket_has_conversation(PydanticObjectId()) is False
+
+    @pytest.mark.asyncio
+    async def test_ticket_has_conversation_multiple(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        ticket_id = PydanticObjectId()
+        client_id = uuid4()
+        for i in range(3):
+            await conversation_repo.create(CreateConversationDTO(
+                ticket_id=ticket_id,
+                agent_id=uuid4(),
+                client_id=client_id,
+                sequential_index=i,
+            ))
+        assert await conversation_repo.ticket_has_conversation(ticket_id) is True
+
+    # --- get_last_by_ticket_id ---
+
+    @pytest.mark.asyncio
+    async def test_get_last_by_ticket_id_single(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        c = await conversation_repo.create(self.create_dto)
+        last = await conversation_repo.get_last_by_ticket_id(self.create_dto.ticket_id)
+        assert last is not None
+        assert last.id == c.id
+        assert last.sequential_index == 0
+
+    @pytest.mark.asyncio
+    async def test_get_last_by_ticket_id_multiple_inserted_out_of_order(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        ticket_id = PydanticObjectId()
+        client_id = uuid4()
+        insertion_order = [1, 0, 2]
+        ids: dict[int, PydanticObjectId] = {}
+        for idx in insertion_order:
+            c = await conversation_repo.create(CreateConversationDTO(
+                ticket_id=ticket_id,
+                agent_id=uuid4(),
+                client_id=client_id,
+                sequential_index=idx,
+            ))
+            assert c.id is not None
+            ids[idx] = c.id
+
+        last = await conversation_repo.get_last_by_ticket_id(ticket_id)
+        assert last is not None
+        assert last.id == ids[2]
+        assert last.sequential_index == 2
+
+    @pytest.mark.asyncio
+    async def test_get_last_by_ticket_id_does_not_cross_tickets(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        client_id = uuid4()
+        ticket_a = PydanticObjectId()
+        ticket_b = PydanticObjectId()
+
+        await conversation_repo.create(CreateConversationDTO(
+            ticket_id=ticket_a, agent_id=uuid4(), client_id=client_id, sequential_index=0,
+        ))
+        await conversation_repo.create(CreateConversationDTO(
+            ticket_id=ticket_b, agent_id=uuid4(), client_id=client_id, sequential_index=5,
+        ))
+
+        last_a = await conversation_repo.get_last_by_ticket_id(ticket_a)
+        assert last_a is not None
+        assert last_a.sequential_index == 0
+        assert last_a.ticket_id == ticket_a
+
+    @pytest.mark.asyncio
+    async def test_get_last_by_ticket_id_none(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        last = await conversation_repo.get_last_by_ticket_id(PydanticObjectId())
+        assert last is None
+
+    # --- add_child ---
+
+    @pytest.mark.asyncio
+    async def test_add_child(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        ticket_id = PydanticObjectId()
+        client_id = uuid4()
+        parent = await conversation_repo.create(CreateConversationDTO(
+            ticket_id=ticket_id, agent_id=uuid4(), client_id=client_id,
+        ))
+        assert parent.id is not None
+        child = await conversation_repo.create(CreateConversationDTO(
+            ticket_id=ticket_id, agent_id=uuid4(), client_id=client_id,
+            sequential_index=1, parent_id=parent.id,
+        ))
+        assert child.id is not None
+
+        await conversation_repo.add_child(parent.id, child.id)
+
+        updated_parent = await conversation_repo.get_by_id(parent.id)
+        assert updated_parent is not None
+        assert updated_parent.children_ids is not None
+        assert child.id in updated_parent.children_ids
+
+    @pytest.mark.asyncio
+    async def test_add_child_multiple(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        ticket_id = PydanticObjectId()
+        client_id = uuid4()
+        parent = await conversation_repo.create(CreateConversationDTO(
+            ticket_id=ticket_id, agent_id=uuid4(), client_id=client_id,
+        ))
+        assert parent.id is not None
+
+        child_ids: list[PydanticObjectId] = []
+        for i in range(1, 4):
+            child = await conversation_repo.create(CreateConversationDTO(
+                ticket_id=ticket_id, agent_id=uuid4(), client_id=client_id,
+                sequential_index=i, parent_id=parent.id,
+            ))
+            assert child.id is not None
+            child_ids.append(child.id)
+            await conversation_repo.add_child(parent.id, child.id)
+
+        updated_parent = await conversation_repo.get_by_id(parent.id)
+        assert updated_parent is not None
+        assert updated_parent.children_ids is not None
+        assert updated_parent.children_ids == child_ids
+
+    @pytest.mark.asyncio
+    async def test_add_child_nonexistent_parent_is_noop(
+        self, conversation_repo: ConversationRepository
+    ) -> None:
+        fake_parent = PydanticObjectId()
+        fake_child = PydanticObjectId()
+        await conversation_repo.add_child(fake_parent, fake_child)
+
+        doc = await conversation_repo.get_by_id(fake_parent)
+        assert doc is None
