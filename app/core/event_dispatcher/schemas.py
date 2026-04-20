@@ -52,6 +52,7 @@ class TicketAssigneeUpdatedEventSchema(DispatcherSchema):
     """
 
     ticket_id: PydanticObjectId
+    client_id: UUID
     new_agent_id: UUID
     reason: str | None = None
 
@@ -77,6 +78,7 @@ class TicketEscalatedEventSchema(DispatcherSchema):
     """
 
     ticket_id: PydanticObjectId
+    client_id: UUID
     new_agent_id: UUID | None = None
     new_agent_name: str | None = None
     new_level: str

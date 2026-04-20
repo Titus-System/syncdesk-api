@@ -11,11 +11,11 @@ from app.core.dependencies import WSResponseFactoryDep
 from app.core.logger import get_logger
 from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
 
-logger = get_logger("app.live_chat.router")
-
 from ..chat_manager import ChatConnection, get_chat_manager
 from ..dependencies import ConversationServiceDep
 from ..exceptions import ChatRoomNotFoundError, InvalidMessageError
+
+logger = get_logger("app.live_chat.router")
 
 
 def ensure_ws_request_id(ws: WebSocket) -> None:
