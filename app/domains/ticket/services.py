@@ -49,7 +49,11 @@ class TicketService:
         self.logger = get_logger("app.ticket.service")
 
     async def create_ticket(self, dto: CreateTicketDTO) -> CreateTicketResponseDTO:
-        client = await self._build_ticket_client(dto.client_id)
+        client = await self._build_ticket_client(
+            dto.client_id,
+            dto.company_id,
+            dto.company_name,
+        )
         ticket = Ticket(
             triage_id=dto.triage_id,
             type=dto.type,
@@ -131,7 +135,12 @@ class TicketService:
             self._record_status_transition(ticket_id, previous_status, status_update)
         return self._to_ticket_response(updated_ticket)
 
-    async def _build_ticket_client(self, client_id: UUID) -> TicketClient:
+    async def _build_ticket_client(
+        self,
+        client_id: UUID,
+        company_id: UUID,
+        company_name: str,
+    ) -> TicketClient:
         user = await self.user_service.get_by_id(client_id)
         if user is None:
             raise AppHTTPException(
@@ -141,8 +150,8 @@ class TicketService:
 
         client_name = user.name or user.username or user.email
         company = TicketCompany(
-            id=user.id,
-            name=f"{client_name} account",
+            id=company_id,
+            name=company_name,
         )
         return TicketClient(
             id=user.id,

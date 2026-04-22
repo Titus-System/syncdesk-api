@@ -31,6 +31,8 @@ class CreateTicketDTO(BaseDTO):
                 "description": "Erro ao emitir boleto",
                 "chat_ids": ["67f0c9b8e4b0b1a2c3d4e5f7"],
                 "client_id": "0f7d7c4f-7b5b-45cb-9d85-6f3c69f0b5d2",
+                "company_id": "a4b9e7f1-2e7d-4cc1-9c12-7c7c9d10b321",
+                "company_name": "ACME Finance",
             }
         }
     }
@@ -42,6 +44,8 @@ class CreateTicketDTO(BaseDTO):
     description: str
     chat_ids: list[PydanticObjectId] = Field(default_factory=list)
     client_id: UUID = Field(description="Identifier of the client user in the auth domain.")
+    company_id: UUID = Field(description="Identifier of the client company.")
+    company_name: str = Field(description="Company name snapshot for the ticket.")
 
 
 class CreateTicketResponseDTO(BaseModel):
