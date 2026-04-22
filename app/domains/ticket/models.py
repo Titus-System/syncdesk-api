@@ -52,8 +52,8 @@ class TicketHistory(BaseModel):
     name: str
     level: str
     assignment_date: datetime
-    exit_date: datetime
-    transfer_reason: str
+    exit_date: datetime | None = None
+    transfer_reason: str | None = None
 
 
 class Ticket(Document):
@@ -64,10 +64,10 @@ class Ticket(Document):
     status: TicketStatus
     creation_date: datetime
     description: str
-    chat_ids: list[PydanticObjectId]
-    agent_history: list[TicketHistory]
+    chat_ids: list[PydanticObjectId] = Field(default_factory=list)
+    agent_history: list[TicketHistory] = Field(default_factory=list)
     client: TicketClient
-    comments: list[TicketComment]
+    comments: list[TicketComment] = Field(default_factory=list)
 
     class Settings:
         name = "tickets"

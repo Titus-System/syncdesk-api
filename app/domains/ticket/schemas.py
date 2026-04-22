@@ -40,7 +40,7 @@ class CreateTicketDTO(BaseDTO):
     criticality: TicketCriticality
     product: str
     description: str
-    chat_ids: list[PydanticObjectId]
+    chat_ids: list[PydanticObjectId] = Field(default_factory=list)
     client_id: UUID = Field(description="Identifier of the client user in the auth domain.")
 
 
