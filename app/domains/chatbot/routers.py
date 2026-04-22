@@ -20,7 +20,7 @@ from app.domains.chatbot.swagger_utils import (
     webhook_swagger,
 )
 
-router = APIRouter(prefix="/chatbot", tags=["Chatbot URA"])
+router = APIRouter()
 
 
 @router.post(
