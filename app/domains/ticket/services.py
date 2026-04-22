@@ -6,6 +6,7 @@ from fastapi import status
 
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
+from app.core.schemas import PaginatedItems
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.metrics import tickets_created_total, tickets_status_changed_total
 from app.domains.ticket.models import Ticket, TicketClient, TicketCompany, TicketStatus
@@ -13,12 +14,10 @@ from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
-    PaginatedResponseMeta,
     TicketClientResponse,
     TicketCommentResponse,
     TicketCompanyResponse,
     TicketHistoryResponse,
-    TicketListResponse,
     TicketResponse,
     TicketSearchFiltersDTO,
     UpdateTicketDTO,
@@ -85,18 +84,13 @@ class TicketService:
             creation_date=created_ticket.creation_date,
         )
 
-    async def list_tickets(self, filters: TicketSearchFiltersDTO) -> TicketListResponse:
+    async def list_tickets(self, filters: TicketSearchFiltersDTO) -> PaginatedItems[TicketResponse]:
         tickets, total = await self.repo.list_tickets_paginated(filters)
-        pagination = PaginatedResponseMeta(
-            page=filters.page,
-            page_size=filters.page_size,
-            total=total,
-        )
-        return TicketListResponse(
+        return PaginatedItems[TicketResponse](
             items=[self._to_ticket_response(ticket) for ticket in tickets],
-            page=pagination.page,
-            page_size=pagination.page_size,
-            total=pagination.total,
+            page=filters.page,
+            limit=filters.limit,
+            total=total,
         )
 
     async def get_ticket(self, ticket_id: PydanticObjectId) -> TicketResponse:
@@ -116,10 +110,7 @@ class TicketService:
             self._validate_status_change(previous_status, status_update)
             ticket.status = status_update
         elif status_update is not None and not updates:
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ticket is already in the requested status.",
-            )
+            return self._to_ticket_response(ticket)
 
         for field_name, value in updates.items():
             setattr(ticket, field_name, value)
@@ -172,12 +163,6 @@ class TicketService:
     def _validate_status_change(
         self, previous_status: TicketStatus, new_status: TicketStatus
     ) -> None:
-        if new_status == previous_status:
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ticket is already in the requested status.",
-            )
-
         allowed_statuses = self.allowed_transitions.get(previous_status, set())
         if new_status not in allowed_statuses:
             raise AppHTTPException(

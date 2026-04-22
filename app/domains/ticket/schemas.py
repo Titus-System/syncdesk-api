@@ -11,13 +11,7 @@ from app.domains.ticket.models import TicketCriticality, TicketStatus, TicketTyp
 
 class PaginationDTO(BaseDTO):
     page: int = Field(default=1, ge=1, description="1-indexed page number.")
-    page_size: int = Field(default=20, ge=1, le=100, description="Items per page.")
-
-
-class PaginatedResponseMeta(BaseModel):
-    page: int = Field(..., ge=1, description="Current page number.")
-    page_size: int = Field(..., ge=1, le=100, description="Items returned per page.")
-    total: int = Field(..., ge=0, description="Total number of matching records.")
+    limit: int = Field(default=20, ge=1, le=100, description="Items per page.")
 
 
 class CreateTicketDTO(BaseDTO):
@@ -138,24 +132,6 @@ class TicketResponse(BaseModel):
     comments: list[TicketCommentResponse]
 
 
-class TicketListResponse(BaseModel):
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "items": [],
-                "page": 1,
-                "page_size": 20,
-                "total": 0,
-            }
-        }
-    }
-
-    items: list[TicketResponse]
-    page: int = Field(..., ge=1)
-    page_size: int = Field(..., ge=1, le=100)
-    total: int = Field(..., ge=0)
-
-
 class TicketQueueFiltersDTO(PaginationDTO):
     status: TicketStatus | None = Field(default=None, description="Filter queue items by status.")
     type: TicketType | None = Field(default=None, description="Filter queue items by ticket type.")
@@ -234,7 +210,7 @@ class TicketQueueItemResponse(BaseModel):
 class TicketQueueListResponse(BaseModel):
     items: list[TicketQueueItemResponse]
     page: int = Field(..., ge=1)
-    page_size: int = Field(..., ge=1, le=100)
+    limit: int = Field(..., ge=1, le=100)
     total: int = Field(..., ge=0)
 
 
