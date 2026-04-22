@@ -11,7 +11,14 @@ from app.domains.ticket.models import TicketCriticality, TicketStatus, TicketTyp
 
 class PaginationDTO(BaseDTO):
     page: int = Field(default=1, ge=1, description="1-indexed page number.")
-    limit: int = Field(default=20, ge=1, le=100, description="Items per page.")
+    page_size: int = Field(default=20, ge=1, le=100, description="Items per page.")
+
+
+class TicketPaginatedList[T](BaseModel):
+    total: int = Field(..., ge=0)
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1, le=100)
+    items: list[T]
 
 
 class CreateTicketDTO(BaseDTO):
@@ -38,8 +45,14 @@ class CreateTicketDTO(BaseDTO):
     description: str
     chat_ids: list[PydanticObjectId] = Field(default_factory=list)
     client_id: UUID = Field(description="Identifier of the client user in the auth domain.")
-    company_id: UUID = Field(description="Identifier of the client company.")
-    company_name: str = Field(description="Company name snapshot for the ticket.")
+    company_id: UUID | None = Field(
+        default=None,
+        description="Identifier of the client company. Falls back to the client identity when omitted.",
+    )
+    company_name: str | None = Field(
+        default=None,
+        description="Company name snapshot for the ticket. Falls back to a client-derived label when omitted.",
+    )
 
 
 class CreateTicketResponseDTO(BaseModel):
@@ -210,7 +223,7 @@ class TicketQueueItemResponse(BaseModel):
 class TicketQueueListResponse(BaseModel):
     items: list[TicketQueueItemResponse]
     page: int = Field(..., ge=1)
-    limit: int = Field(..., ge=1, le=100)
+    page_size: int = Field(..., ge=1, le=100)
     total: int = Field(..., ge=0)
 
 

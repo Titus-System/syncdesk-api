@@ -6,7 +6,6 @@ from starlette.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
-from app.core.schemas import PaginatedItems
 from app.domains.auth import CurrentUserSessionDep, require_permission
 from app.domains.ticket.dependencies import TicketServiceDep
 from app.domains.ticket.schemas import (
@@ -14,6 +13,7 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    TicketPaginatedList,
     TicketQueueFiltersDTO,
     TicketQueueListResponse,
     TicketResponse,
@@ -40,12 +40,12 @@ def _contract_not_implemented(feature_name: str) -> None:
 @ticket_router.get(
     "/",
     tags=["Tickets"],
-    response_model=GenericSuccessContent[PaginatedItems[TicketResponse]],
+    response_model=GenericSuccessContent[TicketPaginatedList[TicketResponse]],
     dependencies=[require_permission("ticket:read")],
     summary="List tickets",
     description=(
         "Official paginated ticket listing endpoint. "
-        "Returns items, page, limit, and total."
+        "Returns items, page, page_size, and total."
     ),
 )
 async def get_tickets(
@@ -61,10 +61,10 @@ async def get_tickets(
     - List tickets with the official paginated response contract.
 
     Query params:
-    - ticket_id, client_id, triage_id, status, criticality, type, product, page, limit
+    - ticket_id, client_id, triage_id, status, criticality, type, product, page, page_size
 
     Response:
-    - GenericSuccessContent[PaginatedItems[TicketResponse]]
+    - GenericSuccessContent[TicketPaginatedList[TicketResponse]]
 
     Permissions:
     - ticket:read
@@ -98,7 +98,7 @@ async def get_ticket_queue(
     - Expose the queue contract for tickets awaiting assignment or active handling.
 
     Query params:
-    - status, type, department_id, unassigned_only, level, assignee_id, page, limit
+    - status, type, department_id, unassigned_only, level, assignee_id, page, page_size
 
     Response:
     - GenericSuccessContent[TicketQueueListResponse]

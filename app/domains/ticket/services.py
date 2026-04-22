@@ -6,7 +6,6 @@ from fastapi import status
 
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
-from app.core.schemas import PaginatedItems
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.metrics import tickets_created_total, tickets_status_changed_total
 from app.domains.ticket.models import Ticket, TicketClient, TicketCompany, TicketStatus
@@ -18,6 +17,7 @@ from app.domains.ticket.schemas import (
     TicketCommentResponse,
     TicketCompanyResponse,
     TicketHistoryResponse,
+    TicketPaginatedList,
     TicketResponse,
     TicketSearchFiltersDTO,
     UpdateTicketDTO,
@@ -84,12 +84,12 @@ class TicketService:
             creation_date=created_ticket.creation_date,
         )
 
-    async def list_tickets(self, filters: TicketSearchFiltersDTO) -> PaginatedItems[TicketResponse]:
+    async def list_tickets(self, filters: TicketSearchFiltersDTO) -> TicketPaginatedList[TicketResponse]:
         tickets, total = await self.repo.list_tickets_paginated(filters)
-        return PaginatedItems[TicketResponse](
+        return TicketPaginatedList[TicketResponse](
             items=[self._to_ticket_response(ticket) for ticket in tickets],
             page=filters.page,
-            limit=filters.limit,
+            page_size=filters.page_size,
             total=total,
         )
 
@@ -129,8 +129,8 @@ class TicketService:
     async def _build_ticket_client(
         self,
         client_id: UUID,
-        company_id: UUID,
-        company_name: str,
+        company_id: UUID | None,
+        company_name: str | None,
     ) -> TicketClient:
         user = await self.user_service.get_by_id(client_id)
         if user is None:
@@ -141,8 +141,8 @@ class TicketService:
 
         client_name = user.name or user.username or user.email
         company = TicketCompany(
-            id=company_id,
-            name=company_name,
+            id=company_id if company_id is not None else user.id,
+            name=company_name if company_name is not None else f"{client_name} account",
         )
         return TicketClient(
             id=user.id,
