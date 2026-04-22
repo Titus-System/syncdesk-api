@@ -17,17 +17,10 @@ class TicketRepository:
 
     async def list_tickets_paginated(self, filters: TicketSearchFiltersDTO) -> tuple[list[Ticket], int]:
         query = self._build_query(filters)
-        page = filters.page
-        limit = filters.limit
-        offset = (page - 1) * limit
-
-        if not query:
-            total = await Ticket.find_all().count()
-            items = await Ticket.find_all().skip(offset).limit(limit).to_list()
-            return items, total
+        offset = (filters.page - 1) * filters.limit
 
         total = await Ticket.find(query).count()
-        items = await Ticket.find(query).skip(offset).limit(limit).to_list()
+        items = await Ticket.find(query).skip(offset).limit(filters.limit).to_list()
         return items, total
 
     async def get_by_id(self, ticket_id: PydanticObjectId) -> Ticket | None:
