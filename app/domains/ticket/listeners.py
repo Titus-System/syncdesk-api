@@ -20,7 +20,10 @@ logger = get_logger("app.ticket.listener")
 
 
 class TicketListener:
-    def __init__(self, service_factory: Callable[[AsyncSession], TicketService]) -> None:
+    def __init__(
+        self, 
+        service_factory: Callable[[AsyncSession], TicketService]
+    ) -> None:
         self._service_factory = service_factory
 
     @event_handler(TriageFinishedEventSchema)
@@ -45,7 +48,7 @@ def register_ticket_listener(dispatcher: EventDispatcher) -> None:
     ticket_repo = TicketRepository(mongo_db.get_db())
 
     def build_service(db: AsyncSession) -> TicketService:
-        return TicketService(ticket_repo, UserService(UserRepository(db)))
+        return TicketService(ticket_repo, UserService(UserRepository(db)), dispatcher)
 
     listener = TicketListener(build_service)
 

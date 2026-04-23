@@ -4,6 +4,9 @@ from uuid import UUID
 from beanie import PydanticObjectId
 from fastapi import status
 
+from app.core.event_dispatcher.enums import AppEvent
+from app.core.event_dispatcher.event_dispatcher import EventDispatcher
+from app.core.event_dispatcher.schemas import TicketCreatedEventSchema
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.domains.auth.services.user_service import UserService
@@ -42,9 +45,10 @@ class TicketService:
         TicketStatus.FINISHED: set(),
     }
 
-    def __init__(self, repository: TicketRepository, user_service: UserService):
+    def __init__(self, repository: TicketRepository, user_service: UserService, event_dispatcher: EventDispatcher):
         self.repo = repository
         self.user_service = user_service
+        self.dispatcher = event_dispatcher
         self.logger = get_logger("app.ticket.service")
 
     async def create_ticket(self, dto: CreateTicketDTO) -> CreateTicketResponseDTO:
@@ -67,7 +71,16 @@ class TicketService:
             comments=[],
         )
         created_ticket = await self.repo.create_ticket(ticket)
+        assert created_ticket.id is not None
 
+        await self.dispatcher.publish(
+            AppEvent.TICKET_CREATED,
+            TicketCreatedEventSchema(
+                ticket_id=created_ticket.id,
+                client_id=created_ticket.client.id,
+            ),
+        )
+        
         tickets_created_total.labels(source="api", criticality=dto.criticality.value).inc()
         self.logger.info(
             "Ticket created",
