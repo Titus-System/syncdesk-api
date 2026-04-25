@@ -3,11 +3,16 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 from app.core.schemas import BaseDTO
+<<<<<<< feat/realtime-chat-web
 from app.domains.chatbot.enums import AttendanceStatus
 from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
+=======
+from app.domains.chatbot.enums import AttendanceStatus, TriageState
+from app.domains.chatbot.models import *
+>>>>>>> develop
 
 # --- ENTRADA (Frontend -> Backend) ---
 class TriageInputDTO(BaseModel):
@@ -70,7 +75,7 @@ class TriageData(BaseModel):
 
 
 class InternalBotResponseDTO(BaseModel):
-    new_state: Any  # TriageState
+    new_state: TriageState | None
     response_text: str
     is_free_text: bool = False
     quick_replies: Optional[List[Dict[str, str]]] = None
@@ -122,5 +127,3 @@ class AttendanceResponse(BaseModel):
             self.status == AttendanceStatus.FINISHED and self.evaluation is None
         )
         return self
-
-

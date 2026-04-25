@@ -20,21 +20,23 @@ from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
-    TicketClientResponseDTO,
-    TicketCommentResponseDTO,
-    TicketCompanyResponseDTO,
-    TicketHistoryResponseDTO,
-    TicketResponseDTO,
+    TicketClientResponse,
+    TicketCommentResponse,
+    TicketCompanyResponse,
+    TicketHistoryResponse,
+    TicketPaginatedList,
+    TicketResponse,
     TicketSearchFiltersDTO,
-    UpdateTicketStatusDTO,
-    UpdateTicketStatusResponseDTO,
+    UpdateTicketDTO,
 )
 
 
 class TicketService:
     allowed_transitions: dict[TicketStatus, set[TicketStatus]] = {
-        TicketStatus.OPEN: {TicketStatus.IN_PROGRESS},
+        TicketStatus.OPEN: {TicketStatus.AWAITING_ASSIGNMENT, TicketStatus.IN_PROGRESS},
+        TicketStatus.AWAITING_ASSIGNMENT: {TicketStatus.IN_PROGRESS},
         TicketStatus.IN_PROGRESS: {
+            TicketStatus.AWAITING_ASSIGNMENT,
             TicketStatus.WAITING_FOR_PROVIDER,
             TicketStatus.WAITING_FOR_VALIDATION,
             TicketStatus.FINISHED,
@@ -53,13 +55,17 @@ class TicketService:
         self.logger = get_logger("app.ticket.service")
 
     async def create_ticket(self, dto: CreateTicketDTO) -> CreateTicketResponseDTO:
-        client = await self._build_ticket_client(dto.client_id)
+        client = await self._build_ticket_client(
+            dto.client_id,
+            dto.company_id,
+            dto.company_name,
+        )
         ticket = Ticket(
             triage_id=dto.triage_id,
             type=dto.type,
             criticality=dto.criticality,
             product=dto.product,
-            status=TicketStatus.OPEN,
+            status=TicketStatus.AWAITING_ASSIGNMENT,
             creation_date=datetime.now(UTC),
             description=dto.description,
             chat_ids=dto.chat_ids,
@@ -85,10 +91,16 @@ class TicketService:
             creation_date=created_ticket.creation_date,
         )
 
-    async def search_tickets(self, filters: TicketSearchFiltersDTO) -> list[TicketResponseDTO]:
-        tickets = await self.repo.search_tickets(filters)
-        return [self._to_ticket_response(ticket) for ticket in tickets]
+    async def list_tickets(self, filters: TicketSearchFiltersDTO) -> TicketPaginatedList[TicketResponse]:
+        tickets, total = await self.repo.list_tickets_paginated(filters)
+        return TicketPaginatedList[TicketResponse](
+            items=[self._to_ticket_response(ticket) for ticket in tickets],
+            page=filters.page,
+            page_size=filters.page_size,
+            total=total,
+        )
 
+<<<<<<< feat/realtime-chat-web
     async def get_ticket_by_id(self, ticket_id: PydanticObjectId) -> TicketResponseDTO:
         ticket = await self.repo.get_by_id(ticket_id)
 
@@ -166,11 +178,55 @@ class TicketService:
     ) -> UpdateTicketStatusResponseDTO:
         ticket = await self.repo.get_by_id(ticket_id)
         if ticket is None:
+=======
+    async def get_ticket(self, ticket_id: PydanticObjectId) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
+        return self._to_ticket_response(ticket)
+
+    async def update_ticket(
+        self, ticket_id: PydanticObjectId, dto: UpdateTicketDTO
+    ) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
+        updates = dto.model_dump(exclude_unset=True)
+        status_update = updates.pop("status", None)
+        previous_status: TicketStatus | None = None
+
+        if status_update is not None and status_update != ticket.status:
+            previous_status = ticket.status
+            self._validate_status_change(previous_status, status_update)
+            ticket.status = status_update
+        elif status_update is not None and not updates:
+            return self._to_ticket_response(ticket)
+
+        for field_name, value in updates.items():
+            setattr(ticket, field_name, value)
+
+        if status_update is None and not updates:
             raise AppHTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Ticket {ticket_id} does not exist.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one updatable field must be provided.",
             )
 
+        updated_ticket = await self.repo.save(ticket)
+        if previous_status is not None and status_update is not None:
+            self._record_status_transition(ticket_id, previous_status, status_update)
+        return self._to_ticket_response(updated_ticket)
+
+    async def _build_ticket_client(
+        self,
+        client_id: UUID,
+        company_id: UUID | None,
+        company_name: str | None,
+    ) -> TicketClient:
+        user = await self.user_service.get_by_id(client_id)
+        if user is None:
+>>>>>>> develop
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Client {client_id} does not exist.",
+            )
+
+<<<<<<< feat/realtime-chat-web
         current_agent_id = self._get_current_assigned_agent_id(ticket)
         actor_roles = actor.roles_names()
 
@@ -188,31 +244,54 @@ class TicketService:
 
         previous_status = ticket.status
         if dto.status == previous_status:
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ticket is already in the requested status.",
-            )
+=======
+        client_name = user.name or user.username or user.email
+        company = TicketCompany(
+            id=company_id if company_id is not None else user.id,
+            name=company_name if company_name is not None else f"{client_name} account",
+        )
+        return TicketClient(
+            id=user.id,
+            name=client_name,
+            email=user.email,
+            company=company,
+        )
 
+    async def _get_ticket_or_404(self, ticket_id: PydanticObjectId) -> Ticket:
+        ticket = await self.repo.get_by_id(ticket_id)
+        if ticket is None:
+>>>>>>> develop
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ticket {ticket_id} does not exist.",
+            )
+        return ticket
+
+    def _validate_status_change(
+        self, previous_status: TicketStatus, new_status: TicketStatus
+    ) -> None:
         allowed_statuses = self.allowed_transitions.get(previous_status, set())
-        if dto.status not in allowed_statuses:
+        if new_status not in allowed_statuses:
             raise AppHTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
                     f"Invalid status transition from '{previous_status.value}' "
-                    f"to '{dto.status.value}'."
+                    f"to '{new_status.value}'."
                 ),
             )
 
-        updated_ticket = await self.repo.update_status(ticket, dto.status)
-
+    def _record_status_transition(
+        self, ticket_id: PydanticObjectId, previous_status: TicketStatus, new_status: TicketStatus
+    ) -> None:
         tickets_status_changed_total.labels(
-            from_status=previous_status.value, to_status=dto.status.value
+            from_status=previous_status.value, to_status=new_status.value
         ).inc()
         self.logger.info(
             "Ticket status updated",
             extra={
                 "ticket_id": str(ticket_id),
                 "from": previous_status.value,
+<<<<<<< feat/realtime-chat-web
                 "to": dto.status.value,
                 "actor_user_id": str(actor.id),
                 "assigned_agent_id": str(current_agent_id),
@@ -262,6 +341,14 @@ class TicketService:
         assigned_agent_id, assigned_agent_name = self._resolve_assigned_agent(ticket)
 
         return TicketResponseDTO(
+=======
+                "to": new_status.value,
+            },
+        )
+
+    def _to_ticket_response(self, ticket: Ticket) -> TicketResponse:
+        return TicketResponse(
+>>>>>>> develop
             id=str(ticket.id),
             triage_id=str(ticket.triage_id),
             type=ticket.type,
@@ -272,7 +359,7 @@ class TicketService:
             description=ticket.description,
             chat_ids=[str(chat_id) for chat_id in ticket.chat_ids],
             agent_history=[
-                TicketHistoryResponseDTO(
+                TicketHistoryResponse(
                     agent_id=history.agent_id,
                     name=history.name,
                     level=history.level,
@@ -282,17 +369,17 @@ class TicketService:
                 )
                 for history in ticket.agent_history
             ],
-            client=TicketClientResponseDTO(
+            client=TicketClientResponse(
                 id=ticket.client.id,
                 name=ticket.client.name,
                 email=ticket.client.email,
-                company=TicketCompanyResponseDTO(
+                company=TicketCompanyResponse(
                     id=ticket.client.company.id,
                     name=ticket.client.company.name,
                 ),
             ),
             comments=[
-                TicketCommentResponseDTO(
+                TicketCommentResponse(
                     comment_id=comment.comment_id,
                     author=comment.author,
                     text=comment.text,

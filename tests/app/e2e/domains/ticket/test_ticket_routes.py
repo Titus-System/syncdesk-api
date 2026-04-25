@@ -1,0 +1,229 @@
+from uuid import uuid4
+
+import pytest
+from httpx import AsyncClient
+
+from tests.app.e2e.conftest import AuthActions
+
+
+async def _create_ticket(
+    client: AsyncClient,
+    auth: AuthActions,
+    admin_email: str,
+    admin_username: str,
+    client_email: str,
+    client_username: str,
+    product: str,
+) -> tuple[dict, dict[str, str]]:
+    tokens = await auth.register_and_login_admin(email=admin_email, username=admin_username)
+    headers = auth.auth_headers(tokens["access_token"])
+    created_user = await auth.register(email=client_email, username=client_username)
+
+    payload = {
+        "triage_id": "67f0c9b8e4b0b1a2c3d4e5f6",
+        "type": "issue",
+        "criticality": "high",
+        "product": product,
+        "description": "Erro ao emitir boleto",
+        "chat_ids": ["67f0c9b8e4b0b1a2c3d4e5f7"],
+        "client_id": created_user["id"],
+    }
+
+    response = await client.post("/api/tickets/", json=payload, headers=headers)
+    assert response.status_code == 201, response.text
+
+    return created_user, headers
+
+
+class TestTicketRoutes:
+    @pytest.mark.asyncio
+    async def test_create_ticket_uses_official_initial_status(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="ticket-admin-create@test.com",
+            username="ticketadmincreate",
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+        created_user = await auth.register(
+            email="ticket-client-create@test.com",
+            username="ticketclientcreate",
+        )
+
+        response = await client.post(
+            "/api/tickets/",
+            json={
+                "triage_id": "67f0c9b8e4b0b1a2c3d4e5f6",
+                "type": "issue",
+                "criticality": "medium",
+                "product": "Produto Status Inicial",
+                "description": "Primeiro ticket oficial",
+                "chat_ids": ["67f0c9b8e4b0b1a2c3d4e5f7"],
+                "client_id": created_user["id"],
+            },
+            headers=headers,
+        )
+        assert response.status_code == 201
+        assert response.json()["data"]["status"] == "awaiting_assignment"
+
+    @pytest.mark.asyncio
+    async def test_get_tickets_returns_official_paginated_shape(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-page@test.com",
+            admin_username="ticketadminpage",
+            client_email="ticket-client-page@test.com",
+            client_username="ticketclientpage",
+            product="Produto Contrato Paginado",
+        )
+
+        response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato Paginado"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        data = response.json()["data"]
+        assert isinstance(data, dict)
+        assert data["page"] == 1
+        assert data["page_size"] == 20
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["product"] == "Produto Contrato Paginado"
+        assert data["items"][0]["status"] == "awaiting_assignment"
+
+    @pytest.mark.asyncio
+    async def test_get_ticket_by_id_returns_single_ticket(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-byid@test.com",
+            admin_username="ticketadminbyid",
+            client_email="ticket-client-byid@test.com",
+            client_username="ticketclientbyid",
+            product="Produto Contrato ById",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato ById"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        response = await client.get(f"/api/tickets/{ticket_id}", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["data"]["id"] == ticket_id
+
+    @pytest.mark.asyncio
+    async def test_partial_patch_is_the_official_update_route(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-patch@test.com",
+            admin_username="ticketadminpatch",
+            client_email="ticket-client-patch@test.com",
+            client_username="ticketclientpatch",
+            product="Produto Contrato Patch",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato Patch"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        response = await client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={
+                "status": "in_progress",
+                "criticality": "medium",
+                "description": "Chamado assumido e em andamento.",
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["status"] == "in_progress"
+        assert data["criticality"] == "medium"
+        assert data["description"] == "Chamado assumido e em andamento."
+
+    @pytest.mark.asyncio
+    async def test_contract_stubs_return_501(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-stubs@test.com",
+            admin_username="ticketadminstubs",
+            client_email="ticket-client-stubs@test.com",
+            client_username="ticketclientstubs",
+            product="Produto Contrato Stubs",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato Stubs"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        queue_response = await client.get(
+            "/api/tickets/queue",
+            params={"status": "awaiting_assignment", "page": 1, "page_size": 20},
+            headers=headers,
+        )
+        assert queue_response.status_code == 501
+
+        assign_response = await client.post(
+            f"/api/tickets/{ticket_id}/assign",
+            json={"agent_id": str(uuid4()), "reason": "Primeira atribuicao"},
+            headers=headers,
+        )
+        assert assign_response.status_code == 501
+
+        escalate_response = await client.post(
+            f"/api/tickets/{ticket_id}/escalate",
+            json={
+                "target_department_id": "dept-finance",
+                "target_department_name": "Financeiro",
+                "target_level": "N2",
+                "reason": "Escalar",
+            },
+            headers=headers,
+        )
+        assert escalate_response.status_code == 501
+
+        transfer_response = await client.post(
+            f"/api/tickets/{ticket_id}/transfer",
+            json={"target_agent_id": str(uuid4()), "reason": "Transferir"},
+            headers=headers,
+        )
+        assert transfer_response.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_openapi_exposes_only_official_update_route(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        _ = auth
+        response = await client.get("/openapi.json")
+        assert response.status_code == 200
+
+        paths = response.json()["paths"]
+        assert "/api/tickets/" in paths
+        assert "/api/tickets/queue" in paths
+        assert "/api/tickets/{ticket_id}" in paths
+        assert "/api/tickets/{ticket_id}/assign" in paths
+        assert "/api/tickets/{ticket_id}/escalate" in paths
+        assert "/api/tickets/{ticket_id}/transfer" in paths
+        assert "/api/tickets/{ticket_id}/status" not in paths
