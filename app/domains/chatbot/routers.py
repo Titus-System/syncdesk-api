@@ -25,6 +25,7 @@ router = APIRouter(prefix="/chatbot", tags=["Chatbot URA"])
 
 @router.post(
     "/",
+    # dependencies=[require_permission("chatbot:create")],
     **create_attendance_swagger,
 )
 async def create_triage(
@@ -40,13 +41,14 @@ async def create_triage(
     )
     res = await service.create_attendance(c)
     return response.success(
-        data=res.model_dump(mode="json"),
+        data=res,
         status_code=status.HTTP_201_CREATED,
     )
 
 
 @router.get(
     "/",
+    # dependencies=[require_permission("chatbot:list")],
     **list_attendances_swagger,
 )
 async def get_attendances(
@@ -64,6 +66,7 @@ async def get_attendances(
 
 @router.post(
     "/webhook",
+    # dependencies=[require_permission("chatbot:interact")],
     **webhook_swagger,
 )
 async def send_message(
@@ -73,13 +76,14 @@ async def send_message(
 ) -> JSONResponse:
     data = await service.process_message(payload)
     return response.success(
-        data=data.model_dump(mode="json"),
+        data = data,
         status_code=status.HTTP_200_OK
     )
 
 
 @router.get(
     "/{triage_id}",
+    # dependencies=[require_permission("chatbot:read")],
     **get_attendance_swagger,
 )
 async def get_attendance(
@@ -97,6 +101,7 @@ async def get_attendance(
 
 @router.post(
     "/{triage_id}/evaluation",
+    # dependencies=[require_permission("chatbot:evaluate")],
     **evaluation_swagger,
 )
 async def set_evaluation(
@@ -111,3 +116,4 @@ async def set_evaluation(
         data=data.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
     )
+

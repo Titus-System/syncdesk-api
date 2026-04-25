@@ -68,8 +68,5 @@ class Ticket(Document):
     client: TicketClient
     comments: list[TicketComment]
 
-    assigned_agent_id: UUID | None = None
-    assigned_agent_name: str | None = None
-
     class Settings:
         name = "tickets"

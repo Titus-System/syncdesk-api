@@ -1,3 +1,4 @@
+# app/domains/chatbot/schemas.py
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -6,9 +7,9 @@ from typing import Optional, List, Dict, Any
 
 from app.core.schemas import BaseDTO
 from app.domains.chatbot.enums import AttendanceStatus
-from app.domains.chatbot.models import AttendanceClient, AttendanceResult, AttendanceEvaluation
+from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
 
-
+# --- ENTRADA (Frontend -> Backend) ---
 class TriageInputDTO(BaseModel):
     triage_id: str = Field(..., description="Identificador da sessão de triagem")
     step_id: str = Field(..., description="Etapa que está sendo respondida")
@@ -31,8 +32,6 @@ class TriageInputDTO(BaseModel):
     def check_answers(self) -> "TriageInputDTO":
         if self.answer_text is not None and self.answer_value is not None:
             raise ValueError("answer_text e answer_value não devem ser enviados juntos.")
-        if self.answer_text is None and self.answer_value is None:
-            raise ValueError("É necessário enviar answer_text ou answer_value.")
         return self
 
 
@@ -45,22 +44,20 @@ class CreateAttendanceDTO(BaseModel):
     evaluation: AttendanceEvaluation | None = None
 
 
+# --- SAÍDA (Backend -> Frontend) ---
 class QuickReply(BaseModel):
     label: str
     value: str
 
-
 class TriageInputDef(BaseModel):
     mode: str
     quick_replies: Optional[List[QuickReply]] = None
-
 
 class TriageResult(BaseModel):
     type: str
     id: str
     ticket_id: str | None = None
     chat_id: str | None = None
-
 
 class TriageData(BaseModel):
     triage_id: str
@@ -73,7 +70,7 @@ class TriageData(BaseModel):
 
 
 class InternalBotResponseDTO(BaseModel):
-    new_state: Any
+    new_state: Any  # TriageState
     response_text: str
     is_free_text: bool = False
     quick_replies: Optional[List[Dict[str, str]]] = None
@@ -119,13 +116,11 @@ class AttendanceResponse(BaseModel):
     evaluation: AttendanceEvaluation | None = None
     needs_evaluation: bool = False
 
-    current_step_id: str | None = None
-    current_message: str | None = None
-    current_input: TriageInputDef | None = None
-
     @model_validator(mode="after")
     def compute_needs_evaluation(self) -> "AttendanceResponse":
         self.needs_evaluation = (
             self.status == AttendanceStatus.FINISHED and self.evaluation is None
         )
         return self
+
+

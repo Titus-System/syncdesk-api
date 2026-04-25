@@ -8,7 +8,6 @@ from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.domains.auth.entities import UserWithRoles
 from app.domains.auth.services.user_service import UserService
-from app.domains.live_chat.services.conversation_service import ConversationService
 from app.domains.ticket.metrics import tickets_created_total, tickets_status_changed_total
 from app.domains.ticket.models import (
     Ticket,
@@ -48,20 +47,13 @@ class TicketService:
         TicketStatus.FINISHED: set(),
     }
 
-    def __init__(
-        self,
-        repository: TicketRepository,
-        user_service: UserService,
-        conversation_service: ConversationService,
-    ) -> None:
+    def __init__(self, repository: TicketRepository, user_service: UserService):
         self.repo = repository
         self.user_service = user_service
-        self.conversation_service = conversation_service
         self.logger = get_logger("app.ticket.service")
 
     async def create_ticket(self, dto: CreateTicketDTO) -> CreateTicketResponseDTO:
         client = await self._build_ticket_client(dto.client_id)
-
         ticket = Ticket(
             triage_id=dto.triage_id,
             type=dto.type,
@@ -74,17 +66,10 @@ class TicketService:
             agent_history=[],
             client=client,
             comments=[],
-            assigned_agent_id=None,
-            assigned_agent_name=None,
         )
-
         created_ticket = await self.repo.create_ticket(ticket)
 
-        tickets_created_total.labels(
-            source="api",
-            criticality=dto.criticality.value,
-        ).inc()
-
+        tickets_created_total.labels(source="api", criticality=dto.criticality.value).inc()
         self.logger.info(
             "Ticket created",
             extra={
@@ -102,12 +87,7 @@ class TicketService:
 
     async def search_tickets(self, filters: TicketSearchFiltersDTO) -> list[TicketResponseDTO]:
         tickets = await self.repo.search_tickets(filters)
-        result: list[TicketResponseDTO] = []
-
-        for ticket in tickets:
-            result.append(await self._to_ticket_response(ticket))
-
-        return result
+        return [self._to_ticket_response(ticket) for ticket in tickets]
 
     async def get_ticket_by_id(self, ticket_id: PydanticObjectId) -> TicketResponseDTO:
         ticket = await self.repo.get_by_id(ticket_id)
@@ -118,7 +98,7 @@ class TicketService:
                 detail=f"Ticket {ticket_id} does not exist.",
             )
 
-        return await self._to_ticket_response(ticket)
+        return self._to_ticket_response(ticket)
 
     async def take_ticket(
         self,
@@ -140,25 +120,16 @@ class TicketService:
                 detail="Only agents or admins can take tickets.",
             )
 
-        current_agent_id = await self._get_current_assigned_agent_id(ticket)
+        current_agent_id = self._get_current_assigned_agent_id(ticket)
 
         if current_agent_id is not None:
             if current_agent_id == actor.id:
-                return await self._to_ticket_response(ticket)
+                return self._to_ticket_response(ticket)
 
             raise AppHTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Este chamado já foi atribuído a outro atendente.",
             )
-
-        open_conversation = await self.conversation_service.get_latest_open_by_ticket_id(ticket_id)
-        if open_conversation is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Nenhuma conversa ativa foi encontrada para este chamado.",
-            )
-
-        await self.conversation_service.attribute_agent(open_conversation.id, actor.id)
 
         actor_name = actor.name or actor.username or actor.email
         actor_level = "admin" if "admin" in actor_roles else "agent"
@@ -175,22 +146,17 @@ class TicketService:
             )
         )
 
-        ticket = await self.repo.assign_ticket(
-            ticket=ticket,
-            agent_id=actor.id,
-            agent_name=actor_name,
-        )
+        await ticket.save()
 
         self.logger.info(
             "Ticket taken",
             extra={
                 "ticket_id": str(ticket_id),
                 "actor_user_id": str(actor.id),
-                "conversation_id": str(open_conversation.id),
             },
         )
 
-        return await self._to_ticket_response(ticket)
+        return self._to_ticket_response(ticket)
 
     async def update_status(
         self,
@@ -199,14 +165,13 @@ class TicketService:
         actor: UserWithRoles,
     ) -> UpdateTicketStatusResponseDTO:
         ticket = await self.repo.get_by_id(ticket_id)
-
         if ticket is None:
             raise AppHTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Ticket {ticket_id} does not exist.",
             )
 
-        current_agent_id = await self._get_current_assigned_agent_id(ticket)
+        current_agent_id = self._get_current_assigned_agent_id(ticket)
         actor_roles = actor.roles_names()
 
         if current_agent_id is None:
@@ -222,7 +187,6 @@ class TicketService:
             )
 
         previous_status = ticket.status
-
         if dto.status == previous_status:
             raise AppHTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -242,10 +206,8 @@ class TicketService:
         updated_ticket = await self.repo.update_status(ticket, dto.status)
 
         tickets_status_changed_total.labels(
-            from_status=previous_status.value,
-            to_status=dto.status.value,
+            from_status=previous_status.value, to_status=dto.status.value
         ).inc()
-
         self.logger.info(
             "Ticket status updated",
             extra={
@@ -265,7 +227,6 @@ class TicketService:
 
     async def _build_ticket_client(self, client_id: UUID) -> TicketClient:
         user = await self.user_service.get_by_id(client_id)
-
         if user is None:
             raise AppHTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -273,12 +234,10 @@ class TicketService:
             )
 
         client_name = user.name or user.username or user.email
-
         company = TicketCompany(
             id=user.id,
             name=f"{client_name} account",
         )
-
         return TicketClient(
             id=user.id,
             name=client_name,
@@ -286,51 +245,21 @@ class TicketService:
             company=company,
         )
 
-    async def _get_current_assigned_agent_id(self, ticket: Ticket) -> UUID | None:
-        if getattr(ticket, "assigned_agent_id", None) is not None:
-            return ticket.assigned_agent_id
-
-        open_conversation = await self.conversation_service.get_latest_open_by_ticket_id(ticket.id)
-        if open_conversation is not None and open_conversation.agent_id is not None:
-            return open_conversation.agent_id
-
+    def _get_current_assigned_agent_id(self, ticket: Ticket) -> UUID | None:
         if ticket.agent_history:
             return ticket.agent_history[-1].agent_id
-
         return None
 
-    async def _resolve_assigned_agent(
-        self,
-        ticket: Ticket,
+    def _resolve_assigned_agent(
+        self, ticket: Ticket
     ) -> tuple[UUID | None, str | None]:
-        direct_agent_id = getattr(ticket, "assigned_agent_id", None)
-        direct_agent_name = getattr(ticket, "assigned_agent_name", None)
-
-        if direct_agent_id is not None:
-            return direct_agent_id, direct_agent_name
-
-        open_conversation = await self.conversation_service.get_latest_open_by_ticket_id(ticket.id)
-        if open_conversation is not None and open_conversation.agent_id is not None:
-            current_agent_id = open_conversation.agent_id
-
-            for history in reversed(ticket.agent_history):
-                if history.agent_id == current_agent_id:
-                    return current_agent_id, history.name
-
-            user = await self.user_service.get_by_id(current_agent_id)
-            if user is not None:
-                return current_agent_id, user.name or user.username or user.email
-
-            return current_agent_id, None
-
         if ticket.agent_history:
-            last_history = ticket.agent_history[-1]
-            return last_history.agent_id, last_history.name
-
+            last = ticket.agent_history[-1]
+            return last.agent_id, last.name
         return None, None
 
-    async def _to_ticket_response(self, ticket: Ticket) -> TicketResponseDTO:
-        assigned_agent_id, assigned_agent_name = await self._resolve_assigned_agent(ticket)
+    def _to_ticket_response(self, ticket: Ticket) -> TicketResponseDTO:
+        assigned_agent_id, assigned_agent_name = self._resolve_assigned_agent(ticket)
 
         return TicketResponseDTO(
             id=str(ticket.id),

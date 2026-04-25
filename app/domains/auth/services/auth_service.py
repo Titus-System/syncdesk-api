@@ -94,23 +94,7 @@ class AuthService:
             login_total.labels(status="no_password").inc()
             raise UserPasswordNotConfiguredError()
 
-        try:
-            is_authenticated = self.passwordSecurity.verify_password(dto.password, password_hash)
-        except Exception:
-            if dto.password == password_hash:
-                new_password_hash = self.passwordSecurity.generate_password_hash(dto.password)
-                await self.user_service.update_password(user.id, new_password_hash)
-                is_authenticated = True
-
-                self.logger.warning(
-                    "Legacy plain-text password migrated during login",
-                    extra={"user_id": str(user.id), "email": user.email},
-                )
-            else:
-                login_total.labels(status="invalid_password").inc()
-                self.logger.warning("Failed login attempt", extra={"email": dto.email})
-                raise InvalidPasswordError(user.email) from None
-
+        is_authenticated = self.passwordSecurity.verify_password(dto.password, password_hash)
         if not is_authenticated:
             login_total.labels(status="invalid_password").inc()
             self.logger.warning("Failed login attempt", extra={"email": dto.email})
@@ -144,7 +128,9 @@ class AuthService:
         ):
             return False
 
+        # TODO: Implement log to track ip changes.
         if not session.matches_device_fingerprint(device_info):
+            # TODO: send email "Active session tried to be acessed from a different source."
             return False
 
         token_user_id = UUID(self.jwt_service.decode_refresh_token(dto.refresh_token)["sub"])

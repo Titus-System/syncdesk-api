@@ -71,7 +71,9 @@ class ConversationRepository:
         )
         return await query.to_list()
 
-    async def get_by_ticket_id(self, ticket_id: PydanticObjectId) -> list[Conversation]:
+    async def get_by_ticket_id(
+        self, ticket_id: PydanticObjectId
+    ) -> list[Conversation]:
         query: AggregationQuery[Conversation] = Conversation.aggregate(
             [
                 {"$match": {"ticket_id": ticket_id}},
@@ -82,6 +84,29 @@ class ConversationRepository:
             projection_model=Conversation,
         )
         return await query.to_list()
+
+    # async def get_paginated_messages(
+    #     self, ticket_id: PydanticObjectId, page: int, limit: int
+    # ) -> PaginatedMessages:
+    #     query: AggregationQuery[Conversation] = Conversation.aggregate(
+    #         [
+    #             {"$match": {"ticket_id": ticket_id}},
+    #             {"$sort": {"sequential_index": 1}},
+    #         ],
+    #         projection_model=Conversation,
+    #     )
+    #     conversations = await query.to_list()
+    #     messages: list[ChatMessage] = []
+    #     for c in conversations:
+    #         messages.extend(c.messages)
+    #     total = len(messages)
+    #     ceiling = max(len(messages) - (page - 1) * limit, 0)
+    #     floor = max(ceiling - limit, 0)
+    #     messages = messages[floor:ceiling]
+
+    #     return PaginatedMessages(
+    #         messages=messages, total=total, page=page, limit=limit, has_next=floor > 0
+    #     )
 
     async def get_paginated_messages(
         self, ticket_id: PydanticObjectId, page: int, limit: int
@@ -114,8 +139,7 @@ class ConversationRepository:
                                         {
                                             "$subtract": [
                                                 {"$max": [{"$subtract": ["$count", skip]}, 0]},
-                                                {
-                                                    "$max": [
+                                                {"$max": [
                                                         {"$subtract": ["$count", skip + limit]},
                                                         0,
                                                     ]
@@ -150,6 +174,75 @@ class ConversationRepository:
         return PaginatedMessages(
             messages=messages, total=total, page=page, limit=limit, has_next=floor > 0
         )
+
+    async def get_current_ticket_participants(
+        self, ticket_id: PydanticObjectId
+    ) -> tuple[UUID, ...] | None:
+        doc = await self.db["conversations"].find_one(
+            {"ticket_id": ticket_id},
+            {"client_id": 1, "agent_id": 1},
+            sort=[("sequential_index", -1)],
+        )
+        if doc is None:
+            return None
+        participants: list[UUID] = [
+            UUID(bytes=doc["client_id"])
+            if isinstance(doc["client_id"], bytes)
+            else UUID(doc["client_id"])
+        ]
+        agent_raw = doc.get("agent_id")
+        if agent_raw is not None:
+            participants.append(
+                UUID(bytes=agent_raw) if isinstance(agent_raw, bytes) else UUID(agent_raw)
+            )
+        return tuple(participants)
+
+    async def conversation_exists(self, id: PydanticObjectId) -> bool:
+        doc = await self.db["conversations"].find_one({"_id": id}, {"_id": 1})
+        return doc is not None
+
+    async def update(self, conversation: Conversation) -> Conversation | None:
+        return cast(Conversation | None, await conversation.save())
+
+    async def delete(self, id: PydanticObjectId) -> Conversation | None:
+        c = await Conversation.get(id)
+        if c:
+            await c.delete()
+        return c
+
+    async def add_message(self, id: PydanticObjectId, message: ChatMessage) -> None:
+        conversation = await Conversation.get(id)
+        if not conversation:
+            raise ValueError(f"Conversation {id} not found")
+        logger = get_logger("app.live_chat.repository")
+        try:
+            await conversation.update({"$push": {"messages": message.model_dump()}})
+        except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+            logger.error("MongoDB connection error on add_message", extra={"conversation_id": str(id)}, exc_info=e)
+            raise RuntimeError("Connection error when saving the message") from e
+        except WriteError as e:
+            logger.error("MongoDB write error on add_message", extra={"conversation_id": str(id)}, exc_info=e)
+            raise RuntimeError("Error persisting message") from e
+
+    async def attribute_agent(self, conversation_id: PydanticObjectId, agent_id: UUID) -> None:
+        conversation = await Conversation.get(conversation_id)
+        if not conversation:
+            raise ResourceNotFoundError("Conversation", str(conversation_id))
+        await conversation.update({"$set": {"agent_id": agent_id}})
+
+    async def get_latest_open_by_ticket_id(
+        self, ticket_id: PydanticObjectId
+    ) -> Conversation | None:
+        query: AggregationQuery[Conversation] = Conversation.aggregate(
+            [
+                {"$match": {"ticket_id": ticket_id, "finished_at": None}},
+                {"$sort": {"sequential_index": -1}},
+                {"$limit": 1},
+            ],
+            projection_model=Conversation,
+        )
+        results = await query.to_list()
+        return results[0] if results else None
 
     async def get_active_conversations(
         self, user_id: UUID, is_admin: bool, search: str | None = None
@@ -192,8 +285,15 @@ class ConversationRepository:
                             "in": "$$comment.text",
                         }
                     },
-                    "assigned_agent_id": "$ticket.assigned_agent_id",
-                    "assigned_agent_name": "$ticket.assigned_agent_name",
+                    "current_agent": {
+                        "$arrayElemAt": [{"$ifNull": ["$ticket.agent_history", []]}, -1]
+                    },
+                }
+            },
+            {
+                "$addFields": {
+                    "assigned_agent_id": "$current_agent.agent_id",
+                    "assigned_agent_name": "$current_agent.name",
                 }
             },
             {
@@ -271,67 +371,6 @@ class ConversationRepository:
             for doc in docs
         ]
 
-    async def get_current_ticket_participants(
-        self, ticket_id: PydanticObjectId
-    ) -> tuple[UUID, ...] | None:
-        doc = await self.db["conversations"].find_one(
-            {"ticket_id": ticket_id},
-            {"client_id": 1, "agent_id": 1},
-            sort=[("sequential_index", -1)],
-        )
-        if doc is None:
-            return None
-
-        participants: list[UUID] = [self._normalize_uuid_value(doc["client_id"])]
-
-        agent_raw = doc.get("agent_id")
-        if agent_raw is not None:
-            participants.append(self._normalize_uuid_value(agent_raw))
-
-        return tuple(participants)
-
-    async def conversation_exists(self, id: PydanticObjectId) -> bool:
-        doc = await self.db["conversations"].find_one({"_id": id}, {"_id": 1})
-        return doc is not None
-
-    async def update(self, conversation: Conversation) -> Conversation | None:
-        return cast(Conversation | None, await conversation.save())
-
-    async def delete(self, id: PydanticObjectId) -> Conversation | None:
-        c = await Conversation.get(id)
-        if c:
-            await c.delete()
-        return c
-
-    async def add_message(self, id: PydanticObjectId, message: ChatMessage) -> None:
-        conversation = await Conversation.get(id)
-        if not conversation:
-            raise ValueError(f"Conversation {id} not found")
-
-        logger = get_logger("app.live_chat.repository")
-        try:
-            await conversation.update({"$push": {"messages": message.model_dump()}})
-        except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-            logger.error(
-                "MongoDB connection error on add_message",
-                extra={"conversation_id": str(id)},
-                exc_info=e,
-            )
-            raise RuntimeError("Connection error when saving the message") from e
-        except WriteError as e:
-            logger.error(
-                "MongoDB write error on add_message",
-                extra={"conversation_id": str(id)},
-                exc_info=e,
-            )
-            raise RuntimeError("Error persisting message") from e
-
-    async def attribute_agent(self, conversation_id: PydanticObjectId, agent_id: UUID) -> None:
-        conversation = await Conversation.get(conversation_id)
-        if not conversation:
-            raise ResourceNotFoundError("Conversation", str(conversation_id))
-        await conversation.update({"$set": {"agent_id": agent_id}})
-
     @staticmethod
     def _normalize_uuid_value(value: Any) -> UUID | None:
         if value is None:
@@ -343,34 +382,3 @@ class ConversationRepository:
         if isinstance(value, (bytes, bytearray)):
             return UUID(bytes=bytes(value))
         return UUID(str(value))
-
-
-    async def get_latest_open_by_ticket_id(self, ticket_id: PydanticObjectId) -> Conversation | None:
-        query: AggregationQuery[Conversation] = Conversation.aggregate(
-              [
-                  {"$match": {"ticket_id": ticket_id, "finished_at": None}},
-                  {"$sort": {"sequential_index": -1}},
-                  {"$limit": 1},
-              ],
-              projection_model=Conversation,
-          )
-        results = await query.to_list()
-        return results[0] if results else None
-
-async def get_current_ticket_agent_id(
-    self, ticket_id: PydanticObjectId
-) -> UUID | None:
-    doc = await self.db["conversations"].find_one(
-        {"ticket_id": ticket_id},
-        {"agent_id": 1},
-        sort=[("sequential_index", -1)],
-    )
-
-    if doc is None:
-        return None
-
-    agent_raw = doc.get("agent_id")
-    if agent_raw is None:
-        return None
-
-    return UUID(bytes=agent_raw) if isinstance(agent_raw, bytes) else UUID(str(agent_raw))

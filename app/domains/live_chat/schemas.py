@@ -76,22 +76,6 @@ class ActiveConversationSummary(BaseModel):
     message_count: int = 0
     can_join_live: bool = False
     needs_assume: bool = False
-
-
-class ActiveConversationSummary(BaseModel):
-    chat_id: PydanticObjectId
-    ticket_id: PydanticObjectId
-    client_id: UUID
-    client_name: str
-    client_email: str | None = None
-    agent_id: UUID | None = None
-    started_at: datetime
-    finished_at: datetime | None = None
-    last_message: str | None = None
-    last_message_at: datetime | None = None
-    message_count: int = 0
-    can_join_live: bool = False
-    needs_assume: bool = False
     triage_id: str | None = None
     product: str | None = None
     description: str | None = None

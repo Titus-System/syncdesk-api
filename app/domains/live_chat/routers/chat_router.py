@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.core.dependencies import WSResponseFactoryDep
 from app.core.logger import get_logger
-from app.domains.auth import CurrentUserSessionWsDep
+from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
 
 logger = get_logger("app.live_chat.router")
 
@@ -27,7 +27,7 @@ chat_manager = get_chat_manager()
 chat_router = APIRouter()
 
 
-@chat_router.websocket("/room/{chat_id}")
+@chat_router.websocket("/room/{chat_id}", dependencies=[require_permission_ws("chat:add_message")])
 async def connect_to_conversation(
     chat_id: PydanticObjectId,
     ws: WebSocket,
@@ -37,12 +37,10 @@ async def connect_to_conversation(
     response: WSResponseFactoryDep,
 ) -> None:
     user = auth[0]
-    roles_names = user.roles_names()
-    is_admin = "admin" in roles_names
 
     chat = await service.get_by_id(chat_id)
 
-    if chat is None or not chat.is_opened() or (not is_admin and user.id not in chat.participants()):
+    if chat is None or not chat.is_opened() or user.id not in chat.participants():
         await ws.send_denial_response(
             JSONResponse(
                 status_code=403,
@@ -65,6 +63,7 @@ async def connect_to_conversation(
                 message = service.handle_message(chat_id, user.id, payload)
 
                 await service.add_message_to_conversation(chat_id, message)
+
                 await chat_manager.broadcast(chat_id, message)
 
             except WebSocketDisconnect:

@@ -44,10 +44,5 @@ class Attendance(Document):
     result: AttendanceResult | None = None
     evaluation: AttendanceEvaluation | None = None
 
-    current_step_id: str | None = None
-    current_message: str | None = None
-    current_input_mode: str | None = None
-    current_quick_replies: list[dict[str, str]] = Field(default_factory=list)
-
     class Settings:
         name = "attendances"

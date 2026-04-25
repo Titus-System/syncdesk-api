@@ -2,13 +2,11 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
 from pymongo import DESCENDING
-
-from app.domains.chatbot.schemas import CreateAttendanceDTO, AttendanceSearchFiltersDTO
-from app.domains.ticket.models import Ticket
-
+from app.domains.chatbot.schemas import AttendanceSearchFiltersDTO, CreateAttendanceDTO
 
 class ChatbotRepository:
     def __init__(self, db: AsyncIOMotorDatabase[dict[str, Any]]):
+        # Nomes das coleções mantidos como no banco de dados para evitar perda de referência
         self.attendances_collection = db["atendimentos"]
         self.tickets_collection = db["tickets"]
 
@@ -90,7 +88,3 @@ class ChatbotRepository:
 
         cursor = self.attendances_collection.find(query).sort("start_date", DESCENDING)
         return await cursor.to_list(length=None)
-
-    async def create_ticket(self, ticket: Ticket) -> Ticket:
-        created_ticket = await ticket.insert()
-        return created_ticket

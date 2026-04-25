@@ -71,10 +71,7 @@ async def create_ticket(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     result = await service.create_ticket(dto)
-    return response.success(
-        data=result.model_dump(mode="json"),
-        status_code=status.HTTP_201_CREATED,
-    )
+    return response.success(data=result.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
 @ticket_router.post(
@@ -112,7 +109,4 @@ async def update_ticket_status(
 ) -> JSONResponse:
     user = auth[0]
     result = await service.update_status(ticket_id, dto, user)
-    return response.success(
-        data=result.model_dump(mode="json"),
-        status_code=status.HTTP_200_OK,
-    )
+    return response.success(data=result.model_dump(mode="json"), status_code=status.HTTP_200_OK)

@@ -13,9 +13,8 @@ from app.domains.live_chat.schemas import (
     PaginatedMessages,
 )
 
-from ..metrics import chat_messages_total
 from ..repositories import ConversationRepository
-
+from ..metrics import chat_messages_total
 
 class ConversationService:
     def __init__(self, repository: ConversationRepository) -> None:
@@ -56,7 +55,9 @@ class ConversationService:
     async def attribute_agent(self, chat_id: PydanticObjectId, agent_id: UUID) -> None:
         return await self.repo.attribute_agent(chat_id, agent_id)
 
-    async def get_chats_from_ticket(self, ticket_id: PydanticObjectId) -> list[Conversation]:
+    async def get_chats_from_ticket(
+        self, ticket_id: PydanticObjectId
+    ) -> list[Conversation]:
         return await self.repo.get_by_ticket_id(ticket_id)
 
     async def get_paginated_messages(
@@ -124,9 +125,7 @@ class ConversationService:
 
         raise PermissionError("Conversation is already assigned to another agent.")
 
-    async def get_latest_open_by_ticket_id(self, ticket_id: PydanticObjectId) -> Conversation | None:
-      return await self.repo.get_latest_open_by_ticket_id(ticket_id)
-
-
-    async def get_current_ticket_agent_id(self, ticket_id: PydanticObjectId) -> UUID | None:
-      return await self.repo.get_current_ticket_agent_id(ticket_id)
+    async def get_latest_open_by_ticket_id(
+        self, ticket_id: PydanticObjectId
+    ) -> Conversation | None:
+        return await self.repo.get_latest_open_by_ticket_id(ticket_id)

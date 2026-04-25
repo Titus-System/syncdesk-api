@@ -45,24 +45,15 @@ async def get_active_conversations(
 @conversation_router.get(
     "/client/{client_id}",
     tags=["Conversations"],
+    dependencies=[require_permission("chat:read")],
     **get_client_convs_swagger,
 )
 async def get_client_conversations(
     client_id: UUID,
-    auth: CurrentUserSessionDep,
+    _auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    user = auth[0]
-    roles_names = user.roles_names()
-    is_privileged = "admin" in roles_names or "agent" in roles_names
-
-    if not is_privileged and user.id != client_id:
-        raise AppHTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not allowed to access conversations from another client.",
-        )
-
     chats = await service.get_from_client(client_id)
     if not chats:
         return response.success(data=[], status_code=status.HTTP_200_OK)
@@ -74,11 +65,12 @@ async def get_client_conversations(
 @conversation_router.get(
     "/ticket/{ticket_id}",
     tags=["Conversations"],
+    dependencies=[require_permission("chat:read")],
     **get_convs_swagger,
 )
 async def get_conversations(
     ticket_id: PydanticObjectId,
-    auth: CurrentUserSessionDep,
+    _auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
@@ -86,7 +78,7 @@ async def get_conversations(
     if not chats:
         return response.success(data=[], status_code=status.HTTP_200_OK)
 
-    user = auth[0]
+    user = _auth[0]
     roles_names = user.roles_names()
     if "admin" not in roles_names and user.id not in chats[-1].participants():
         raise AppHTTPException(
@@ -101,11 +93,12 @@ async def get_conversations(
 @conversation_router.get(
     "/ticket/{ticket_id}/messages",
     tags=["Conversations", "Messages"],
+    dependencies=[require_permission("chat:read")],
     **get_messages_swagger,
 )
 async def get_paginated_messages(
     ticket_id: PydanticObjectId,
-    auth: CurrentUserSessionDep,
+    _auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     response: ResponseFactoryDep,
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)."),
@@ -115,7 +108,7 @@ async def get_paginated_messages(
     if participants is None:
         return response.success(data=[], status_code=status.HTTP_200_OK)
 
-    user = auth[0]
+    user = _auth[0]
     roles_names = user.roles_names()
     if "admin" not in roles_names and user.id not in participants:
         raise AppHTTPException(
@@ -150,8 +143,7 @@ async def create_conversation(
 
         chat = await service.create(dto)
         return response.success(
-            data=chat.model_dump(mode="json"),
-            status_code=status.HTTP_201_CREATED,
+            data=chat.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
         )
 
     except ResourceAlreadyExistsError as e:
@@ -208,13 +200,13 @@ async def assume_conversation(
 async def set_conversation_agent(
     chat_id: PydanticObjectId,
     agent_id: UUID,
-    auth: CurrentUserSessionDep,
+    _auth: CurrentUserSessionDep,
     service: ConversationServiceDep,
     user_service: UserServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     try:
-        user = auth[0]
+        user = _auth[0]
 
         chat = await service.get_by_id(chat_id)
         if chat is None:
