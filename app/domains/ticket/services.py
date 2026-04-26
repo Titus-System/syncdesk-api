@@ -28,6 +28,8 @@ from app.domains.ticket.schemas import (
     TicketResponse,
     TicketSearchFiltersDTO,
     UpdateTicketDTO,
+    UpdateTicketStatusDTO,
+    UpdateTicketStatusResponseDTO,
 )
 
 
@@ -100,30 +102,16 @@ class TicketService:
             total=total,
         )
 
-<<<<<<< feat/realtime-chat-web
-    async def get_ticket_by_id(self, ticket_id: PydanticObjectId) -> TicketResponseDTO:
-        ticket = await self.repo.get_by_id(ticket_id)
-
-        if ticket is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Ticket {ticket_id} does not exist.",
-            )
-
+    async def get_ticket(self, ticket_id: PydanticObjectId) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
         return self._to_ticket_response(ticket)
 
     async def take_ticket(
         self,
         ticket_id: PydanticObjectId,
         actor: UserWithRoles,
-    ) -> TicketResponseDTO:
-        ticket = await self.repo.get_by_id(ticket_id)
-
-        if ticket is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Ticket {ticket_id} does not exist.",
-            )
+    ) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
 
         actor_roles = actor.roles_names()
         if "admin" not in actor_roles and "agent" not in actor_roles:
@@ -170,19 +158,6 @@ class TicketService:
 
         return self._to_ticket_response(ticket)
 
-    async def update_status(
-        self,
-        ticket_id: PydanticObjectId,
-        dto: UpdateTicketStatusDTO,
-        actor: UserWithRoles,
-    ) -> UpdateTicketStatusResponseDTO:
-        ticket = await self.repo.get_by_id(ticket_id)
-        if ticket is None:
-=======
-    async def get_ticket(self, ticket_id: PydanticObjectId) -> TicketResponse:
-        ticket = await self._get_ticket_or_404(ticket_id)
-        return self._to_ticket_response(ticket)
-
     async def update_ticket(
         self, ticket_id: PydanticObjectId, dto: UpdateTicketDTO
     ) -> TicketResponse:
@@ -209,8 +184,39 @@ class TicketService:
 
         updated_ticket = await self.repo.save(ticket)
         if previous_status is not None and status_update is not None:
-            self._record_status_transition(ticket_id, previous_status, status_update)
+            self._record_status_transition(
+                ticket_id, previous_status, status_update, actor=None
+            )
         return self._to_ticket_response(updated_ticket)
+
+    async def update_status(
+        self,
+        ticket_id: PydanticObjectId,
+        dto: UpdateTicketStatusDTO,
+        actor: UserWithRoles,
+    ) -> UpdateTicketStatusResponseDTO:
+        ticket = await self._get_ticket_or_404(ticket_id)
+
+        self._authorize_status_change(ticket, actor)
+
+        previous_status = ticket.status
+        if dto.status == previous_status:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket is already in the requested status.",
+            )
+
+        self._validate_status_change(previous_status, dto.status)
+        ticket.status = dto.status
+
+        updated_ticket = await self.repo.save(ticket)
+        self._record_status_transition(ticket_id, previous_status, dto.status, actor=actor)
+
+        return UpdateTicketStatusResponseDTO(
+            id=str(updated_ticket.id),
+            previous_status=previous_status,
+            current_status=updated_ticket.status,
+        )
 
     async def _build_ticket_client(
         self,
@@ -220,31 +226,11 @@ class TicketService:
     ) -> TicketClient:
         user = await self.user_service.get_by_id(client_id)
         if user is None:
->>>>>>> develop
             raise AppHTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Client {client_id} does not exist.",
             )
 
-<<<<<<< feat/realtime-chat-web
-        current_agent_id = self._get_current_assigned_agent_id(ticket)
-        actor_roles = actor.roles_names()
-
-        if current_agent_id is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="O chamado precisa ser assumido por um atendente antes de alterar o status.",
-            )
-
-        if "admin" not in actor_roles and actor.id != current_agent_id:
-            raise AppHTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Somente o atendente responsável ou um administrador pode alterar o status deste chamado.",
-            )
-
-        previous_status = ticket.status
-        if dto.status == previous_status:
-=======
         client_name = user.name or user.username or user.email
         company = TicketCompany(
             id=company_id if company_id is not None else user.id,
@@ -260,12 +246,27 @@ class TicketService:
     async def _get_ticket_or_404(self, ticket_id: PydanticObjectId) -> Ticket:
         ticket = await self.repo.get_by_id(ticket_id)
         if ticket is None:
->>>>>>> develop
             raise AppHTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Ticket {ticket_id} does not exist.",
             )
         return ticket
+
+    def _authorize_status_change(self, ticket: Ticket, actor: UserWithRoles) -> None:
+        current_agent_id = self._get_current_assigned_agent_id(ticket)
+        actor_roles = actor.roles_names()
+
+        if current_agent_id is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="O chamado precisa ser assumido por um atendente antes de alterar o status.",
+            )
+
+        if "admin" not in actor_roles and actor.id != current_agent_id:
+            raise AppHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Somente o atendente responsável ou um administrador pode alterar o status deste chamado.",
+            )
 
     def _validate_status_change(
         self, previous_status: TicketStatus, new_status: TicketStatus
@@ -281,48 +282,23 @@ class TicketService:
             )
 
     def _record_status_transition(
-        self, ticket_id: PydanticObjectId, previous_status: TicketStatus, new_status: TicketStatus
+        self,
+        ticket_id: PydanticObjectId,
+        previous_status: TicketStatus,
+        new_status: TicketStatus,
+        actor: UserWithRoles | None,
     ) -> None:
         tickets_status_changed_total.labels(
             from_status=previous_status.value, to_status=new_status.value
         ).inc()
-        self.logger.info(
-            "Ticket status updated",
-            extra={
-                "ticket_id": str(ticket_id),
-                "from": previous_status.value,
-<<<<<<< feat/realtime-chat-web
-                "to": dto.status.value,
-                "actor_user_id": str(actor.id),
-                "assigned_agent_id": str(current_agent_id),
-            },
-        )
-
-        return UpdateTicketStatusResponseDTO(
-            id=str(updated_ticket.id),
-            previous_status=previous_status,
-            current_status=updated_ticket.status,
-        )
-
-    async def _build_ticket_client(self, client_id: UUID) -> TicketClient:
-        user = await self.user_service.get_by_id(client_id)
-        if user is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Client {client_id} does not exist.",
-            )
-
-        client_name = user.name or user.username or user.email
-        company = TicketCompany(
-            id=user.id,
-            name=f"{client_name} account",
-        )
-        return TicketClient(
-            id=user.id,
-            name=client_name,
-            email=user.email,
-            company=company,
-        )
+        extra: dict[str, str] = {
+            "ticket_id": str(ticket_id),
+            "from": previous_status.value,
+            "to": new_status.value,
+        }
+        if actor is not None:
+            extra["actor_user_id"] = str(actor.id)
+        self.logger.info("Ticket status updated", extra=extra)
 
     def _get_current_assigned_agent_id(self, ticket: Ticket) -> UUID | None:
         if ticket.agent_history:
@@ -337,18 +313,10 @@ class TicketService:
             return last.agent_id, last.name
         return None, None
 
-    def _to_ticket_response(self, ticket: Ticket) -> TicketResponseDTO:
+    def _to_ticket_response(self, ticket: Ticket) -> TicketResponse:
         assigned_agent_id, assigned_agent_name = self._resolve_assigned_agent(ticket)
 
-        return TicketResponseDTO(
-=======
-                "to": new_status.value,
-            },
-        )
-
-    def _to_ticket_response(self, ticket: Ticket) -> TicketResponse:
         return TicketResponse(
->>>>>>> develop
             id=str(ticket.id),
             triage_id=str(ticket.triage_id),
             type=ticket.type,

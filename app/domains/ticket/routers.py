@@ -20,6 +20,8 @@ from app.domains.ticket.schemas import (
     TicketSearchFiltersDTO,
     TransferTicketRequest,
     UpdateTicketDTO,
+    UpdateTicketStatusDTO,
+    UpdateTicketStatusResponseDTO,
 )
 from app.schemas.response import GenericSuccessContent
 
@@ -190,7 +192,7 @@ async def get_ticket(
 @ticket_router.post(
     "/{ticket_id}/take",
     tags=["Tickets"],
-    response_model=GenericSuccessContent[TicketResponseDTO],
+    response_model=GenericSuccessContent[TicketResponse],
     dependencies=[require_permission("ticket:update_status")],
 )
 async def take_ticket(
@@ -249,6 +251,32 @@ async def update_ticket(
     - ticket.closed when the resulting status becomes finished
     """
     result = await service.update_ticket(ticket_id, dto)
+    return response.success(data=result.model_dump(mode="json"), status_code=status.HTTP_200_OK)
+
+
+@ticket_router.patch(
+    "/{ticket_id}/status",
+    tags=["Tickets"],
+    response_model=GenericSuccessContent[UpdateTicketStatusResponseDTO],
+    dependencies=[require_permission("ticket:update_status")],
+    include_in_schema=False,
+    summary="Update ticket status (legacy)",
+    description=(
+        "Status-only update endpoint preserved for backward compatibility. "
+        "Hidden from the OpenAPI schema; new clients should use PATCH /tickets/{ticket_id}. "
+        "Requires the ticket to have an assigned agent and that the actor is "
+        "either the assigned agent or an admin."
+    ),
+)
+async def update_ticket_status(
+    ticket_id: PydanticObjectId,
+    dto: UpdateTicketStatusDTO,
+    auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    user = auth[0]
+    result = await service.update_status(ticket_id, dto, user)
     return response.success(data=result.model_dump(mode="json"), status_code=status.HTTP_200_OK)
 
 

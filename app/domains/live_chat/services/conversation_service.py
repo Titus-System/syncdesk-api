@@ -79,7 +79,6 @@ class ConversationService:
         chat_messages_total.inc()
         await self.repo.add_message(chat_id, message)
 
-<<<<<<< feat/realtime-chat-web
     async def get_active_conversations(
         self, user: UserWithRoles, search: str | None = None
     ) -> list[ActiveConversationSummary]:
@@ -133,7 +132,7 @@ class ConversationService:
         self, ticket_id: PydanticObjectId
     ) -> Conversation | None:
         return await self.repo.get_latest_open_by_ticket_id(ticket_id)
-=======
+
     async def get_last_conversation_from_ticket(
         self, ticket_id: PydanticObjectId
     ) -> Conversation | None:
@@ -187,4 +186,3 @@ class ConversationService:
                 await self.repo.add_child(last_conv.id, new_conv.id)
 
         return new_conv
->>>>>>> develop

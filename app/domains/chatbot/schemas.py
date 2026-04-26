@@ -6,13 +6,8 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict
 
 from app.core.schemas import BaseDTO
-<<<<<<< feat/realtime-chat-web
-from app.domains.chatbot.enums import AttendanceStatus
-from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
-=======
 from app.domains.chatbot.enums import AttendanceStatus, TriageState
-from app.domains.chatbot.models import *
->>>>>>> develop
+from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
 
 # --- ENTRADA (Frontend -> Backend) ---
 class TriageInputDTO(BaseModel):
