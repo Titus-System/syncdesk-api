@@ -143,6 +143,8 @@ class TicketResponse(BaseModel):
     agent_history: list[TicketHistoryResponse]
     client: TicketClientResponse
     comments: list[TicketCommentResponse]
+    assigned_agent_id: UUID | None = None
+    assigned_agent_name: str | None = None
 
 
 class TicketQueueFiltersDTO(PaginationDTO):
@@ -250,6 +252,18 @@ class UpdateTicketDTO(BaseDTO):
     criticality: TicketCriticality | None = None
     product: str | None = None
     description: str | None = None
+
+
+class UpdateTicketStatusDTO(BaseDTO):
+    model_config = {"json_schema_extra": {"example": {"status": "in_progress"}}}
+
+    status: TicketStatus
+
+
+class UpdateTicketStatusResponseDTO(BaseModel):
+    id: str
+    previous_status: TicketStatus
+    current_status: TicketStatus
 
 
 class AssignTicketRequest(BaseDTO):

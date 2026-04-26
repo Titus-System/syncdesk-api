@@ -1,8 +1,8 @@
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
-from app.domains.chatbot.schemas import CreateAttendanceDTO
-from app.domains.ticket.models import Ticket
+from pymongo import DESCENDING
+from app.domains.chatbot.schemas import AttendanceSearchFiltersDTO, CreateAttendanceDTO
 
 class ChatbotRepository:
     def __init__(self, db: AsyncIOMotorDatabase[dict[str, Any]]):
@@ -44,7 +44,7 @@ class ChatbotRepository:
             query_id = ObjectId(attendance_id)
         except Exception:
             query_id = attendance_id
-            
+
         full_attendance["_id"] = query_id
 
         await self.attendances_collection.replace_one(
@@ -53,6 +53,38 @@ class ChatbotRepository:
             upsert=True
         )
 
-    async def create_ticket(self, ticket: Ticket) -> str:
-        created_ticket = await ticket.insert()
-        return str(created_ticket.id)
+    async def list_attendances(
+        self, filters: AttendanceSearchFiltersDTO
+    ) -> list[dict[str, Any]]:
+        query: dict[str, Any] = {}
+
+        if filters.client_id is not None:
+            query["client.id"] = str(filters.client_id)
+
+        if filters.client_name is not None:
+            query["client.name"] = {"$regex": filters.client_name, "$options": "i"}
+
+        if filters.status is not None:
+            query["status"] = filters.status.value
+
+        if filters.result_type is not None:
+            query["result.type"] = filters.result_type
+
+        if filters.start_date_from is not None or filters.start_date_to is not None:
+            date_query: dict[str, Any] = {}
+            if filters.start_date_from is not None:
+                date_query["$gte"] = filters.start_date_from.isoformat()
+            if filters.start_date_to is not None:
+                date_query["$lte"] = filters.start_date_to.isoformat()
+            query["start_date"] = date_query
+
+        if filters.has_evaluation is True:
+            query["evaluation"] = {"$ne": None}
+        elif filters.has_evaluation is False:
+            query["evaluation"] = None
+
+        if filters.rating is not None:
+            query["evaluation.rating"] = filters.rating
+
+        cursor = self.attendances_collection.find(query).sort("start_date", DESCENDING)
+        return await cursor.to_list(length=None)

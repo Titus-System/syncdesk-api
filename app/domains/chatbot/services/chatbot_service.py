@@ -1,29 +1,31 @@
-from typing import Any, cast
-from datetime import datetime, timezone
-from uuid import UUID, uuid4
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
 
-from beanie import PydanticObjectId
 from bson import ObjectId
 from fastapi import status
 
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
-from app.domains.chatbot.enums import TriageState
-from app.domains.chatbot.metrics import chatbot_messages_total, chatbot_tickets_total
-from app.domains.chatbot.schemas import (
-    AttendanceClient, CreateAttendanceDTO, TriageInputDTO, TriageData, TriageInputDef, 
-    QuickReply, TriageResult
-)
+from app.domains.chatbot.enums import AttendanceStatus, TriageState
 from app.domains.chatbot.fsm import ChatbotFSM
+from app.domains.chatbot.metrics import chatbot_messages_total
+from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
 from app.domains.chatbot.repositories.chatbot_repository import ChatbotRepository
-from app.domains.ticket.models import (
-    Ticket,
-    TicketClient,
-    TicketCompany,
-    TicketCriticality,
-    TicketStatus,
-    TicketType,
+from app.domains.chatbot.schemas import (
+    AttendanceResponse,
+    AttendanceSearchFiltersDTO,
+    CreateAttendanceDTO,
+    EvaluationRequest,
+    EvaluationResponse,
+    QuickReply,
+    TriageData,
+    TriageInputDef,
+    TriageInputDTO,
+    TriageResult,
+    TriageStepSchema,
 )
+
 
 class ChatbotService:
     def __init__(self, repository: ChatbotRepository) -> None:
@@ -35,9 +37,7 @@ class ChatbotService:
         client: AttendanceClient,
         triage_id: str | None = None,
     ) -> dict[str, Any]:
-        dto = CreateAttendanceDTO(
-            client = client
-        )
+        dto = CreateAttendanceDTO(client=client)
         final_triage_id = triage_id or str(ObjectId())
         return await self.repository.create_attendance(dto, final_triage_id)
 
@@ -59,16 +59,16 @@ class ChatbotService:
                 )
 
         attendance: dict[str, Any] = attendance_db
-        
+
         triage: list[dict[str, Any]] = attendance.get("triage", [])
         current_state: TriageState | None = None
-        
+
         if triage:
             last_interaction = triage[-1]
             step = last_interaction.get("step")
-            
+
             current_state = TriageState(step) if step is not None else None
-            
+
             if payload.answer_text is not None:
                 last_interaction["answer_text"] = payload.answer_text
             if payload.answer_value is not None:
@@ -87,159 +87,107 @@ class ChatbotService:
                 "question": bot_response.response_text,
                 "answer_text": None,
                 "answer_value": None,
-                "type": "free_text" if bot_response.is_free_text else "quick_replies"
+                "type": "free_text" if bot_response.is_free_text else "quick_replies",
             }
             triage.append(new_question)
 
         attendance["triage"] = triage
 
-        ticket_id = None
-        if bot_response.new_state == TriageState.TICKET_CREATED:
-            free_text_context = payload.answer_text if payload.answer_text else "Solicitação criada via URA"
-            ticket_id = await self._generate_ticket_with_context(attendance, free_text_context, payload.triage_id)
-            chatbot_tickets_total.inc()
-            self.logger.info("Ticket created from triage", extra={"triage_id": payload.triage_id, "ticket_id": ticket_id})
+        formatted_step_id = (
+            f"step_{bot_response.new_state.value.lower()}"
+            if bot_response.new_state
+            else "step_unknown"
+        )
 
-        # Resolve o format do step id atual (fallback para unknown se for nulo)
-        formatted_step_id = f"step_{bot_response.new_state.value.lower()}" if bot_response.new_state else "step_unknown"
-        
         if bot_response.is_finished:
+            is_ticket = bot_response.new_state == TriageState.TICKET_CREATED
             self.logger.info("Triage finished", extra={"triage_id": payload.triage_id})
-            attendance["status"] = "finished"
-            attendance["end_date"] = datetime.now(timezone.utc)
+            attendance["status"] = AttendanceStatus.FINISHED.value
+            attendance["end_date"] = datetime.now(UTC).isoformat()
             attendance["result"] = {
-                "type": "Ticket" if ticket_id else "Resolved",
-                "closure_message": bot_response.response_text
+                "type": "Ticket" if is_ticket else "Resolved",
+                "closure_message": bot_response.response_text,
             }
-            
+
             data = TriageData(
                 triage_id=payload.triage_id,
                 finished=True,
                 closure_message=bot_response.response_text,
-                result=TriageResult(type="Ticket", id=str(ticket_id)) if ticket_id else None
+                result=(
+                    TriageResult(type="Ticket", id=payload.triage_id) if is_ticket else None
+                ),
             )
         else:
             input_def = TriageInputDef(
                 mode="free_text" if bot_response.is_free_text else "quick_replies",
-                quick_replies=[QuickReply(label=op["label"], value=op["value"]) for op in bot_response.quick_replies] if bot_response.quick_replies else None
+                quick_replies=(
+                    [
+                        QuickReply(label=op["label"], value=op["value"])
+                        for op in bot_response.quick_replies
+                    ]
+                    if bot_response.quick_replies
+                    else None
+                ),
             )
             data = TriageData(
                 triage_id=payload.triage_id,
                 step_id=formatted_step_id,
                 message=bot_response.response_text,
-                input=input_def
+                input=input_def,
             )
 
         await self.repository.save_attendance(payload.triage_id, attendance)
 
         return data
 
-    async def _generate_ticket_with_context(self, attendance: dict[str, Any], free_text: str, attendance_id: str) -> str:
-        full_triage: list[dict[str, Any]] = attendance.get("triage", [])
-        
-        demand_type = "issue"
-        criticality = "high"
-        product = "N/A"
+    async def list_attendances(
+        self, filters: AttendanceSearchFiltersDTO
+    ) -> list[AttendanceResponse]:
+        docs = await self.repository.list_attendances(filters)
+        return [self._map_attendance_response(doc) for doc in docs]
 
-        for interaction in full_triage:
-            step = interaction.get("step")
-            value = interaction.get("answer_value")
+    async def get_attendance(self, triage_id: str) -> AttendanceResponse:
+        attendance = await self.repository.find_attendance(triage_id)
+        if attendance is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Attendance {triage_id} not found.",
+            )
+        return self._map_attendance_response(attendance)
 
-            if step == "A" and value in ["1", "2", "3"]:
-                if value == "1": product = "Product A"
-                elif value == "2": product = "Product B"
-                elif value == "3": product = "Product C"
-            
-            if step == "A" and value == "5":
-                demand_type = "access"
-                criticality = "medium"
+    async def set_evaluation(
+        self, triage_id: str, payload: EvaluationRequest
+    ) -> EvaluationResponse:
+        attendance = await self.repository.find_attendance(triage_id)
+        if attendance is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Attendance {triage_id} not found.",
+            )
 
-            if step == "B":
-                if value == "1":
-                    demand_type = "issue"
-                    criticality = "high"
-                elif value == "2":
-                    demand_type = "new_feature"
-                    criticality = "low"
+        if attendance.get("status") != AttendanceStatus.FINISHED.value:
+            raise AppHTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Attendance is not finished yet.",
+            )
 
-        triage_object_id = self._resolve_triage_object_id(attendance, attendance_id)
-        ticket = Ticket(
-            triage_id=triage_object_id,
-            type=self._resolve_ticket_type(demand_type),
-            criticality=self._resolve_ticket_criticality(criticality),
-            product=product,
-            status=TicketStatus.OPEN,
-            creation_date=datetime.now(timezone.utc),
-            description=free_text,
-            chat_ids=[],
-            agent_history=[],
-            client=self._build_ticket_client(attendance),
-            comments=[],
+        if attendance.get("evaluation") is not None:
+            raise AppHTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Attendance has already been evaluated.",
+            )
+
+        evaluated_at = datetime.now(UTC)
+        attendance["evaluation"] = AttendanceEvaluation(rating=payload.rating).model_dump(mode="json")
+        attendance["end_date"] = attendance.get("end_date") or evaluated_at.isoformat()
+
+        await self.repository.save_attendance(triage_id, attendance)
+
+        return EvaluationResponse(
+            triage_id=triage_id,
+            rating=payload.rating,
+            evaluated_at=evaluated_at,
         )
-
-        return await self.repository.create_ticket(ticket)
-
-    def _resolve_triage_object_id(self, attendance: dict[str, Any], attendance_id: str) -> PydanticObjectId:
-        raw_id = attendance.get("_id", attendance_id)
-        if isinstance(raw_id, ObjectId):
-            return cast(PydanticObjectId, raw_id)
-
-        raw_id_str = str(raw_id)
-        if ObjectId.is_valid(raw_id_str):
-            return cast(PydanticObjectId, ObjectId(raw_id_str))
-
-        raise ValueError("triage_id must be a valid ObjectId to create a ticket")
-
-    def _resolve_ticket_type(self, demand_type: str) -> TicketType:
-        if demand_type == TicketType.ACCESS.value:
-            return TicketType.ACCESS
-        if demand_type == TicketType.NEW_FEATURE.value:
-            return TicketType.NEW_FEATURE
-        return TicketType.ISSUE
-
-    def _resolve_ticket_criticality(self, criticality: str) -> TicketCriticality:
-        if criticality == TicketCriticality.MEDIUM.value:
-            return TicketCriticality.MEDIUM
-        if criticality == TicketCriticality.LOW.value:
-            return TicketCriticality.LOW
-        return TicketCriticality.HIGH
-
-    def _build_ticket_client(self, attendance: dict[str, Any]) -> TicketClient:
-        client_data_raw = attendance.get("client", {})
-        client_data: dict[str, Any] = (
-            cast(dict[str, Any], client_data_raw) if isinstance(client_data_raw, dict) else {}
-        )
-
-        client_id = self._parse_uuid(client_data.get("id")) or uuid4()
-        company_data_raw = client_data.get("company", {})
-        company_data: dict[str, Any] = (
-            cast(dict[str, Any], company_data_raw) if isinstance(company_data_raw, dict) else {}
-        )
-        company_id = self._parse_uuid(company_data.get("id")) or client_id
-
-        email_raw = client_data.get("email")
-        email = str(email_raw) if email_raw else f"{client_id}@unknown.local"
-        name_raw = client_data.get("name") or client_data.get("username") or email
-        name = str(name_raw)
-        company_name_raw = company_data.get("name")
-        company_name = str(company_name_raw) if company_name_raw else "Unknown company"
-
-        return TicketClient(
-            id=client_id,
-            name=name,
-            email=email,
-            company=TicketCompany(id=company_id, name=company_name),
-        )
-
-    def _parse_uuid(self, raw_value: Any) -> UUID | None:
-        if raw_value is None:
-            return None
-        if isinstance(raw_value, UUID):
-            return raw_value
-        try:
-            return UUID(str(raw_value))
-        except (TypeError, ValueError):
-            return None
 
     def _build_attendance_client_from_payload(self, payload: TriageInputDTO) -> AttendanceClient:
         missing_fields: list[str] = []
@@ -272,4 +220,46 @@ class ChatbotService:
             id=client_id,
             name=client_name,
             email=client_email,
+        )
+
+    def _map_attendance_response(self, attendance: dict[str, Any]) -> AttendanceResponse:
+        client_raw = attendance["client"]
+        result_raw = attendance.get("result")
+        evaluation_raw = attendance.get("evaluation")
+
+        start_date_raw = attendance["start_date"]
+        start_date = (
+            datetime.fromisoformat(start_date_raw)
+            if isinstance(start_date_raw, str)
+            else start_date_raw
+        )
+        end_date_raw = attendance.get("end_date")
+        end_date = (
+            datetime.fromisoformat(end_date_raw)
+            if isinstance(end_date_raw, str)
+            else end_date_raw
+        )
+
+        return AttendanceResponse(
+            triage_id=str(attendance["_id"]),
+            status=AttendanceStatus(attendance["status"]),
+            start_date=start_date,
+            end_date=end_date,
+            client=AttendanceClient(
+                id=UUID(client_raw["id"]) if isinstance(client_raw.get("id"), str) else client_raw["id"],
+                name=client_raw["name"],
+                email=client_raw["email"],
+                company=client_raw.get("company"),
+            ),
+            triage=[
+                TriageStepSchema(
+                    step=item["step"],
+                    question=item["question"],
+                    answer_value=item.get("answer_value"),
+                    answer_text=item.get("answer_text"),
+                )
+                for item in attendance.get("triage", [])
+            ],
+            result=AttendanceResult(**result_raw) if result_raw else None,
+            evaluation=AttendanceEvaluation(**evaluation_raw) if evaluation_raw else None,
         )

@@ -57,7 +57,11 @@ async def get_attendances(
     service: ChatbotServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    ...
+    data = await service.list_attendances(filters)
+    return response.success(
+        data=[item.model_dump(mode="json") for item in data],
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post(
@@ -88,7 +92,11 @@ async def get_attendance(
     service: ChatbotServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    ...
+    data = await service.get_attendance(triage_id)
+    return response.success(
+        data=data.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post(
@@ -97,10 +105,15 @@ async def get_attendance(
     **evaluation_swagger,
 )
 async def set_evaluation(
+    triage_id: str,
     auth: CurrentUserSessionDep,
     payload: EvaluationRequest,
     service: ChatbotServiceDep,
     response: ResponseFactoryDep,
 ) -> JSONResponse:
-    ...
+    data = await service.set_evaluation(triage_id, payload)
+    return response.success(
+        data=data.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 

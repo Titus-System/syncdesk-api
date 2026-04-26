@@ -31,8 +31,8 @@ class AttendanceEvaluation(BaseModel):
 class Triage(BaseModel):
     step: str
     question: str
-    answer_value: str
-    answer_text: str
+    answer_value: str | None = None
+    answer_text: str | None = None
 
 
 class Attendance(Document):

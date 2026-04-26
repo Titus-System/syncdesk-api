@@ -7,7 +7,7 @@ from typing import Optional, List, Dict
 
 from app.core.schemas import BaseDTO
 from app.domains.chatbot.enums import AttendanceStatus, TriageState
-from app.domains.chatbot.models import *
+from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
 
 # --- ENTRADA (Frontend -> Backend) ---
 class TriageInputDTO(BaseModel):
@@ -56,6 +56,8 @@ class TriageInputDef(BaseModel):
 class TriageResult(BaseModel):
     type: str
     id: str
+    ticket_id: str | None = None
+    chat_id: str | None = None
 
 class TriageData(BaseModel):
     triage_id: str

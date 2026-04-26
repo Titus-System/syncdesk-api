@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
@@ -19,7 +20,7 @@ from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.live_chat.exceptions import ParentConversationNotFoundError
 
 from ..entities import ChatMessage, ChatParticipants, Conversation
-from ..schemas import CreateConversationDTO, PaginatedMessages
+from ..schemas import ActiveConversationSummary, CreateConversationDTO, PaginatedMessages
 
 
 class ConversationRepository:
@@ -226,3 +227,156 @@ class ConversationRepository:
         if not conversation:
             raise ResourceNotFoundError("Conversation", str(conversation_id))
         await conversation.update({"$set": {"agent_id": agent_id}})
+
+    async def get_latest_open_by_ticket_id(
+        self, ticket_id: PydanticObjectId
+    ) -> Conversation | None:
+        query: AggregationQuery[Conversation] = Conversation.aggregate(
+            [
+                {"$match": {"ticket_id": ticket_id, "finished_at": None}},
+                {"$sort": {"sequential_index": -1}},
+                {"$limit": 1},
+            ],
+            projection_model=Conversation,
+        )
+        results = await query.to_list()
+        return results[0] if results else None
+
+    async def get_active_conversations(
+        self, user_id: UUID, is_admin: bool, search: str | None = None
+    ) -> list[ActiveConversationSummary]:
+        match_stage: dict[str, Any] = {"finished_at": None}
+
+        if not is_admin:
+            match_stage["$or"] = [
+                {"agent_id": Binary(user_id.bytes, subtype=4)},
+                {"agent_id": str(user_id)},
+                {"agent_id": None},
+            ]
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match_stage},
+            {
+                "$lookup": {
+                    "from": "tickets",
+                    "localField": "ticket_id",
+                    "foreignField": "_id",
+                    "as": "ticket",
+                }
+            },
+            {"$unwind": {"path": "$ticket", "preserveNullAndEmptyArrays": True}},
+            {
+                "$addFields": {
+                    "last_message_obj": {"$arrayElemAt": [{"$ifNull": ["$messages", []]}, -1]},
+                    "message_count": {"$size": {"$ifNull": ["$messages", []]}},
+                    "client_name": {"$ifNull": ["$ticket.client.name", "Usuário"]},
+                    "client_email": "$ticket.client.email",
+                    "description": "$ticket.description",
+                    "product": "$ticket.product",
+                    "triage_id": {"$toString": "$ticket.triage_id"},
+                    "ticket_status": "$ticket.status",
+                    "created_at": "$ticket.creation_date",
+                    "notes": {
+                        "$map": {
+                            "input": {"$ifNull": ["$ticket.comments", []]},
+                            "as": "comment",
+                            "in": "$$comment.text",
+                        }
+                    },
+                    "current_agent": {
+                        "$arrayElemAt": [{"$ifNull": ["$ticket.agent_history", []]}, -1]
+                    },
+                }
+            },
+            {
+                "$addFields": {
+                    "assigned_agent_id": "$current_agent.agent_id",
+                    "assigned_agent_name": "$current_agent.name",
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "chat_id": "$_id",
+                    "ticket_id": "$ticket_id",
+                    "client_id": "$client_id",
+                    "client_name": "$client_name",
+                    "client_email": "$client_email",
+                    "agent_id": "$agent_id",
+                    "started_at": "$started_at",
+                    "finished_at": "$finished_at",
+                    "last_message": "$last_message_obj.content",
+                    "last_message_at": "$last_message_obj.timestamp",
+                    "message_count": "$message_count",
+                    "triage_id": "$triage_id",
+                    "product": "$product",
+                    "description": "$description",
+                    "notes": "$notes",
+                    "ticket_status": "$ticket_status",
+                    "assigned_agent_id": "$assigned_agent_id",
+                    "assigned_agent_name": "$assigned_agent_name",
+                    "created_at": "$created_at",
+                }
+            },
+        ]
+
+        if search:
+            regex = {"$regex": re.escape(search), "$options": "i"}
+            pipeline.append(
+                {
+                    "$match": {
+                        "$or": [
+                            {"client_name": regex},
+                            {"client_email": regex},
+                            {"last_message": regex},
+                            {"description": regex},
+                            {"product": regex},
+                            {"notes": {"$elemMatch": regex}},
+                        ]
+                    }
+                }
+            )
+
+        pipeline.append({"$sort": {"last_message_at": -1, "created_at": -1, "started_at": -1}})
+
+        cursor: AsyncIOMotorCommandCursor[dict[str, Any]] = (
+            Conversation.get_motor_collection().aggregate(pipeline)
+        )
+        docs = await cursor.to_list(length=None)
+
+        return [
+            ActiveConversationSummary(
+                chat_id=doc["chat_id"],
+                ticket_id=doc["ticket_id"],
+                client_id=self._normalize_uuid_value(doc["client_id"]),
+                client_name=doc.get("client_name") or "Usuário",
+                client_email=doc.get("client_email"),
+                agent_id=self._normalize_uuid_value(doc.get("agent_id")),
+                started_at=doc["started_at"],
+                finished_at=doc.get("finished_at"),
+                last_message=doc.get("last_message"),
+                last_message_at=doc.get("last_message_at"),
+                message_count=doc.get("message_count", 0),
+                triage_id=doc.get("triage_id"),
+                product=doc.get("product"),
+                description=doc.get("description"),
+                notes=doc.get("notes", []),
+                ticket_status=doc.get("ticket_status"),
+                assigned_agent_id=self._normalize_uuid_value(doc.get("assigned_agent_id")),
+                assigned_agent_name=doc.get("assigned_agent_name"),
+                created_at=doc.get("created_at"),
+            )
+            for doc in docs
+        ]
+
+    @staticmethod
+    def _normalize_uuid_value(value: Any) -> UUID | None:
+        if value is None:
+            return None
+        if isinstance(value, UUID):
+            return value
+        if isinstance(value, Binary):
+            return UUID(bytes=bytes(value))
+        if isinstance(value, (bytes, bytearray)):
+            return UUID(bytes=bytes(value))
+        return UUID(str(value))
