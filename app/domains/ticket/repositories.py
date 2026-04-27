@@ -1,10 +1,12 @@
 from typing import Any
+from uuid import UUID
 
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.domains.ticket.models import Ticket, TicketComment
-from app.domains.ticket.schemas import TicketSearchFiltersDTO
+from app.domains.ticket.schemas import TicketQueueFiltersDTO, TicketSearchFiltersDTO
+from app.domains.ticket.schemas import TicketSearchFiltersDTO, UpdateTicketCommentDTO
 
 
 class TicketRepository:
@@ -23,6 +25,10 @@ class TicketRepository:
         items = await Ticket.find(query).skip(offset).limit(filters.page_size).to_list()
         return items, total
 
+    async def list_queue_candidates(self, filters: TicketQueueFiltersDTO) -> list[Ticket]:
+        query = self._build_queue_query(filters)
+        return await Ticket.find(query).to_list()
+
     async def get_by_id(self, ticket_id: PydanticObjectId) -> Ticket | None:
         return await Ticket.get(ticket_id)
 
@@ -37,6 +43,40 @@ class TicketRepository:
         if ticket is None:
             return None
         ticket.comments.append(comment)
+        await ticket.save()
+        return comment
+    
+    async def update_ticket_comment(
+        self, ticket_id: PydanticObjectId, comment_id: UUID, dto: UpdateTicketCommentDTO
+    ) -> TicketComment | None:
+        updates = dto.model_dump(exclude_unset=True)
+        if not updates:
+            return None
+        ticket = await Ticket.get(ticket_id)
+        if ticket is None:
+            return None
+        comment = next(
+            (c for c in ticket.comments if c.comment_id == comment_id), None
+        )
+        if comment is None:
+            return None
+        for field_name, value in updates.items():
+            setattr(comment, field_name, value)
+        await ticket.save()
+        return comment
+
+    async def delete_ticket_comment(
+        self, ticket_id: PydanticObjectId, comment_id: UUID
+    ) -> TicketComment | None:
+        ticket = await Ticket.get(ticket_id)
+        if ticket is None:
+            return None
+        comment = next(
+            (c for c in ticket.comments if c.comment_id == comment_id), None
+        )
+        if comment is None:
+            return None
+        ticket.comments = [c for c in ticket.comments if c.comment_id != comment_id]
         await ticket.save()
         return comment
 
@@ -58,5 +98,27 @@ class TicketRepository:
             query["type"] = filters.type.value
         if filters.product is not None:
             query["product"] = filters.product
+
+        return query
+
+    @staticmethod
+    def _build_queue_query(filters: TicketQueueFiltersDTO) -> dict[str, Any]:
+        query: dict[str, Any] = {}
+
+        if filters.status is not None:
+            query["status"] = filters.status.value
+        else:
+            query["status"] = {
+                "$in": [
+                    "open",
+                    "awaiting_assignment",
+                    "in_progress",
+                    "waiting_for_provider",
+                    "waiting_for_validation",
+                ]
+            }
+
+        if filters.type is not None:
+            query["type"] = filters.type.value
 
         return query
