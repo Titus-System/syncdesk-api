@@ -51,6 +51,12 @@ class UserRepository:
         rows = result.scalars().all()
         return [self._to_entity(row) for row in rows]
 
+    async def get_all_with_roles(self) -> list[UserWithRoles]:
+        stmt = select(UserModel).options(selectinload(UserModel.roles))
+        result = await self.db.execute(stmt)
+        rows = result.scalars().all()
+        return [self._to_user_with_roles(row) for row in rows]
+
     async def get_by_id(self, id: UUID) -> UserEntity | None:
         stmt = select(UserModel).where(UserModel.id == id)
         res = await self.db.execute(stmt)

@@ -9,9 +9,16 @@ from app.core.event_dispatcher.event_dispatcher import EventDispatcher
 from app.core.event_dispatcher.schemas import TicketCreatedEventSchema
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
+from app.domains.auth.entities import UserWithRoles
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.metrics import tickets_created_total, tickets_status_changed_total
-from app.domains.ticket.models import Ticket, TicketClient, TicketComment, TicketCompany, TicketStatus
+from app.domains.ticket.models import (
+    Ticket,
+    TicketClient,
+    TicketCompany,
+    TicketHistory,
+    TicketStatus,
+)
 from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
@@ -25,6 +32,8 @@ from app.domains.ticket.schemas import (
     TicketResponse,
     TicketSearchFiltersDTO,
     UpdateTicketDTO,
+    UpdateTicketStatusDTO,
+    UpdateTicketStatusResponseDTO,
 )
 
 
@@ -111,6 +120,58 @@ class TicketService:
         ticket = await self._get_ticket_or_404(ticket_id)
         return self._to_ticket_response(ticket)
 
+    async def take_ticket(
+        self,
+        ticket_id: PydanticObjectId,
+        actor: UserWithRoles,
+    ) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
+
+        actor_roles = actor.roles_names()
+        if "admin" not in actor_roles and "agent" not in actor_roles:
+            raise AppHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only agents or admins can take tickets.",
+            )
+
+        current_agent_id = self._get_current_assigned_agent_id(ticket)
+
+        if current_agent_id is not None:
+            if current_agent_id == actor.id:
+                return self._to_ticket_response(ticket)
+
+            raise AppHTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Este chamado já foi atribuído a outro atendente.",
+            )
+
+        actor_name = actor.name or actor.username or actor.email
+        actor_level = "admin" if "admin" in actor_roles else "agent"
+        now = datetime.now(UTC)
+
+        ticket.agent_history.append(
+            TicketHistory(
+                agent_id=actor.id,
+                name=actor_name,
+                level=actor_level,
+                assignment_date=now,
+                exit_date=now,
+                transfer_reason="Assumido via fila",
+            )
+        )
+
+        await ticket.save()
+
+        self.logger.info(
+            "Ticket taken",
+            extra={
+                "ticket_id": str(ticket_id),
+                "actor_user_id": str(actor.id),
+            },
+        )
+
+        return self._to_ticket_response(ticket)
+
     async def update_ticket(
         self, ticket_id: PydanticObjectId, dto: UpdateTicketDTO
     ) -> TicketResponse:
@@ -137,7 +198,9 @@ class TicketService:
 
         updated_ticket = await self.repo.save(ticket)
         if previous_status is not None and status_update is not None:
-            self._record_status_transition(ticket_id, previous_status, status_update)
+            self._record_status_transition(
+                ticket_id, previous_status, status_update, actor=None
+            )
         return self._to_ticket_response(updated_ticket)
     
     async def add_comment_to_ticket(
@@ -171,6 +234,35 @@ class TicketService:
             )
             for comment in ticket.comments
         ]
+
+    async def update_status(
+        self,
+        ticket_id: PydanticObjectId,
+        dto: UpdateTicketStatusDTO,
+        actor: UserWithRoles,
+    ) -> UpdateTicketStatusResponseDTO:
+        ticket = await self._get_ticket_or_404(ticket_id)
+
+        self._authorize_status_change(ticket, actor)
+
+        previous_status = ticket.status
+        if dto.status == previous_status:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket is already in the requested status.",
+            )
+
+        self._validate_status_change(previous_status, dto.status)
+        ticket.status = dto.status
+
+        updated_ticket = await self.repo.save(ticket)
+        self._record_status_transition(ticket_id, previous_status, dto.status, actor=actor)
+
+        return UpdateTicketStatusResponseDTO(
+            id=str(updated_ticket.id),
+            previous_status=previous_status,
+            current_status=updated_ticket.status,
+        )
 
     async def _build_ticket_client(
         self,
@@ -206,6 +298,22 @@ class TicketService:
             )
         return ticket
 
+    def _authorize_status_change(self, ticket: Ticket, actor: UserWithRoles) -> None:
+        current_agent_id = self._get_current_assigned_agent_id(ticket)
+        actor_roles = actor.roles_names()
+
+        if current_agent_id is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="O chamado precisa ser assumido por um atendente antes de alterar o status.",
+            )
+
+        if "admin" not in actor_roles and actor.id != current_agent_id:
+            raise AppHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Somente o atendente responsável ou um administrador pode alterar o status deste chamado.",
+            )
+
     def _validate_status_change(
         self, previous_status: TicketStatus, new_status: TicketStatus
     ) -> None:
@@ -220,21 +328,40 @@ class TicketService:
             )
 
     def _record_status_transition(
-        self, ticket_id: PydanticObjectId, previous_status: TicketStatus, new_status: TicketStatus
+        self,
+        ticket_id: PydanticObjectId,
+        previous_status: TicketStatus,
+        new_status: TicketStatus,
+        actor: UserWithRoles | None,
     ) -> None:
         tickets_status_changed_total.labels(
             from_status=previous_status.value, to_status=new_status.value
         ).inc()
-        self.logger.info(
-            "Ticket status updated",
-            extra={
-                "ticket_id": str(ticket_id),
-                "from": previous_status.value,
-                "to": new_status.value,
-            },
-        )
+        extra: dict[str, str] = {
+            "ticket_id": str(ticket_id),
+            "from": previous_status.value,
+            "to": new_status.value,
+        }
+        if actor is not None:
+            extra["actor_user_id"] = str(actor.id)
+        self.logger.info("Ticket status updated", extra=extra)
+
+    def _get_current_assigned_agent_id(self, ticket: Ticket) -> UUID | None:
+        if ticket.agent_history:
+            return ticket.agent_history[-1].agent_id
+        return None
+
+    def _resolve_assigned_agent(
+        self, ticket: Ticket
+    ) -> tuple[UUID | None, str | None]:
+        if ticket.agent_history:
+            last = ticket.agent_history[-1]
+            return last.agent_id, last.name
+        return None, None
 
     def _to_ticket_response(self, ticket: Ticket) -> TicketResponse:
+        assigned_agent_id, assigned_agent_name = self._resolve_assigned_agent(ticket)
+
         return TicketResponse(
             id=str(ticket.id),
             triage_id=str(ticket.triage_id),
@@ -275,4 +402,6 @@ class TicketService:
                 )
                 for comment in ticket.comments
             ],
+            assigned_agent_id=assigned_agent_id,
+            assigned_agent_name=assigned_agent_name,
         )
