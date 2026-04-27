@@ -20,6 +20,9 @@ class UserService:
     async def get_all(self) -> list[User]:
         return await self.repo.get_all()
 
+    async def get_all_with_roles(self) -> list[UserWithRoles]:
+        return await self.repo.get_all_with_roles()
+
     async def get_by_id(self, id: UUID) -> User | None:
         return await self.repo.get_by_id(id)
 

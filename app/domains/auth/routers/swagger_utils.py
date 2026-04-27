@@ -590,22 +590,22 @@ create_user_swagger: dict[str, Any] = {
 
 list_users_responses: dict[int | str, dict[str, Any]] = {
     200: {
-        "description": "List of all users retrieved successfully.",
-        "model": GenericSuccessContent[list[User]],
+        "description": "List of all users retrieved successfully, including assigned roles.",
+        "model": GenericSuccessContent[list[UserWithRoles]],
     },
 }
 
 list_users_swagger: dict[str, Any] = {
     "summary": "List all users",
-    "description": "Returns every user registered in the system.",
-    "response_model": GenericSuccessContent[list[User]],
+    "description": "Returns every user registered in the system, including their assigned roles.",
+    "response_model": GenericSuccessContent[list[UserWithRoles]],
     "responses": list_users_responses,
 }
 
 get_user_responses: dict[int | str, dict[str, Any]] = {
     200: {
-        "description": "User retrieved successfully.",
-        "model": GenericSuccessContent[User],
+        "description": "User retrieved successfully, including assigned roles.",
+        "model": GenericSuccessContent[UserWithRoles],
     },
     404: {
         "description": "User not found.",
@@ -615,8 +615,11 @@ get_user_responses: dict[int | str, dict[str, Any]] = {
 
 get_user_swagger: dict[str, Any] = {
     "summary": "Get a user by ID",
-    "description": "Returns a single user by their UUID. Returns 404 if not found.",
-    "response_model": GenericSuccessContent[User],
+    "description": (
+        "Returns a single user by their UUID, including assigned roles. "
+        "Returns 404 if not found."
+    ),
+    "response_model": GenericSuccessContent[UserWithRoles],
     "responses": get_user_responses,
 }
 
