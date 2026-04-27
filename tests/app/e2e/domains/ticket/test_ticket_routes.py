@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -14,7 +15,7 @@ async def _create_ticket(
     client_email: str,
     client_username: str,
     product: str,
-) -> tuple[dict, dict[str, str]]:
+) -> tuple[dict[str, Any], dict[str, str]]:
     tokens = await auth.register_and_login_admin(email=admin_email, username=admin_username)
     headers = auth.auth_headers(tokens["access_token"])
     created_user = await auth.register(email=client_email, username=client_username)
@@ -226,4 +227,149 @@ class TestTicketRoutes:
         assert "/api/tickets/{ticket_id}/assign" in paths
         assert "/api/tickets/{ticket_id}/escalate" in paths
         assert "/api/tickets/{ticket_id}/transfer" in paths
+        assert "/api/tickets/{ticket_id}/comments" in paths
         assert "/api/tickets/{ticket_id}/status" not in paths
+
+    @pytest.mark.asyncio
+    async def test_comment_on_ticket_returns_created_comment(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-comment@test.com",
+            admin_username="ticketadmincomment",
+            client_email="ticket-client-comment@test.com",
+            client_username="ticketclientcomment",
+            product="Produto Contrato Comment",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato Comment"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        response = await client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            json={"text": "Cliente confirmou o erro.", "internal": False},
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        data = response.json()["data"]
+        assert data["text"] == "Cliente confirmou o erro."
+        assert data["internal"] is False
+        assert data["author"] == "ticketadmincomment"
+        assert "comment_id" in data
+        assert "date" in data
+
+    @pytest.mark.asyncio
+    async def test_get_ticket_comments_returns_added_comments_in_order(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-listcomments@test.com",
+            admin_username="ticketadminlistcomments",
+            client_email="ticket-client-listcomments@test.com",
+            client_username="ticketclientlistcomments",
+            product="Produto Contrato ListComments",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato ListComments"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        first = await client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            json={"text": "Primeiro comentário interno.", "internal": True},
+            headers=headers,
+        )
+        assert first.status_code == 201, first.text
+        second = await client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            json={"text": "Segundo comentário público.", "internal": False},
+            headers=headers,
+        )
+        assert second.status_code == 201, second.text
+
+        response = await client.get(
+            f"/api/tickets/{ticket_id}/comments",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        data: list[dict[str, Any]] = response.json()["data"]
+        assert isinstance(data, list)
+        assert len(data) == 2
+        assert data[0]["text"] == "Primeiro comentário interno."
+        assert data[0]["internal"] is True
+        assert data[1]["text"] == "Segundo comentário público."
+        assert data[1]["internal"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_comments_returns_empty_list_for_ticket_without_comments(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-nocomments@test.com",
+            admin_username="ticketadminnocomments",
+            client_email="ticket-client-nocomments@test.com",
+            client_username="ticketclientnocomments",
+            product="Produto Contrato NoComments",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato NoComments"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        response = await client.get(
+            f"/api/tickets/{ticket_id}/comments",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"] == []
+
+    @pytest.mark.asyncio
+    async def test_comment_on_missing_ticket_returns_404(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="ticket-admin-comment404@test.com",
+            username="ticketadmincomment404",
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        missing_id = "67f0c9b8e4b0b1a2c3d4e5ff"
+        response = await client.post(
+            f"/api/tickets/{missing_id}/comments",
+            json={"text": "Comentário em ticket inexistente.", "internal": False},
+            headers=headers,
+        )
+        assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_get_comments_for_missing_ticket_returns_404(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="ticket-admin-listcomments404@test.com",
+            username="ticketadminlistcomments404",
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        missing_id = "67f0c9b8e4b0b1a2c3d4e5ff"
+        response = await client.get(
+            f"/api/tickets/{missing_id}/comments",
+            headers=headers,
+        )
+        assert response.status_code == 404, response.text

@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from beanie import PydanticObjectId
 from fastapi import status
 
+from app.core.event_dispatcher.enums import AppEvent
+from app.core.event_dispatcher.event_dispatcher import EventDispatcher
+from app.core.event_dispatcher.schemas import TicketCreatedEventSchema
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.domains.auth.entities import UserWithRoles
@@ -15,9 +18,11 @@ from app.domains.ticket.models import (
     TicketCompany,
     TicketHistory,
     TicketStatus,
+    TicketComment,
 )
 from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
+    AddTicketCommentDTO,
     CreateTicketDTO,
     CreateTicketResponseDTO,
     TicketClientResponse,
@@ -51,9 +56,10 @@ class TicketService:
         TicketStatus.FINISHED: set(),
     }
 
-    def __init__(self, repository: TicketRepository, user_service: UserService):
+    def __init__(self, repository: TicketRepository, user_service: UserService, event_dispatcher: EventDispatcher):
         self.repo = repository
         self.user_service = user_service
+        self.dispatcher = event_dispatcher
         self.logger = get_logger("app.ticket.service")
 
     async def create_ticket(self, dto: CreateTicketDTO) -> CreateTicketResponseDTO:
@@ -76,7 +82,16 @@ class TicketService:
             comments=[],
         )
         created_ticket = await self.repo.create_ticket(ticket)
+        assert created_ticket.id is not None
 
+        await self.dispatcher.publish(
+            AppEvent.TICKET_CREATED,
+            TicketCreatedEventSchema(
+                ticket_id=created_ticket.id,
+                client_id=created_ticket.client.id,
+            ),
+        )
+        
         tickets_created_total.labels(source="api", criticality=dto.criticality.value).inc()
         self.logger.info(
             "Ticket created",
@@ -188,6 +203,38 @@ class TicketService:
                 ticket_id, previous_status, status_update, actor=None
             )
         return self._to_ticket_response(updated_ticket)
+    
+    async def add_comment_to_ticket(
+        self,
+        ticket_id: PydanticObjectId,
+        author_name: str,
+        dto: AddTicketCommentDTO
+    ) -> TicketComment | None:
+        tc = TicketComment(
+            comment_id=uuid4(),
+            author = author_name,
+            text = dto.text,
+            date = datetime.now(UTC),
+            internal = dto.internal
+        )
+        return await self.repo.add_ticket_comment(ticket_id, tc)
+
+    async def list_ticket_comments(
+        self, ticket_id: PydanticObjectId
+    ) -> list[TicketCommentResponse] | None:
+        ticket = await self.repo.get_by_id(ticket_id)
+        if ticket is None:
+            return None
+        return [
+            TicketCommentResponse(
+                comment_id=comment.comment_id,
+                author=comment.author,
+                text=comment.text,
+                date=comment.date,
+                internal=comment.internal,
+            )
+            for comment in ticket.comments
+        ]
 
     async def update_status(
         self,

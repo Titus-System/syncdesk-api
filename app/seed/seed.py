@@ -71,6 +71,7 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "ticket:assign", "description": "Assign tickets"},
         {"name": "ticket:transfer", "description": "Transfer tickets"},
         {"name": "ticket:escalate", "description": "Escalate tickets"},
+        {"name": "ticket:comment", "description": "Adds comment to ticket"},
         # Company
         {"name": "company:create", "description": "Create companies"},
         {"name": "company:read", "description": "Read company details"},
@@ -116,7 +117,7 @@ async def seed_role_permissions(session: AsyncSession) -> None:
             "product:read",
             "product:list",
         ],
-        "client": ["session:%", "chat:%", "password:change", "company:read", "product:read", "product:list"],
+        "client": ["session:%", "chat:%", "password:change", "company:read", "product:read", "product:list", "ticket:read"],
     }
 
     for role_name, patterns in relations.items():
