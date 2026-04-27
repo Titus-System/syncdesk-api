@@ -479,3 +479,214 @@ class TestTicketRoutes:
             headers=headers,
         )
         assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_update_ticket_comment_persists_partial_changes(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-updatecomment@test.com",
+            admin_username="ticketadminupdatecomment",
+            client_email="ticket-client-updatecomment@test.com",
+            client_username="ticketclientupdatecomment",
+            product="Produto Contrato UpdateComment",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato UpdateComment"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        post_response = await client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            json={"text": "Texto original.", "internal": True},
+            headers=headers,
+        )
+        assert post_response.status_code == 201, post_response.text
+        comment_id = post_response.json()["data"]["comment_id"]
+
+        patch_response = await client.patch(
+            f"/api/tickets/{ticket_id}/comments/{comment_id}",
+            json={"text": "Texto editado."},
+            headers=headers,
+        )
+        assert patch_response.status_code == 200, patch_response.text
+        data = patch_response.json()["data"]
+        assert data["comment_id"] == comment_id
+        assert data["text"] == "Texto editado."
+        assert data["internal"] is True
+
+        list_comments = await client.get(
+            f"/api/tickets/{ticket_id}/comments",
+            headers=headers,
+        )
+        comments: list[dict[str, Any]] = list_comments.json()["data"]
+        assert len(comments) == 1
+        assert comments[0]["text"] == "Texto editado."
+        assert comments[0]["internal"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_ticket_comment_returns_404_for_missing_comment(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-updatecomment404@test.com",
+            admin_username="ticketadminupdatecomment404",
+            client_email="ticket-client-updatecomment404@test.com",
+            client_username="ticketclientupdatecomment404",
+            product="Produto Contrato UpdateComment404",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={
+                "client_id": created_user["id"],
+                "product": "Produto Contrato UpdateComment404",
+            },
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        response = await client.patch(
+            f"/api/tickets/{ticket_id}/comments/{uuid4()}",
+            json={"text": "Não existe."},
+            headers=headers,
+        )
+        assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_update_ticket_comment_returns_404_for_missing_ticket(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="ticket-admin-updatecommentnoticket@test.com",
+            username="ticketadminupdatecommentnoticket",
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        response = await client.patch(
+            f"/api/tickets/67f0c9b8e4b0b1a2c3d4e5ff/comments/{uuid4()}",
+            json={"text": "Ticket inexistente."},
+            headers=headers,
+        )
+        assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_delete_ticket_comment_removes_from_listing(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-deletecomment@test.com",
+            admin_username="ticketadmindeletecomment",
+            client_email="ticket-client-deletecomment@test.com",
+            client_username="ticketclientdeletecomment",
+            product="Produto Contrato DeleteComment",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato DeleteComment"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        first = await client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            json={"text": "Comentário a ser removido.", "internal": False},
+            headers=headers,
+        )
+        assert first.status_code == 201, first.text
+        comment_id = first.json()["data"]["comment_id"]
+
+        second = await client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            json={"text": "Comentário que permanece.", "internal": True},
+            headers=headers,
+        )
+        assert second.status_code == 201, second.text
+        kept_comment_id = second.json()["data"]["comment_id"]
+
+        delete_response = await client.delete(
+            f"/api/tickets/{ticket_id}/comments/{comment_id}",
+            headers=headers,
+        )
+        assert delete_response.status_code == 200, delete_response.text
+        deleted = delete_response.json()["data"]
+        assert deleted["comment_id"] == comment_id
+        assert deleted["text"] == "Comentário a ser removido."
+        assert deleted["internal"] is False
+
+        list_comments = await client.get(
+            f"/api/tickets/{ticket_id}/comments",
+            headers=headers,
+        )
+        comments: list[dict[str, Any]] = list_comments.json()["data"]
+        assert [c["comment_id"] for c in comments] == [kept_comment_id]
+
+    @pytest.mark.asyncio
+    async def test_delete_ticket_comment_is_idempotent(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-deletecommentidem@test.com",
+            admin_username="ticketadmindeletecommentidem",
+            client_email="ticket-client-deletecommentidem@test.com",
+            client_username="ticketclientdeletecommentidem",
+            product="Produto Contrato DeleteCommentIdem",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={
+                "client_id": created_user["id"],
+                "product": "Produto Contrato DeleteCommentIdem",
+            },
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
+
+        post_response = await client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            json={"text": "Vou ser apagado.", "internal": False},
+            headers=headers,
+        )
+        assert post_response.status_code == 201, post_response.text
+        comment_id = post_response.json()["data"]["comment_id"]
+
+        first = await client.delete(
+            f"/api/tickets/{ticket_id}/comments/{comment_id}",
+            headers=headers,
+        )
+        assert first.status_code == 200, first.text
+
+        second = await client.delete(
+            f"/api/tickets/{ticket_id}/comments/{comment_id}",
+            headers=headers,
+        )
+        assert second.status_code == 404, second.text
+
+    @pytest.mark.asyncio
+    async def test_delete_ticket_comment_returns_404_for_missing_ticket(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="ticket-admin-deletecommentnoticket@test.com",
+            username="ticketadmindeletecommentnoticket",
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        response = await client.delete(
+            f"/api/tickets/67f0c9b8e4b0b1a2c3d4e5ff/comments/{uuid4()}",
+            headers=headers,
+        )
+        assert response.status_code == 404, response.text

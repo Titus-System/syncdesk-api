@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, status
@@ -20,6 +21,7 @@ from app.domains.ticket.schemas import (
     TicketResponse,
     TicketSearchFiltersDTO,
     TransferTicketRequest,
+    UpdateTicketCommentDTO,
     UpdateTicketDTO,
     UpdateTicketStatusDTO,
     UpdateTicketStatusResponseDTO,
@@ -466,3 +468,53 @@ async def get_ticket_comments(
         data=[comment.model_dump(mode="json") for comment in comments],
         status_code=status.HTTP_200_OK,
     )
+
+
+@ticket_router.patch(
+    "/{ticket_id}/comments/{comment_id}",
+    dependencies=[require_permission("ticket:update_comment")],
+    tags=["Tickets"]
+)
+async def update_ticket_comment(
+    ticket_id: PydanticObjectId,
+    comment_id: UUID,
+    dto: UpdateTicketCommentDTO,
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    comment = await service.update_ticket_comment(ticket_id, comment_id, dto)
+
+    if comment is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail = "Comment not found to update"
+        )
+
+    return response.success(
+        data=comment.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.delete(
+    "/{ticket_id}/comments/{comment_id}",
+    dependencies=[require_permission("ticket:delete_comment")],
+    tags=["Tickets"]
+)
+async def delete_ticket_comment(
+    ticket_id: PydanticObjectId,
+    comment_id: UUID,
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    comment = await service.delete_ticket_comment(ticket_id, comment_id)
+
+    if comment is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail = "Comment not found to delete"
+        )
+
+    return response.success(data = comment.model_dump(mode="json"), status_code=status.HTTP_200_OK)

@@ -448,6 +448,11 @@ class AddTicketCommentDTO(BaseDTO):
     text: str
     internal: bool = True
 
+class UpdateTicketCommentDTO(BaseDTO):
+    author: str | None = None
+    text: str | None = None
+    internal: bool = False
+
 
 TicketCompanyResponseDTO = TicketCompanyResponse
 TicketClientResponseDTO = TicketClientResponse
