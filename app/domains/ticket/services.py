@@ -18,6 +18,7 @@ from app.domains.ticket.models import (
     TicketCompany,
     TicketHistory,
     TicketStatus,
+    TicketComment,
 )
 from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
