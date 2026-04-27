@@ -6,7 +6,10 @@ from fastapi import status
 
 from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
-from app.core.event_dispatcher.schemas import TicketCreatedEventSchema
+from app.core.event_dispatcher.schemas import (
+    TicketAssigneeUpdatedEventSchema,
+    TicketCreatedEventSchema,
+)
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.domains.auth.entities import UserWithRoles
@@ -24,6 +27,7 @@ from app.domains.ticket.models import (
 from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
+    AssignTicketRequest,
     CreateTicketDTO,
     CreateTicketResponseDTO,
     TicketClientResponse,
@@ -191,6 +195,74 @@ class TicketService:
         )
 
         return self._to_ticket_response(ticket)
+
+    async def assign_ticket(
+        self,
+        ticket_id: PydanticObjectId,
+        dto: AssignTicketRequest,
+    ) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
+        agent = await self.user_service.get_by_id_with_roles(dto.agent_id)
+        if agent is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent {dto.agent_id} does not exist.",
+            )
+
+        agent_roles = agent.roles_names()
+        if "agent" not in agent_roles and "admin" not in agent_roles:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The provided user cannot be assigned as a ticket agent.",
+            )
+
+        if ticket.status == TicketStatus.FINISHED:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Finished tickets cannot receive a new assignee.",
+            )
+
+        previous_assignment = self._get_active_assignment(ticket)
+        previous_agent_id = previous_assignment.agent_id if previous_assignment is not None else None
+        now = datetime.now(UTC)
+
+        if previous_assignment is not None:
+            previous_assignment.exit_date = now
+
+        ticket.agent_history.append(
+            TicketHistory(
+                agent_id=agent.id,
+                name=self._resolve_user_display_name(agent),
+                level=self._resolve_agent_level(agent_roles),
+                assignment_date=now,
+                exit_date=None,
+                transfer_reason=dto.reason,
+            )
+        )
+
+        ticket.status = self._derive_status_after_assignment(ticket.status)
+        updated_ticket = await self.repo.save(ticket)
+
+        await self.dispatcher.publish(
+            AppEvent.TICKET_ASSIGNEE_UPDATED,
+            TicketAssigneeUpdatedEventSchema(
+                ticket_id=updated_ticket.id,
+                client_id=updated_ticket.client.id,
+                new_agent_id=agent.id,
+                reason=dto.reason,
+            ),
+        )
+
+        self.logger.info(
+            "Ticket assigned",
+            extra={
+                "ticket_id": str(ticket_id),
+                "previous_agent_id": str(previous_agent_id) if previous_agent_id is not None else None,
+                "new_agent_id": str(agent.id),
+            },
+        )
+
+        return self._to_ticket_response(updated_ticket)
 
     async def update_ticket(
         self, ticket_id: PydanticObjectId, dto: UpdateTicketDTO
@@ -371,10 +443,33 @@ class TicketService:
             return ticket.agent_history[-1].agent_id
         return None
 
+    def _get_active_assignment(self, ticket: Ticket) -> TicketHistory | None:
+        for history in reversed(ticket.agent_history):
+            if history.exit_date is None:
+                return history
+        return None
+
     def _get_current_assignment(self, ticket: Ticket) -> TicketHistory | None:
         if ticket.agent_history:
             return ticket.agent_history[-1]
         return None
+
+    def _resolve_user_display_name(self, user: UserWithRoles) -> str:
+        return user.name or user.username or user.email
+
+    def _resolve_agent_level(self, roles_names: list[str]) -> str:
+        for role_name in roles_names:
+            normalized = role_name.strip().upper()
+            if normalized in {"N1", "N2", "N3"}:
+                return normalized
+        if "admin" in roles_names:
+            return "admin"
+        return "N1"
+
+    def _derive_status_after_assignment(self, current_status: TicketStatus) -> TicketStatus:
+        if current_status in {TicketStatus.OPEN, TicketStatus.AWAITING_ASSIGNMENT}:
+            return TicketStatus.IN_PROGRESS
+        return current_status
 
     def _resolve_assigned_agent(
         self, ticket: Ticket

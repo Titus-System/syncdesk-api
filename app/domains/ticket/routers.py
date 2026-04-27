@@ -306,6 +306,8 @@ async def assign_ticket(
     ticket_id: PydanticObjectId,
     dto: AssignTicketRequest,
     _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
 ) -> JSONResponse:
     """
     HTTP POST /api/tickets/{ticket_id}/assign
@@ -325,8 +327,11 @@ async def assign_ticket(
     Events:
     - ticket.assignee_updated
     """
-    _ = (ticket_id, dto)
-    _contract_not_implemented("Ticket assignment")
+    result = await service.assign_ticket(ticket_id, dto)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.post(

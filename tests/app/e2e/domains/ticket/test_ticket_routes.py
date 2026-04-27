@@ -159,7 +159,7 @@ class TestTicketRoutes:
         assert data["description"] == "Chamado assumido e em andamento."
 
     @pytest.mark.asyncio
-    async def test_contract_stubs_return_501(
+    async def test_assign_ticket_updates_history_and_status(
         self, client: AsyncClient, auth: AuthActions
     ) -> None:
         created_user, headers = await _create_ticket(
@@ -184,7 +184,50 @@ class TestTicketRoutes:
             json={"agent_id": str(uuid4()), "reason": "Primeira atribuicao"},
             headers=headers,
         )
-        assert assign_response.status_code == 501
+        assert assign_response.status_code == 404
+
+        agent_data = await auth.register_agent(
+            email="ticket-agent-assign@test.com",
+            username="ticketagentassign",
+        )
+        agent_tokens = await auth.login(email="ticket-agent-assign@test.com")
+        agent_user = await auth.me(agent_tokens["access_token"])
+
+        assign_response = await client.post(
+            f"/api/tickets/{ticket_id}/assign",
+            json={"agent_id": str(agent_user.id), "reason": "Primeira atribuicao"},
+            headers=headers,
+        )
+        assert assign_response.status_code == 200, assign_response.text
+        assign_data = assign_response.json()["data"]
+        assert assign_data["status"] == "in_progress"
+        assert assign_data["assigned_agent_id"] == str(agent_user.id)
+        assert assign_data["assigned_agent_name"] == "ticketagentassign"
+        assert len(assign_data["agent_history"]) == 1
+        assert assign_data["agent_history"][0]["agent_id"] == agent_data["id"]
+        assert assign_data["agent_history"][0]["transfer_reason"] == "Primeira atribuicao"
+        assert assign_data["agent_history"][0]["exit_date"] is None
+
+    @pytest.mark.asyncio
+    async def test_other_contract_stubs_remain_501(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-stubs@test.com",
+            admin_username="ticketadminstubs",
+            client_email="ticket-client-stubs@test.com",
+            client_username="ticketclientstubs",
+            product="Produto Contrato Stubs",
+        )
+
+        list_response = await client.get(
+            "/api/tickets/",
+            params={"client_id": created_user["id"], "product": "Produto Contrato Stubs"},
+            headers=headers,
+        )
+        ticket_id = list_response.json()["data"]["items"][0]["id"]
 
         escalate_response = await client.post(
             f"/api/tickets/{ticket_id}/escalate",
