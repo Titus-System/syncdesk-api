@@ -60,7 +60,7 @@ async def create_user(
 async def get_users(
     _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
-    users = await service.get_all()
+    users = await service.get_all_with_roles()
     return response.success(
         data=[user.to_response_dict() for user in users], status_code=status.HTTP_200_OK
     )
@@ -73,7 +73,7 @@ async def get_users(
 async def get_user(
     id: UUID, _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
-    user = await service.get_by_id(id)
+    user = await service.get_by_id_with_roles(id)
     if not user:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
