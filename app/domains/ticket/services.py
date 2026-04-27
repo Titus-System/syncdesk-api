@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from beanie import PydanticObjectId
 from fastapi import status
@@ -11,9 +11,10 @@ from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.metrics import tickets_created_total, tickets_status_changed_total
-from app.domains.ticket.models import Ticket, TicketClient, TicketCompany, TicketStatus
+from app.domains.ticket.models import Ticket, TicketClient, TicketComment, TicketCompany, TicketStatus
 from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
+    AddTicketCommentDTO,
     CreateTicketDTO,
     CreateTicketResponseDTO,
     TicketClientResponse,
@@ -138,6 +139,38 @@ class TicketService:
         if previous_status is not None and status_update is not None:
             self._record_status_transition(ticket_id, previous_status, status_update)
         return self._to_ticket_response(updated_ticket)
+    
+    async def add_comment_to_ticket(
+        self,
+        ticket_id: PydanticObjectId,
+        author_name: str,
+        dto: AddTicketCommentDTO
+    ) -> TicketComment | None:
+        tc = TicketComment(
+            comment_id=uuid4(),
+            author = author_name,
+            text = dto.text,
+            date = datetime.now(UTC),
+            internal = dto.internal
+        )
+        return await self.repo.add_ticket_comment(ticket_id, tc)
+
+    async def list_ticket_comments(
+        self, ticket_id: PydanticObjectId
+    ) -> list[TicketCommentResponse] | None:
+        ticket = await self.repo.get_by_id(ticket_id)
+        if ticket is None:
+            return None
+        return [
+            TicketCommentResponse(
+                comment_id=comment.comment_id,
+                author=comment.author,
+                text=comment.text,
+                date=comment.date,
+                internal=comment.internal,
+            )
+            for comment in ticket.comments
+        ]
 
     async def _build_ticket_client(
         self,

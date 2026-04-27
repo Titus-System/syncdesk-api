@@ -430,6 +430,10 @@ class TriageFinishedEventPayload(BaseDTO):
         ),
     )
 
+class AddTicketCommentDTO(BaseDTO):
+    text: str
+    internal: bool = True
+
 
 TicketCompanyResponseDTO = TicketCompanyResponse
 TicketClientResponseDTO = TicketClientResponse

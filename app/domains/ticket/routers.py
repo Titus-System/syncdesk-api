@@ -9,6 +9,7 @@ from app.core.exceptions import AppHTTPException
 from app.domains.auth import CurrentUserSessionDep, require_permission
 from app.domains.ticket.dependencies import TicketServiceDep
 from app.domains.ticket.schemas import (
+    AddTicketCommentDTO,
     AssignTicketRequest,
     CreateTicketDTO,
     CreateTicketResponseDTO,
@@ -20,6 +21,10 @@ from app.domains.ticket.schemas import (
     TicketSearchFiltersDTO,
     TransferTicketRequest,
     UpdateTicketDTO,
+)
+from app.domains.ticket.swagger_utils import (
+    comment_on_ticket_swagger,
+    get_ticket_comments_swagger,
 )
 from app.schemas.response import GenericSuccessContent
 
@@ -351,3 +356,60 @@ async def transfer_ticket(
     """
     _ = (ticket_id, dto)
     _contract_not_implemented("Ticket transfer")
+
+
+@ticket_router.post(
+    "/{ticket_id}/comments",
+    dependencies=[require_permission("ticket:comment")],
+    tags=["Tickets"],
+    **comment_on_ticket_swagger,
+)
+async def comment_on_ticket(
+    ticket_id: PydanticObjectId,
+    dto: AddTicketCommentDTO,
+    auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    user = auth[0]
+    comment = await service.add_comment_to_ticket(
+        ticket_id,
+        user.name or user.username or user.email,
+        dto
+    )
+
+    if comment is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ticket {ticket_id} does not exist.",
+        )
+
+    return response.success(
+        data=comment.model_dump(mode="json"),
+        status_code=status.HTTP_201_CREATED,
+    )
+
+
+@ticket_router.get(
+    "/{ticket_id}/comments",
+    dependencies=[require_permission("ticket:read")],
+    tags=["Tickets"],
+    **get_ticket_comments_swagger,
+)
+async def get_ticket_comments(
+    ticket_id: PydanticObjectId,
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    comments = await service.list_ticket_comments(ticket_id)
+    if comments is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ticket {ticket_id} does not exist.",
+        )
+
+    return response.success(
+        data=[comment.model_dump(mode="json") for comment in comments],
+        status_code=status.HTTP_200_OK,
+    )

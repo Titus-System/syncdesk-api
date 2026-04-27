@@ -3,7 +3,7 @@ from typing import Any
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.domains.ticket.models import Ticket
+from app.domains.ticket.models import Ticket, TicketComment
 from app.domains.ticket.schemas import TicketSearchFiltersDTO
 
 
@@ -29,6 +29,16 @@ class TicketRepository:
     async def save(self, ticket: Ticket) -> Ticket:
         await ticket.save()
         return ticket
+    
+    async def add_ticket_comment(
+        self, ticket_id: PydanticObjectId, comment: TicketComment
+    ) -> TicketComment | None:
+        ticket = await Ticket.get(ticket_id)
+        if ticket is None:
+            return None
+        ticket.comments.append(comment)
+        await ticket.save()
+        return comment
 
     @staticmethod
     def _build_query(filters: TicketSearchFiltersDTO) -> dict[str, Any]:
