@@ -97,6 +97,8 @@ async def get_tickets(
 async def get_ticket_queue(
     filters: Annotated[TicketQueueFiltersDTO, Depends()],
     _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
 ) -> JSONResponse:
     """
     HTTP GET /api/tickets/queue
@@ -118,8 +120,11 @@ async def get_ticket_queue(
     - department_id and level are provisional cross-domain contract fields.
     - This route will emit no event by itself.
     """
-    _ = filters
-    _contract_not_implemented("Ticket queue")
+    result = await service.list_ticket_queue(filters)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.post(

@@ -16,6 +16,7 @@ from app.domains.ticket.models import (
     Ticket,
     TicketClient,
     TicketCompany,
+    TicketCriticality,
     TicketHistory,
     TicketStatus,
     TicketComment,
@@ -30,6 +31,9 @@ from app.domains.ticket.schemas import (
     TicketCompanyResponse,
     TicketHistoryResponse,
     TicketPaginatedList,
+    TicketQueueFiltersDTO,
+    TicketQueueItemResponse,
+    TicketQueueListResponse,
     TicketResponse,
     TicketSearchFiltersDTO,
     UpdateTicketDTO,
@@ -120,6 +124,21 @@ class TicketService:
     async def get_ticket(self, ticket_id: PydanticObjectId) -> TicketResponse:
         ticket = await self._get_ticket_or_404(ticket_id)
         return self._to_ticket_response(ticket)
+
+    async def list_ticket_queue(self, filters: TicketQueueFiltersDTO) -> TicketQueueListResponse:
+        tickets = await self.repo.list_queue_candidates(filters)
+        filtered_tickets = [ticket for ticket in tickets if self._matches_queue_filters(ticket, filters)]
+        sorted_tickets = sorted(filtered_tickets, key=self._queue_sort_key)
+
+        offset = (filters.page - 1) * filters.page_size
+        paginated_tickets = sorted_tickets[offset : offset + filters.page_size]
+
+        return TicketQueueListResponse(
+            items=[self._to_ticket_queue_item_response(ticket) for ticket in paginated_tickets],
+            page=filters.page,
+            page_size=filters.page_size,
+            total=len(sorted_tickets),
+        )
 
     async def take_ticket(
         self,
@@ -352,13 +371,80 @@ class TicketService:
             return ticket.agent_history[-1].agent_id
         return None
 
+    def _get_current_assignment(self, ticket: Ticket) -> TicketHistory | None:
+        if ticket.agent_history:
+            return ticket.agent_history[-1]
+        return None
+
     def _resolve_assigned_agent(
         self, ticket: Ticket
     ) -> tuple[UUID | None, str | None]:
-        if ticket.agent_history:
-            last = ticket.agent_history[-1]
+        current_assignment = self._get_current_assignment(ticket)
+        if current_assignment is not None:
+            last = current_assignment
             return last.agent_id, last.name
         return None, None
+
+    def _matches_queue_filters(self, ticket: Ticket, filters: TicketQueueFiltersDTO) -> bool:
+        current_assignment = self._get_current_assignment(ticket)
+        current_level = current_assignment.level if current_assignment is not None else None
+        current_assignee_id = current_assignment.agent_id if current_assignment is not None else None
+        unassigned = current_assignee_id is None
+
+        # department_id is a provisional contract field. The current persisted model
+        # does not store a department snapshot yet, so queue items can only expose None.
+        if filters.department_id is not None:
+            return False
+
+        if filters.unassigned_only is True and not unassigned:
+            return False
+
+        if filters.level is not None and filters.level != current_level:
+            return False
+
+        if filters.assignee_id is not None and filters.assignee_id != current_assignee_id:
+            return False
+
+        return True
+
+    def _queue_sort_key(self, ticket: Ticket) -> tuple[int, datetime]:
+        criticality_priority = {
+            TicketCriticality.HIGH: 0,
+            TicketCriticality.MEDIUM: 1,
+            TicketCriticality.LOW: 2,
+        }
+        return criticality_priority[ticket.criticality], ticket.creation_date
+
+    def _to_ticket_queue_item_response(self, ticket: Ticket) -> TicketQueueItemResponse:
+        current_assignment = self._get_current_assignment(ticket)
+        assignee_id, assignee_name = self._resolve_assigned_agent(ticket)
+        level = current_assignment.level if current_assignment is not None else None
+
+        return TicketQueueItemResponse(
+            id=str(ticket.id),
+            triage_id=str(ticket.triage_id),
+            type=ticket.type,
+            criticality=ticket.criticality,
+            product=ticket.product,
+            status=ticket.status,
+            creation_date=ticket.creation_date,
+            description=ticket.description,
+            client=TicketClientResponse(
+                id=ticket.client.id,
+                name=ticket.client.name,
+                email=ticket.client.email,
+                company=TicketCompanyResponse(
+                    id=ticket.client.company.id,
+                    name=ticket.client.company.name,
+                ),
+            ),
+            department_id=None,
+            department_name=None,
+            level=level,
+            assignee_id=assignee_id,
+            assignee_name=assignee_name,
+            unassigned=assignee_id is None,
+        )
 
     def _to_ticket_response(self, ticket: Ticket) -> TicketResponse:
         assigned_agent_id, assigned_agent_name = self._resolve_assigned_agent(ticket)

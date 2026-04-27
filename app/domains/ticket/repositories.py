@@ -4,7 +4,7 @@ from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.domains.ticket.models import Ticket, TicketComment
-from app.domains.ticket.schemas import TicketSearchFiltersDTO
+from app.domains.ticket.schemas import TicketQueueFiltersDTO, TicketSearchFiltersDTO
 
 
 class TicketRepository:
@@ -22,6 +22,10 @@ class TicketRepository:
         total = await Ticket.find(query).count()
         items = await Ticket.find(query).skip(offset).limit(filters.page_size).to_list()
         return items, total
+
+    async def list_queue_candidates(self, filters: TicketQueueFiltersDTO) -> list[Ticket]:
+        query = self._build_queue_query(filters)
+        return await Ticket.find(query).to_list()
 
     async def get_by_id(self, ticket_id: PydanticObjectId) -> Ticket | None:
         return await Ticket.get(ticket_id)
@@ -58,5 +62,27 @@ class TicketRepository:
             query["type"] = filters.type.value
         if filters.product is not None:
             query["product"] = filters.product
+
+        return query
+
+    @staticmethod
+    def _build_queue_query(filters: TicketQueueFiltersDTO) -> dict[str, Any]:
+        query: dict[str, Any] = {}
+
+        if filters.status is not None:
+            query["status"] = filters.status.value
+        else:
+            query["status"] = {
+                "$in": [
+                    "open",
+                    "awaiting_assignment",
+                    "in_progress",
+                    "waiting_for_provider",
+                    "waiting_for_validation",
+                ]
+            }
+
+        if filters.type is not None:
+            query["type"] = filters.type.value
 
         return query
