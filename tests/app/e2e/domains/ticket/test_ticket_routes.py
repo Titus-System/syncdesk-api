@@ -262,6 +262,9 @@ class TestTicketRoutes:
     async def test_assign_ticket_returns_404_for_missing_agent(
         self, client: AsyncClient, auth: AuthActions
     ) -> None:
+        await Ticket.delete_all()
+        await Conversation.delete_all()
+
         created_user, headers = await _create_ticket(
             client=client,
             auth=auth,
@@ -444,13 +447,21 @@ class TestTicketRoutes:
         ticket_ids_by_product = {item["product"]: item["id"] for item in items}
 
         assign_high_response = await client.post(
-            f"/api/tickets/{ticket_ids_by_product['Fila Assigned High']}/take",
+            f"/api/tickets/{ticket_ids_by_product['Fila Assigned High']}/assign",
+            json={
+                "agent_id": str(admin_user.id),
+                "reason": "Atribuição para teste de fila",
+            },
             headers=headers,
         )
         assert assign_high_response.status_code == 200, assign_high_response.text
 
         assign_low_response = await client.post(
-            f"/api/tickets/{ticket_ids_by_product['Fila Assigned Low']}/take",
+            f"/api/tickets/{ticket_ids_by_product['Fila Assigned Low']}/assign",
+            json={
+                "agent_id": str(admin_user.id),
+                "reason": "Atribuição para teste de fila",
+            },
             headers=headers,
         )
         assert assign_low_response.status_code == 200, assign_low_response.text
