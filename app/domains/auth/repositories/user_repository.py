@@ -184,6 +184,7 @@ class UserRepository:
     async def add_roles(
         self, id: UUID, role_ids: list[int]
     ) -> tuple[UserWithRoles | None, set[int] | None]:
+        role_ids = list(set(role_ids))
         if len(role_ids) == 0:
             return (None, None)
 
@@ -258,6 +259,52 @@ class UserRepository:
         return [
             PermissionEntity(id=p.id, name=p.name, description=p.description) for p in permissions
         ]
+    
+    async def update_user_roles(
+        self, user_id: UUID, add_ids: list[int], remove_ids: list[int]
+    ) -> tuple[UserWithRoles | None, set[int] | None]:
+        add_ids = list(set(add_ids))
+        remove_ids = list(set(remove_ids))
+
+        user = await self.get_by_id(user_id)
+        if user is None:
+            return (None, None)
+
+        if add_ids:
+            roles_stmt = select(RoleModel.id).where(RoleModel.id.in_(add_ids))
+            result = await self.db.execute(roles_stmt)
+            found_ids = set(result.scalars().all())
+            missing_ids = set(add_ids) - found_ids
+            if missing_ids:
+                return (None, missing_ids)
+
+        try:
+            if remove_ids:
+                await self.db.execute(
+                    delete(user_roles).where(
+                        user_roles.c.user_id == user_id,
+                        user_roles.c.role_id.in_(remove_ids),
+                    )
+                )
+
+            if add_ids:
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                values: list[dict[str, UUID | int]] = [
+                    {"user_id": user_id, "role_id": role_id} for role_id in add_ids
+                ]
+                await self.db.execute(
+                    pg_insert(user_roles).values(values).on_conflict_do_nothing()
+                )
+
+            await self.db.commit()
+        except SQLAlchemyError:
+            await self.db.rollback()
+            raise
+
+        updated_user = await self.get_with_roles(user_id)
+        return (updated_user, None)
+
 
     async def user_exists(self, user_id: UUID) -> bool:
         stmt = select(exists().where(UserModel.id == user_id))

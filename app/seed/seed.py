@@ -32,6 +32,7 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "user:update", "description": "Update users"},
         {"name": "user:replace", "description": "Replace users"},
         {"name": "user:add_roles", "description": "Add roles to users"},
+        {"name": "user:update_roles", "description": "Add and remove roles from users"},
         # Password
         {"name": "password:change", "description": "Change user password"},
         {"name": "password:reset", "description": "Reset user password"},

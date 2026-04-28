@@ -7,6 +7,7 @@ from app.core.dependencies import PasswordSecurityDep, ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.dependencies import CurrentUserSessionDep, UserServiceDep, require_permission
+from app.domains.auth.schemas.user_schemas import RemoveUserRolesDTO, UpdateUserRolesDTO
 
 from ..schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
 from .swagger_utils import (
@@ -14,7 +15,9 @@ from .swagger_utils import (
     create_user_swagger,
     get_user_swagger,
     list_users_swagger,
+    remove_user_roles_swagger,
     replace_user_swagger,
+    update_user_roles_swagger,
     update_user_swagger,
 )
 
@@ -146,6 +149,63 @@ async def add_user_roles(
     except ResourceNotFoundError as e:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+        ) from e
+    except ValueError as e:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+
+@user_router.delete(
+    "/{user_id}/roles",
+    tags=["Users", "Roles"],
+    dependencies=[require_permission("user:update_roles")],
+    **remove_user_roles_swagger,
+)
+async def remove_user_roles(
+    user_id: UUID,
+    dto: RemoveUserRolesDTO,
+    _auth: CurrentUserSessionDep,
+    service: UserServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    if not dto.role_ids:
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No role ids were informed"
+        )
+    try:
+        user = await service.remove_roles(user_id, dto.role_ids)
+        return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+    except ResourceNotFoundError as e:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{user_id}' was not found."
+        ) from e
+    except ValueError as e:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    
+
+@user_router.patch(
+    "/{user_id}/roles",
+    tags=["Users", "Roles"],
+    dependencies=[require_permission("user:update_roles")],
+    **update_user_roles_swagger,
+)
+async def update_user_roles(
+    user_id: UUID,
+    dto: UpdateUserRolesDTO,
+    _auth: CurrentUserSessionDep,
+    service: UserServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    if not dto.add_role_ids and not dto.remove_role_ids:
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No role ids were informed"
+        )
+
+    try:
+        user = await service.update_user_roles(user_id, dto)
+        return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+    except ResourceNotFoundError as e:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{user_id}' was not found."
         ) from e
     except ValueError as e:
         raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
