@@ -352,6 +352,8 @@ async def escalate_ticket(
     ticket_id: PydanticObjectId,
     dto: EscalateTicketRequest,
     _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
 ) -> JSONResponse:
     """
     HTTP POST /api/tickets/{ticket_id}/escalate
@@ -375,8 +377,11 @@ async def escalate_ticket(
     Events:
     - ticket.escalated
     """
-    _ = (ticket_id, dto)
-    _contract_not_implemented("Ticket escalation")
+    result = await service.escalate_ticket(ticket_id, dto)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.post(
