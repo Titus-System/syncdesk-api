@@ -34,6 +34,7 @@ class ChatbotRepository:
         }
 
     async def find_attendance(self, attendance_id: str) -> dict[str, Any] | None:
+        query_id: ObjectId | str
         try:
             query_id = ObjectId(attendance_id)
         except InvalidId:
@@ -41,6 +42,7 @@ class ChatbotRepository:
         return await self.attendances_collection.find_one({"_id": query_id})
 
     async def save_attendance(self, attendance_id: str, full_attendance: dict[str, Any]) -> None:
+        query_id: ObjectId | str
         try:
             query_id = ObjectId(attendance_id)
         except InvalidId:

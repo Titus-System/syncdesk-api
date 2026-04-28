@@ -3,7 +3,7 @@ from app.core.exceptions import AppHTTPException
 
 
 class AttendanceNotFoundException(AppHTTPException):
-    def __init__(self, triage_id: str):
+    def __init__(self, triage_id: str) -> None:
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             title="Attendance Not Found",
@@ -12,7 +12,7 @@ class AttendanceNotFoundException(AppHTTPException):
 
 
 class AttendanceCreationException(AppHTTPException):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             title="Attendance Creation Error",
@@ -21,7 +21,7 @@ class AttendanceCreationException(AppHTTPException):
 
 
 class AttendanceNotFinishedException(AppHTTPException):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             title="Attendance Not Finished",
@@ -30,7 +30,7 @@ class AttendanceNotFinishedException(AppHTTPException):
 
 
 class AttendanceAlreadyEvaluatedException(AppHTTPException):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             title="Attendance Already Evaluated",
@@ -39,7 +39,7 @@ class AttendanceAlreadyEvaluatedException(AppHTTPException):
 
 
 class MissingClientDataException(AppHTTPException):
-    def __init__(self, detail: str = "Missing client data to create attendance."):
+    def __init__(self, detail: str = "Missing client data to create attendance.") -> None:
         super().__init__(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             title="Missing Client Data",
