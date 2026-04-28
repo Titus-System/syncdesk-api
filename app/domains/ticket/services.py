@@ -40,6 +40,7 @@ from app.domains.ticket.schemas import (
     TicketQueueListResponse,
     TicketResponse,
     TicketSearchFiltersDTO,
+    UpdateTicketCommentDTO,
     UpdateTicketDTO,
     UpdateTicketStatusDTO,
     UpdateTicketStatusResponseDTO,
@@ -326,6 +327,16 @@ class TicketService:
             )
             for comment in ticket.comments
         ]
+
+    async def update_ticket_comment(
+        self, ticket_id: PydanticObjectId, comment_id: UUID, dto: UpdateTicketCommentDTO
+    ) -> TicketComment | None:
+        return await self.repo.update_ticket_comment(ticket_id, comment_id, dto)
+
+    async def delete_ticket_comment(
+        self, ticket_id: PydanticObjectId, comment_id: UUID
+    ) -> TicketComment | None:
+        return await self.repo.delete_ticket_comment(ticket_id, comment_id)
 
     async def update_status(
         self,
