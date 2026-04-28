@@ -42,6 +42,7 @@ from app.domains.ticket.schemas import (
     TicketQueueListResponse,
     TicketResponse,
     TicketSearchFiltersDTO,
+    TransferTicketRequest,
     UpdateTicketCommentDTO,
     UpdateTicketDTO,
     UpdateTicketStatusDTO,
@@ -323,6 +324,96 @@ class TicketService:
 
         return self._to_ticket_response(updated_ticket)
 
+    async def transfer_ticket(
+        self,
+        ticket_id: PydanticObjectId,
+        dto: TransferTicketRequest,
+    ) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
+        current_assignment = self._get_active_assignment(ticket)
+        if current_assignment is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket must have an active assignee before it can be transferred.",
+            )
+
+        if current_assignment.agent_id == dto.target_agent_id:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket is already assigned to the target agent.",
+            )
+
+        if ticket.status == TicketStatus.FINISHED:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Finished tickets cannot be transferred.",
+            )
+
+        target_agent = await self.user_service.get_by_id_with_roles(dto.target_agent_id)
+        if target_agent is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent {dto.target_agent_id} does not exist.",
+            )
+
+        target_agent_roles = target_agent.roles_names()
+        if "agent" not in target_agent_roles and "admin" not in target_agent_roles:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The provided user cannot be assigned as a ticket agent.",
+            )
+
+        source_level = self._normalize_support_level(current_assignment.level)
+        target_level = self._normalize_support_level(
+            self._resolve_agent_level(target_agent_roles)
+        )
+        if target_level != source_level:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Direct ticket transfer must keep the same support level.",
+            )
+
+        # The current Ticket model has no department snapshot, so same-department
+        # validation cannot be completed here without inventing state.
+        now = datetime.now(UTC)
+        current_assignment.exit_date = now
+        current_assignment.transfer_reason = dto.reason
+
+        ticket.agent_history.append(
+            TicketHistory(
+                agent_id=target_agent.id,
+                name=self._resolve_user_display_name(target_agent),
+                level=source_level,
+                assignment_date=now,
+                exit_date=None,
+                transfer_reason=dto.reason,
+            )
+        )
+        ticket.status = TicketStatus.IN_PROGRESS
+        updated_ticket = await self.repo.save(ticket)
+
+        await self.dispatcher.publish(
+            AppEvent.TICKET_ASSIGNEE_UPDATED,
+            TicketAssigneeUpdatedEventSchema(
+                ticket_id=updated_ticket.id,
+                client_id=updated_ticket.client.id,
+                new_agent_id=target_agent.id,
+                reason=dto.reason,
+            ),
+        )
+
+        self.logger.info(
+            "Ticket transferred",
+            extra={
+                "ticket_id": str(ticket_id),
+                "previous_agent_id": str(current_assignment.agent_id),
+                "new_agent_id": str(target_agent.id),
+                "level": source_level,
+            },
+        )
+
+        return self._to_ticket_response(updated_ticket)
+
     async def update_ticket(
         self, ticket_id: PydanticObjectId, dto: UpdateTicketDTO
     ) -> TicketResponse:
@@ -532,7 +623,10 @@ class TicketService:
         return None
 
     def _normalize_support_level(self, level: str) -> str:
-        return level.strip().upper()
+        normalized = level.strip().upper()
+        if normalized == "AGENT":
+            return "N1"
+        return normalized
 
     def _support_level_rank(self, level: str) -> int | None:
         normalized = self._normalize_support_level(level)

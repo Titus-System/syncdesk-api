@@ -400,6 +400,8 @@ async def transfer_ticket(
     ticket_id: PydanticObjectId,
     dto: TransferTicketRequest,
     _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
 ) -> JSONResponse:
     """
     HTTP POST /api/tickets/{ticket_id}/transfer
@@ -419,8 +421,11 @@ async def transfer_ticket(
     Events:
     - ticket.assignee_updated
     """
-    _ = (ticket_id, dto)
-    _contract_not_implemented("Ticket transfer")
+    result = await service.transfer_ticket(ticket_id, dto)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.post(
