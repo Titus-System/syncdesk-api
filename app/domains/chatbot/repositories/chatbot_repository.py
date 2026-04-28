@@ -1,6 +1,7 @@
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
+from bson.errors import InvalidId
 from pymongo import DESCENDING
 from app.domains.chatbot.schemas import AttendanceSearchFiltersDTO, CreateAttendanceDTO
 
@@ -33,16 +34,18 @@ class ChatbotRepository:
         }
 
     async def find_attendance(self, attendance_id: str) -> dict[str, Any] | None:
+        query_id: ObjectId | str
         try:
             query_id = ObjectId(attendance_id)
-        except Exception:
+        except InvalidId:
             query_id = attendance_id
         return await self.attendances_collection.find_one({"_id": query_id})
 
     async def save_attendance(self, attendance_id: str, full_attendance: dict[str, Any]) -> None:
+        query_id: ObjectId | str
         try:
             query_id = ObjectId(attendance_id)
-        except Exception:
+        except InvalidId:
             query_id = attendance_id
 
         full_attendance["_id"] = query_id

@@ -3,11 +3,13 @@ from typing import Any
 from uuid import UUID
 
 from bson import ObjectId
-from fastapi import status
 
-from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.domains.chatbot.enums import AttendanceStatus, TriageState
+from app.domains.chatbot.exceptions import (
+    AttendanceAlreadyEvaluatedException,AttendanceCreationException,AttendanceNotFinishedException,
+    AttendanceNotFoundException,MissingClientDataException
+)
 from app.domains.chatbot.fsm import ChatbotFSM
 from app.domains.chatbot.metrics import chatbot_messages_total
 from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
@@ -50,13 +52,7 @@ class ChatbotService:
             attendance_db = await self.repository.find_attendance(payload.triage_id)
 
             if attendance_db is None:
-                raise AppHTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=(
-                        "Attendance was created but could not be loaded afterward. "
-                        "Please try again."
-                    ),
-                )
+                raise AttendanceCreationException()
 
         attendance: dict[str, Any] = attendance_db
 
@@ -149,10 +145,7 @@ class ChatbotService:
     async def get_attendance(self, triage_id: str) -> AttendanceResponse:
         attendance = await self.repository.find_attendance(triage_id)
         if attendance is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Attendance {triage_id} not found.",
-            )
+            raise AttendanceNotFoundException(triage_id)
         return self._map_attendance_response(attendance)
 
     async def set_evaluation(
@@ -160,22 +153,13 @@ class ChatbotService:
     ) -> EvaluationResponse:
         attendance = await self.repository.find_attendance(triage_id)
         if attendance is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Attendance {triage_id} not found.",
-            )
+            raise AttendanceNotFoundException(triage_id)
 
         if attendance.get("status") != AttendanceStatus.FINISHED.value:
-            raise AppHTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Attendance is not finished yet.",
-            )
+            raise AttendanceNotFinishedException()
 
         if attendance.get("evaluation") is not None:
-            raise AppHTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Attendance has already been evaluated.",
-            )
+            raise AttendanceAlreadyEvaluatedException()
 
         evaluated_at = datetime.now(UTC)
         attendance["evaluation"] = AttendanceEvaluation(rating=payload.rating).model_dump(mode="json")
@@ -199,22 +183,17 @@ class ChatbotService:
             missing_fields.append("client_email")
 
         if missing_fields:
-            raise AppHTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    "triage_id was not found. To auto-create attendance, provide fields: "
-                    + ", ".join(missing_fields)
-                ),
+            detail_msg = (
+                "triage_id was not found. To auto-create attendance, provide fields: "
+                + ", ".join(missing_fields)
             )
+            raise MissingClientDataException(detail=detail_msg)
 
         client_id = payload.client_id
         client_name = payload.client_name
         client_email = payload.client_email
         if client_id is None or client_name is None or client_email is None:
-            raise AppHTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Missing client data to create attendance.",
-            )
+            raise MissingClientDataException()
 
         return AttendanceClient(
             id=client_id,
