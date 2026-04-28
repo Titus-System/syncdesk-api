@@ -557,6 +557,115 @@ class TestUserRepository:
         res = await user_repo.remove_roles(uuid4(), [role1.id, role2.id])
         assert res == []
 
+    # ── update_user_roles ─────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_add_and_remove(
+        self, user_repo: UserRepository, db_session: AsyncSession
+    ) -> None:
+        user = await user_repo.create(self.create_with_oauth_dto)
+        role_a = RoleModel(name="update_role_a")
+        role_b = RoleModel(name="update_role_b")
+        db_session.add_all([role_a, role_b])
+        await db_session.commit()
+        await db_session.refresh(role_a)
+        await db_session.refresh(role_b)
+
+        await user_repo.add_roles(user.id, [role_a.id])
+
+        result, missing = await user_repo.update_user_roles(
+            user.id, add_ids=[role_b.id], remove_ids=[role_a.id]
+        )
+        assert result is not None and missing is None
+        assert result.roles is not None
+        role_ids = {r.id for r in result.roles}
+        assert role_b.id in role_ids
+        assert role_a.id not in role_ids
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_add_only(
+        self, user_repo: UserRepository, db_session: AsyncSession
+    ) -> None:
+        user = await user_repo.create(self.create_with_oauth_dto)
+        role = RoleModel(name="update_add_only")
+        db_session.add(role)
+        await db_session.commit()
+        await db_session.refresh(role)
+
+        result, missing = await user_repo.update_user_roles(
+            user.id, add_ids=[role.id], remove_ids=[]
+        )
+        assert result is not None and missing is None
+        assert result.roles is not None
+        assert any(r.id == role.id for r in result.roles)
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_remove_only(
+        self, user_repo: UserRepository, db_session: AsyncSession
+    ) -> None:
+        user = await user_repo.create(self.create_with_oauth_dto)
+        role = RoleModel(name="update_remove_only")
+        db_session.add(role)
+        await db_session.commit()
+        await db_session.refresh(role)
+
+        await user_repo.add_roles(user.id, [role.id])
+
+        result, missing = await user_repo.update_user_roles(
+            user.id, add_ids=[], remove_ids=[role.id]
+        )
+        assert result is not None and missing is None
+        assert result.roles == []
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_unknown_user(self, user_repo: UserRepository) -> None:
+        result, missing = await user_repo.update_user_roles(uuid4(), add_ids=[1], remove_ids=[])
+        assert result is None and missing is None
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_missing_add_ids(
+        self, user_repo: UserRepository
+    ) -> None:
+        user = await user_repo.create(self.create_with_oauth_dto)
+        result, missing = await user_repo.update_user_roles(
+            user.id, add_ids=[999998, 999999], remove_ids=[]
+        )
+        assert result is None
+        assert missing == {999998, 999999}
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_dedupes_add_ids(
+        self, user_repo: UserRepository, db_session: AsyncSession
+    ) -> None:
+        user = await user_repo.create(self.create_with_oauth_dto)
+        role = RoleModel(name="update_dedup_role")
+        db_session.add(role)
+        await db_session.commit()
+        await db_session.refresh(role)
+
+        result, missing = await user_repo.update_user_roles(
+            user.id, add_ids=[role.id, role.id], remove_ids=[]
+        )
+        assert result is not None and missing is None
+        assert result.roles is not None
+        assert [r.id for r in result.roles].count(role.id) == 1
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_remove_nonexistent_is_noop(
+        self, user_repo: UserRepository, db_session: AsyncSession
+    ) -> None:
+        user = await user_repo.create(self.create_with_oauth_dto)
+        role = RoleModel(name="update_noop_role")
+        db_session.add(role)
+        await db_session.commit()
+        await db_session.refresh(role)
+
+        result, missing = await user_repo.update_user_roles(
+            user.id, add_ids=[], remove_ids=[role.id]
+        )
+        assert result is not None and missing is None
+        assert result.roles == []
+
     # ── must_change_password ──────────────────────────────────────────
 
     @pytest.mark.asyncio

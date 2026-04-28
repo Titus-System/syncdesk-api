@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from app.core.schemas import BaseDTO
 from app.domains.auth.enums import OAuthProvider
@@ -48,6 +48,34 @@ class ReplaceUserDTO(CreateUserDTO):
 
 class AddUserRolesDTO(BaseDTO):
     role_ids: list[int]
+
+
+class RemoveUserRolesDTO(BaseDTO):
+    role_ids: list[int] = Field(default_factory=list[int])
+
+
+class UpdateUserRolesDTO(BaseDTO):
+    add_role_ids: list[int] = Field(default_factory=list[int])
+    remove_role_ids: list[int] = Field(default_factory=list[int])
+
+    @model_validator(mode="after")
+    def validate_no_intersection(self) -> "UpdateUserRolesDTO":
+        inter = set(self.add_role_ids) & set(self.remove_role_ids)
+        if inter:
+            raise ValueError(f"No role can be in both add and remove fields. Roles {inter} are in both.")
+        return self
+    
+    @model_validator(mode="after")
+    def validate_field_size(self) -> "UpdateUserRolesDTO":
+        limit = 10
+        errors: list[str] = []
+        if len(self.add_role_ids) > limit:
+            errors.append("add_role_ids")
+        if len(self.remove_role_ids) > limit:
+            errors.append("remove_role_ids")
+        if errors:
+            raise ValueError(f"{" and ".join(errors)} exceed the limit of {limit} roles")
+        return self
 
 
 class UserCompliance(BaseDTO):

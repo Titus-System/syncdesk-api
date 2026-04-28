@@ -146,6 +146,224 @@ class TestUsersCRUD:
         )
         assert r.status_code == 400
 
+    # ── Update roles (PATCH) ────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_add_and_remove(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="rolepatch@test.com", username="rolepatch"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        role_a = (
+            await client.post("/api/roles/", json={"name": "patch_a"}, headers=headers)
+        ).json()["data"]
+        role_b = (
+            await client.post("/api/roles/", json={"name": "patch_b"}, headers=headers)
+        ).json()["data"]
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        await client.post(
+            f"/api/users/{user_id}/roles",
+            json={"role_ids": [role_a["id"]]},
+            headers=headers,
+        )
+
+        r = await client.patch(
+            f"/api/users/{user_id}/roles",
+            json={"add_role_ids": [role_b["id"]], "remove_role_ids": [role_a["id"]]},
+            headers=headers,
+        )
+        assert r.status_code == 200
+
+        role_ids = {role["id"] for role in r.json()["data"]["roles"]}
+        assert role_b["id"] in role_ids
+        assert role_a["id"] not in role_ids
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_empty_payload(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="emptypatch@test.com", username="emptypatch"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        r = await client.patch(
+            f"/api/users/{user_id}/roles",
+            json={"add_role_ids": [], "remove_role_ids": []},
+            headers=headers,
+        )
+        assert r.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_intersection(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="interpatch@test.com", username="interpatch"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        role_r = await client.post(
+            "/api/roles/", json={"name": "interpatchrole"}, headers=headers
+        )
+        role_id = role_r.json()["data"]["id"]
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        r = await client.patch(
+            f"/api/users/{user_id}/roles",
+            json={"add_role_ids": [role_id], "remove_role_ids": [role_id]},
+            headers=headers,
+        )
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_exceeds_limit(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="limitpatch@test.com", username="limitpatch"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        r = await client.patch(
+            f"/api/users/{user_id}/roles",
+            json={"add_role_ids": list(range(1, 12)), "remove_role_ids": []},
+            headers=headers,
+        )
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_unknown_role(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="unkrolepatch@test.com", username="unkrolepatch"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        r = await client.patch(
+            f"/api/users/{user_id}/roles",
+            json={"add_role_ids": [999999], "remove_role_ids": []},
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_unknown_user(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="unkupatch@test.com", username="unkupatch"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        role_r = await client.post(
+            "/api/roles/", json={"name": "ghostpatchrole"}, headers=headers
+        )
+        role_id = role_r.json()["data"]["id"]
+
+        r = await client.patch(
+            "/api/users/00000000-0000-0000-0000-000000000000/roles",
+            json={"add_role_ids": [role_id], "remove_role_ids": []},
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_update_user_roles_dedupes_input(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="duppatch@test.com", username="duppatch"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        role_r = await client.post(
+            "/api/roles/", json={"name": "duppatchrole"}, headers=headers
+        )
+        role_id = role_r.json()["data"]["id"]
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        r = await client.patch(
+            f"/api/users/{user_id}/roles",
+            json={"add_role_ids": [role_id, role_id], "remove_role_ids": []},
+            headers=headers,
+        )
+        assert r.status_code == 200
+        role_ids = [role["id"] for role in r.json()["data"]["roles"]]
+        assert role_ids.count(role_id) == 1
+
+    # ── Remove roles (DELETE) ───────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_remove_user_roles(self, client: AsyncClient, auth: AuthActions) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="roledel@test.com", username="roledel"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        role_r = await client.post("/api/roles/", json={"name": "delrole"}, headers=headers)
+        role_id = role_r.json()["data"]["id"]
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        await client.post(
+            f"/api/users/{user_id}/roles",
+            json={"role_ids": [role_id]},
+            headers=headers,
+        )
+
+        r = await client.request(
+            "DELETE",
+            f"/api/users/{user_id}/roles",
+            json={"role_ids": [role_id]},
+            headers=headers,
+        )
+        assert r.status_code == 200
+
+        role_ids = {role["id"] for role in r.json()["data"]["roles"]}
+        assert role_id not in role_ids
+
+    @pytest.mark.asyncio
+    async def test_remove_user_roles_empty_list(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="emroldel@test.com", username="emroldel"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        r = await client.request(
+            "DELETE",
+            f"/api/users/{user_id}/roles",
+            json={"role_ids": []},
+            headers=headers,
+        )
+        assert r.status_code == 400
+
     # ── Auth guard ──────────────────────────────────────
 
     @pytest.mark.asyncio

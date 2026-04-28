@@ -10,7 +10,7 @@ from app.domains.auth import auth_router, permission_router, role_router, user_r
 from app.domains.companies import company_router
 from app.domains.live_chat import chat_router, conversation_router
 from app.domains.products import product_router
-from app.domains.ticket import ticket_router
+from app.domains.ticket.routers import ticket_router
 from app.schemas.response import ErrorContent, GenericSuccessContent
 
 from app.domains.chatbot import chatbot_router

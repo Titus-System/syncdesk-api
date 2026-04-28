@@ -590,22 +590,22 @@ create_user_swagger: dict[str, Any] = {
 
 list_users_responses: dict[int | str, dict[str, Any]] = {
     200: {
-        "description": "List of all users retrieved successfully.",
-        "model": GenericSuccessContent[list[User]],
+        "description": "List of all users retrieved successfully, including assigned roles.",
+        "model": GenericSuccessContent[list[UserWithRoles]],
     },
 }
 
 list_users_swagger: dict[str, Any] = {
     "summary": "List all users",
-    "description": "Returns every user registered in the system.",
-    "response_model": GenericSuccessContent[list[User]],
+    "description": "Returns every user registered in the system, including their assigned roles.",
+    "response_model": GenericSuccessContent[list[UserWithRoles]],
     "responses": list_users_responses,
 }
 
 get_user_responses: dict[int | str, dict[str, Any]] = {
     200: {
-        "description": "User retrieved successfully.",
-        "model": GenericSuccessContent[User],
+        "description": "User retrieved successfully, including assigned roles.",
+        "model": GenericSuccessContent[UserWithRoles],
     },
     404: {
         "description": "User not found.",
@@ -615,8 +615,11 @@ get_user_responses: dict[int | str, dict[str, Any]] = {
 
 get_user_swagger: dict[str, Any] = {
     "summary": "Get a user by ID",
-    "description": "Returns a single user by their UUID. Returns 404 if not found.",
-    "response_model": GenericSuccessContent[User],
+    "description": (
+        "Returns a single user by their UUID, including assigned roles. "
+        "Returns 404 if not found."
+    ),
+    "response_model": GenericSuccessContent[UserWithRoles],
     "responses": get_user_responses,
 }
 
@@ -687,4 +690,65 @@ add_user_roles_swagger: dict[str, Any] = {
     ),
     "response_model": GenericSuccessContent[UserWithRoles],
     "responses": add_user_roles_responses,
+}
+
+remove_user_roles_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Roles removed successfully. Returns the updated user with remaining roles.",
+        "model": GenericSuccessContent[UserWithRoles],
+    },
+    400: {
+        "description": "No role IDs provided.",
+        "model": ErrorContent,
+    },
+    404: {
+        "description": "User not found.",
+        "model": ErrorContent,
+    },
+}
+
+remove_user_roles_swagger: dict[str, Any] = {
+    "summary": "Remove roles from a user",
+    "description": (
+        "Removes the given role IDs from the user. "
+        "Roles the user does not currently hold are silently ignored. "
+        "Returns 400 if no role IDs are provided, 404 if the user is not found."
+    ),
+    "response_model": GenericSuccessContent[UserWithRoles],
+    "responses": remove_user_roles_responses,
+}
+
+update_user_roles_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Roles updated successfully. Returns the user with the resulting role set.",
+        "model": GenericSuccessContent[UserWithRoles],
+    },
+    400: {
+        "description": "Both add_role_ids and remove_role_ids are empty.",
+        "model": ErrorContent,
+    },
+    404: {
+        "description": "User not found, or one of the role IDs in add_role_ids does not exist.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": (
+            "Request body validation failed — e.g. the same role ID appears in both "
+            "add_role_ids and remove_role_ids, or a list exceeds the 10-item limit."
+        ),
+        "model": ErrorContent,
+    },
+}
+
+update_user_roles_swagger: dict[str, Any] = {
+    "summary": "Update user roles (add and remove in one call)",
+    "description": (
+        "Atomically adds and removes roles in a single request. "
+        "Duplicate IDs in either list are silently deduped. "
+        "Roles in remove_role_ids that the user does not hold are ignored. "
+        "Returns 400 if both lists are empty, 404 if the user or any role to add is not found, "
+        "422 if the same ID appears in both lists or a list exceeds 10 items."
+    ),
+    "response_model": GenericSuccessContent[UserWithRoles],
+    "responses": update_user_roles_responses,
 }

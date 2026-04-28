@@ -15,9 +15,19 @@ from app.domains.chatbot.metrics import chatbot_messages_total
 from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
 from app.domains.chatbot.repositories.chatbot_repository import ChatbotRepository
 from app.domains.chatbot.schemas import (
-    AttendanceResponse,AttendanceSearchFiltersDTO,CreateAttendanceDTO,EvaluationRequest,EvaluationResponse,
-    QuickReply,TriageData,TriageInputDef,TriageInputDTO,TriageResult,TriageStepSchema
+    AttendanceResponse,
+    AttendanceSearchFiltersDTO,
+    CreateAttendanceDTO,
+    EvaluationRequest,
+    EvaluationResponse,
+    QuickReply,
+    TriageData,
+    TriageInputDef,
+    TriageInputDTO,
+    TriageResult,
+    TriageStepSchema,
 )
+
 
 class ChatbotService:
     def __init__(self, repository: ChatbotRepository) -> None:
