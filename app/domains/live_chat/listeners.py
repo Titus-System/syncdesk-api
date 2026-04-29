@@ -28,7 +28,7 @@ class ConversationListener:
     async def on_ticket_created(self, schema: TicketCreatedEventSchema) -> None:
         if await self.service.ticket_has_conversation(schema.ticket_id):
             logger.debug(
-                "Skipping TICKET_CREATED — conversation already exists for ticket %s",
+                "Skipping TICKET_CREATED - conversation already exists for ticket %s",
                 schema.ticket_id,
             )
             return
@@ -56,7 +56,7 @@ class ConversationListener:
     @event_handler(TicketEscalatedEventSchema)
     async def on_ticket_escalated(self, schema: TicketEscalatedEventSchema) -> None:
         agent_info = schema.new_agent_name or "agente pendente"
-        escalation_msg = f"Chamado foi escalonado para o nível {schema.new_level} ({agent_info})."
+        escalation_msg = f"Chamado foi escalonado para o nivel {schema.new_level} ({agent_info})."
 
         conversation = await self.service.append_conversation_to_ticket(
             schema.ticket_id,
@@ -85,7 +85,7 @@ class ConversationListener:
         conversation = await self.service.get_last_conversation_from_ticket(schema.ticket_id)
         if conversation is None or conversation.id is None:
             logger.debug(
-                "Skipping TICKET_STATUS_UPDATED — no conversation found for ticket %s",
+                "Skipping TICKET_STATUS_UPDATED - no conversation found for ticket %s",
                 schema.ticket_id,
             )
             return
@@ -102,31 +102,16 @@ class ConversationListener:
 
     @event_handler(TicketClosedEventSchema)
     async def on_ticket_closed(self, schema: TicketClosedEventSchema) -> None:
-        conversation = await self.service.get_last_conversation_from_ticket(schema.ticket_id)
-        if conversation is None or conversation.id is None:
-            logger.debug(
-                "Skipping TICKET_CLOSED — no conversation found for ticket %s",
-                schema.ticket_id,
-            )
-            return
-        if not conversation.is_opened():
-            logger.debug(
-                "Skipping TICKET_CLOSED — conversation %s already closed for ticket %s",
-                conversation.id,
-                schema.ticket_id,
-            )
-            return
-
-        await self.service.add_message_to_conversation(
-            conversation.id,
-            ChatMessage.create(
-                conversation_id=conversation.id,
-                sender_id="System",
-                type="text",
-                content="Chamado foi encerrado.",
-            ),
+        closed_conversation = await self.service.close_active_ticket_conversation(
+            schema.ticket_id,
+            system_message="Chamado foi encerrado.",
         )
-        await self.service.end_conversation(conversation.id)
+        if closed_conversation is None:
+            logger.debug(
+                "Skipping TICKET_CLOSED - no open conversation found for ticket %s",
+                schema.ticket_id,
+            )
+            return
         listener_conversations_closed_total.labels(event="ticket_closed").inc()
 
 

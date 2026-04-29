@@ -17,6 +17,7 @@ from app.core.logger import get_logger, stop_logger
 from app.core.middleware import add_middlewares
 from app.db import close_postgres_db, init_postgres_db, mongo_db
 from app.db.postgres.engine import engine as pg_engine
+from app.domains.chatbot.listeners import register_chatbot_listener
 from app.domains.chatbot.models import Attendance
 from app.domains.live_chat import Conversation
 from app.domains.live_chat.listeners import register_conversation_listener
@@ -27,6 +28,7 @@ from app.domains.ticket.listeners import register_ticket_listener
 def register_app_events_listeners(dispatcher: EventDispatcher) -> None:
     logger = get_logger("app.main")
     register_conversation_listener(dispatcher)
+    register_chatbot_listener(dispatcher)
     register_ticket_listener(dispatcher)
     logger.info("Registered event listeners to EventDispatcher.")
 

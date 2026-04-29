@@ -8,6 +8,7 @@ from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
 from app.core.event_dispatcher.schemas import (
     TicketAssigneeUpdatedEventSchema,
+    TicketClosedEventSchema,
     TicketCreatedEventSchema,
     TicketEscalatedEventSchema,
 )
@@ -475,6 +476,8 @@ class TicketService:
             self._record_status_transition(
                 ticket_id, previous_status, status_update, actor=None
             )
+            if status_update == TicketStatus.FINISHED:
+                await self._publish_ticket_closed(updated_ticket)
         return self._to_ticket_response(updated_ticket)
     
     async def add_comment_to_ticket(
@@ -541,6 +544,8 @@ class TicketService:
 
         updated_ticket = await self.repo.save(ticket)
         self._record_status_transition(ticket_id, previous_status, dto.status, actor=actor)
+        if dto.status == TicketStatus.FINISHED:
+            await self._publish_ticket_closed(updated_ticket)
 
         return UpdateTicketStatusResponseDTO(
             id=str(updated_ticket.id),
@@ -629,6 +634,17 @@ class TicketService:
         if actor is not None:
             extra["actor_user_id"] = str(actor.id)
         self.logger.info("Ticket status updated", extra=extra)
+
+    async def _publish_ticket_closed(self, ticket: Ticket) -> None:
+        assert ticket.id is not None
+        await self.dispatcher.publish(
+            AppEvent.TICKET_CLOSED,
+            TicketClosedEventSchema(
+                ticket_id=ticket.id,
+                triage_id=ticket.triage_id,
+                client_id=ticket.client.id,
+            ),
+        )
 
     def _get_current_assigned_agent_id(self, ticket: Ticket) -> UUID | None:
         current_assignment = self._get_active_assignment(ticket)

@@ -53,6 +53,28 @@ class ChatbotRepository:
             upsert=True
         )
 
+    async def finish_attendance_pending_evaluation(
+        self,
+        attendance_id: str,
+        finished_at: str,
+    ) -> bool:
+        try:
+            query_id = ObjectId(attendance_id)
+        except Exception:
+            query_id = attendance_id
+
+        result = await self.attendances_collection.update_one(
+            {"_id": query_id},
+            {
+                "$set": {
+                    "status": "finished",
+                    "end_date": finished_at,
+                    "evaluation": None,
+                }
+            },
+        )
+        return result.matched_count > 0
+
     async def list_attendances(
         self, filters: AttendanceSearchFiltersDTO
     ) -> list[dict[str, Any]]:
