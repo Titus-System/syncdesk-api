@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from beanie import PydanticObjectId
 from httpx import AsyncClient
+from sqlalchemy import text
 
 from app.core.event_dispatcher import get_event_dispatcher
 from app.core.event_dispatcher.enums import AppEvent
@@ -103,6 +104,38 @@ async def _create_assigned_ticket(
     assert assign_response.status_code == 200, assign_response.text
 
     return ticket_id, created_user, headers, agent_data
+
+
+async def _register_agent_with_support_level(
+    auth: AuthActions,
+    *,
+    email: str,
+    username: str,
+    level: str,
+) -> dict[str, Any]:
+    agent_data = await auth.register_agent(email=email, username=username)
+    role_result = await auth.db_session.execute(
+        text(
+            "INSERT INTO roles (name, description)"
+            " VALUES (:name, :description)"
+            " ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description"
+            " RETURNING id"
+        ),
+        {
+            "name": level,
+            "description": f"Support level {level}",
+        },
+    )
+    role_id = role_result.scalar_one()
+    await auth.db_session.execute(
+        text(
+            "INSERT INTO user_roles (user_id, role_id)"
+            " VALUES (:uid, :rid) ON CONFLICT DO NOTHING"
+        ),
+        {"uid": agent_data["id"], "rid": role_id},
+    )
+    await auth.db_session.flush()
+    return agent_data
 
 
 class TestTicketRoutes:
@@ -357,13 +390,10 @@ class TestTicketRoutes:
         assert response.status_code == 403, response.text
 
     @pytest.mark.asyncio
-    async def test_escalate_ticket_returns_200_closes_assignment_and_returns_to_queue(
+    async def test_escalate_ticket_returns_200_and_moves_to_higher_level_agent(
         self, client: AsyncClient, auth: AuthActions
     ) -> None:
-        await Ticket.delete_all()
-        await Conversation.delete_all()
-
-        ticket_id, _created_user, headers, agent_data = await _create_assigned_ticket(
+        ticket_id, _created_user, headers, first_agent = await _create_assigned_ticket(
             client=client,
             auth=auth,
             admin_email="ticket-admin-escalate@test.com",
@@ -374,38 +404,37 @@ class TestTicketRoutes:
             agent_username="ticketagentescalate",
             product="Produto Escalate N1 N2",
         )
+        target_agent = await _register_agent_with_support_level(
+            auth,
+            email="ticket-agent-escalate-n2@test.com",
+            username="ticketagentescalaten2",
+            level="N2",
+        )
 
         escalate_response = await client.post(
             f"/api/tickets/{ticket_id}/escalate",
             json={
-                "target_department_id": "dept-finance",
-                "target_department_name": "Financeiro",
-                "target_level": "N2",
+                "target_agent_id": target_agent["id"],
                 "reason": "Escalar para N2",
             },
             headers=headers,
         )
         assert escalate_response.status_code == 200, escalate_response.text
         escalate_data = escalate_response.json()["data"]
-        assert escalate_data["status"] == "awaiting_assignment"
-        assert escalate_data["assigned_agent_id"] is None
-        assert escalate_data["assigned_agent_name"] is None
-        assert len(escalate_data["agent_history"]) == 1
-        assert escalate_data["agent_history"][0]["agent_id"] == agent_data["id"]
-        assert escalate_data["agent_history"][0]["exit_date"] is not None
-        assert escalate_data["agent_history"][0]["transfer_reason"] == "Escalar para N2"
+        assert escalate_data["status"] == "in_progress"
+        assert escalate_data["assigned_agent_id"] == target_agent["id"]
+        assert escalate_data["assigned_agent_name"] == "ticketagentescalaten2"
+        assert len(escalate_data["agent_history"]) == 2
 
-        queue_response = await client.get(
-            "/api/tickets/queue",
-            params={"unassigned_only": True, "page": 1, "page_size": 20},
-            headers=headers,
-        )
-        assert queue_response.status_code == 200, queue_response.text
-        queue_items = queue_response.json()["data"]["items"]
-        escalated_queue_item = next(item for item in queue_items if item["id"] == ticket_id)
-        assert escalated_queue_item["status"] == "awaiting_assignment"
-        assert escalated_queue_item["assignee_id"] is None
-        assert escalated_queue_item["unassigned"] is True
+        previous_history = escalate_data["agent_history"][0]
+        current_history = escalate_data["agent_history"][1]
+        assert previous_history["agent_id"] == first_agent["id"]
+        assert previous_history["exit_date"] is not None
+        assert previous_history["transfer_reason"] == "Escalar para N2"
+        assert current_history["agent_id"] == target_agent["id"]
+        assert current_history["level"] == "N2"
+        assert current_history["exit_date"] is None
+        assert current_history["transfer_reason"] == "Escalar para N2"
 
     @pytest.mark.asyncio
     async def test_escalate_ticket_rejects_lower_target_level(
@@ -427,13 +456,15 @@ class TestTicketRoutes:
         assert ticket is not None
         ticket.agent_history[-1].level = "N2"
         await ticket.save()
+        target_agent = await auth.register_agent(
+            email="ticket-agent-escalate-down-n1@test.com",
+            username="ticketagentescalatedownn1",
+        )
 
         response = await client.post(
             f"/api/tickets/{ticket_id}/escalate",
             json={
-                "target_department_id": "dept-finance",
-                "target_department_name": "Financeiro",
-                "target_level": "N1",
+                "target_agent_id": target_agent["id"],
                 "reason": "Tentar reduzir nivel",
             },
             headers=headers,
@@ -485,6 +516,35 @@ class TestTicketRoutes:
         assert current_history["transfer_reason"] == "Redistribuir atendimento"
 
     @pytest.mark.asyncio
+    async def test_transfer_ticket_rejects_different_target_level(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        ticket_id, _created_user, headers, _first_agent = await _create_assigned_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-transfer-level@test.com",
+            admin_username="ticketadmintransferlevel",
+            client_email="ticket-client-transfer-level@test.com",
+            client_username="ticketclienttransferlevel",
+            agent_email="ticket-agent-transfer-level-from@test.com",
+            agent_username="ticketagenttransferlevelfrom",
+            product="Produto Transfer Different Level",
+        )
+        target_agent = await _register_agent_with_support_level(
+            auth,
+            email="ticket-agent-transfer-level-n2@test.com",
+            username="ticketagenttransferleveln2",
+            level="N2",
+        )
+
+        response = await client.post(
+            f"/api/tickets/{ticket_id}/transfer",
+            json={"target_agent_id": target_agent["id"], "reason": "Tentativa N1 para N2"},
+            headers=headers,
+        )
+        assert response.status_code == 400, response.text
+
+    @pytest.mark.asyncio
     async def test_escalate_ticket_publishes_ticket_escalated_event_in_http_flow(
         self, client: AsyncClient, auth: AuthActions, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -498,6 +558,12 @@ class TestTicketRoutes:
             agent_email="ticket-agent-escalate-event@test.com",
             agent_username="ticketagentescalateevent",
             product="Produto Event Escalate",
+        )
+        target_agent = await _register_agent_with_support_level(
+            auth,
+            email="ticket-agent-escalate-event-n2@test.com",
+            username="ticketagentescalateeventn2",
+            level="N2",
         )
 
         dispatcher = get_event_dispatcher()
@@ -515,9 +581,7 @@ class TestTicketRoutes:
         response = await client.post(
             f"/api/tickets/{ticket_id}/escalate",
             json={
-                "target_department_id": "dept-finance",
-                "target_department_name": "Financeiro",
-                "target_level": "N2",
+                "target_agent_id": target_agent["id"],
                 "reason": "Validando evento escalado",
             },
             headers=headers,
@@ -526,6 +590,8 @@ class TestTicketRoutes:
         assert len(published) == 1
         assert str(published[0].ticket_id) == ticket_id
         assert str(published[0].client_id) == created_user["id"]
+        assert str(published[0].new_agent_id) == target_agent["id"]
+        assert published[0].new_agent_name == "ticketagentescalateeventn2"
         assert published[0].new_level == "N2"
         assert published[0].transfer_reason == "Validando evento escalado"
 
@@ -600,9 +666,7 @@ class TestTicketRoutes:
         escalate_response = await client.post(
             f"/api/tickets/{ticket_id}/escalate",
             json={
-                "target_department_id": "dept-finance",
-                "target_department_name": "Financeiro",
-                "target_level": "N2",
+                "target_agent_id": target_agent["id"],
                 "reason": "Sem permissao para escalar",
             },
             headers=user_headers,

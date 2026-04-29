@@ -287,29 +287,13 @@ class EscalateTicketRequest(BaseDTO):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "target_department_id": "dept-finance",
-                "target_department_name": "Financeiro",
-                "target_level": "N2",
+                "target_agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8",
                 "reason": "Necessario apoio do nivel superior.",
             }
         }
     }
 
-    target_department_id: str = Field(
-        ...,
-        description=(
-            "Provisional department reference. Exact type may evolve when "
-            "the department contract is imported."
-        ),
-    )
-    target_department_name: str | None = Field(
-        default=None,
-        description="Optional human-readable department snapshot for API consumers.",
-    )
-    target_level: str = Field(
-        ...,
-        description="Provisional support level reference. Example values: N1, N2, N3.",
-    )
+    target_agent_id: UUID
     reason: str = Field(..., description="Business reason for the escalation.")
 
 
@@ -394,12 +378,11 @@ class TicketEscalatedEventPayload(TicketEventPayload):
                 "ticket_id": "67f0ca60e4b0b1a2c3d4e601",
                 "triage_id": "67f0c9b8e4b0b1a2c3d4e5f6",
                 "client_id": "0f7d7c4f-7b5b-45cb-9d85-6f3c69f0b5d2",
-                "status": "awaiting_assignment",
+                "status": "in_progress",
                 "occurred_at": "2026-04-14T12:40:00Z",
                 "previous_agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8",
-                "source_department_id": "dept-finance",
                 "source_level": "N1",
-                "target_department_id": "dept-finance-specialists",
+                "target_agent_id": "97f0c9b8-e4b0-41a2-83d4-e5f600000001",
                 "target_level": "N2",
                 "reason": "Necessario apoio do nivel superior.",
             }
@@ -408,9 +391,8 @@ class TicketEscalatedEventPayload(TicketEventPayload):
 
     event_name: Literal["ticket.escalated"] = "ticket.escalated"
     previous_agent_id: UUID | None = None
-    source_department_id: str | None = None
     source_level: str | None = None
-    target_department_id: str
+    target_agent_id: UUID
     target_level: str
     reason: str
 

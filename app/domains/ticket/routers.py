@@ -343,7 +343,7 @@ async def assign_ticket(
     dependencies=[require_permission("ticket:escalate")],
     summary="Escalate a ticket",
     description=(
-        "Escalation contract for moving a ticket to a higher support level or target department. "
+        "Escalation contract for moving a ticket to an agent at a higher support level. "
         "This route is expected to emit 'ticket.escalated' after the "
         "business implementation is added."
     ),
@@ -371,8 +371,8 @@ async def escalate_ticket(
     - ticket:escalate
 
     Business notes:
-    - target_department_id and target_level are provisional contract fields.
-    - Only upward level transitions are valid once the rule implementation lands.
+    - Direct escalation assigns the ticket to a target agent at a higher support level.
+    - Department routing is intentionally out of scope for the current ticket model.
 
     Events:
     - ticket.escalated
@@ -391,7 +391,7 @@ async def escalate_ticket(
     dependencies=[require_permission("ticket:transfer")],
     summary="Transfer a ticket",
     description=(
-        "Transfer contract for moving a ticket between agents on the same level/department. "
+        "Transfer contract for moving a ticket between agents on the same support level. "
         "This route is expected to emit 'ticket.assignee_updated' after "
         "the business implementation is added."
     ),

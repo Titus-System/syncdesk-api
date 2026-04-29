@@ -214,7 +214,7 @@ class TicketService:
             )
 
         agent_roles = agent.roles_names()
-        if "agent" not in agent_roles and "admin" not in agent_roles:
+        if not self._can_be_ticket_agent(agent_roles):
             raise AppHTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="The provided user cannot be assigned as a ticket agent.",
@@ -275,26 +275,60 @@ class TicketService:
     ) -> TicketResponse:
         ticket = await self._get_ticket_or_404(ticket_id)
         current_assignment = self._get_active_assignment(ticket)
-        previous_agent_id = (
-            current_assignment.agent_id if current_assignment is not None else None
-        )
-        source_level = self._resolve_ticket_level(ticket)
-        target_level = self._normalize_support_level(dto.target_level)
-
-        if source_level is None:
+        if current_assignment is None:
             raise AppHTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ticket has no current support level to escalate from.",
+                detail="Ticket must have an active assignee before it can be escalated.",
             )
 
+        if current_assignment.agent_id == dto.target_agent_id:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket is already assigned to the target agent.",
+            )
+
+        if ticket.status == TicketStatus.FINISHED:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Finished tickets cannot be escalated.",
+            )
+
+        target_agent = await self.user_service.get_by_id_with_roles(dto.target_agent_id)
+        if target_agent is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent {dto.target_agent_id} does not exist.",
+            )
+
+        target_agent_roles = target_agent.roles_names()
+        if not self._can_be_ticket_agent(target_agent_roles):
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The provided user cannot be assigned as a ticket agent.",
+            )
+
+        previous_agent_id = current_assignment.agent_id
+        source_level = self._normalize_support_level(current_assignment.level)
+        target_level = self._normalize_support_level(
+            self._resolve_agent_level(target_agent_roles)
+        )
         self._validate_escalation_level(source_level, target_level)
 
         now = datetime.now(UTC)
-        if current_assignment is not None:
-            current_assignment.exit_date = now
-            current_assignment.transfer_reason = dto.reason
+        current_assignment.exit_date = now
+        current_assignment.transfer_reason = dto.reason
 
-        ticket.status = TicketStatus.AWAITING_ASSIGNMENT
+        ticket.agent_history.append(
+            TicketHistory(
+                agent_id=target_agent.id,
+                name=self._resolve_user_display_name(target_agent),
+                level=target_level,
+                assignment_date=now,
+                exit_date=None,
+                transfer_reason=dto.reason,
+            )
+        )
+        ticket.status = TicketStatus.IN_PROGRESS
         updated_ticket = await self.repo.save(ticket)
 
         await self.dispatcher.publish(
@@ -302,8 +336,8 @@ class TicketService:
             TicketEscalatedEventSchema(
                 ticket_id=updated_ticket.id,
                 client_id=updated_ticket.client.id,
-                new_agent_id=None,
-                new_agent_name=None,
+                new_agent_id=target_agent.id,
+                new_agent_name=self._resolve_user_display_name(target_agent),
                 new_level=target_level,
                 transfer_reason=dto.reason,
             ),
@@ -318,7 +352,7 @@ class TicketService:
                 ),
                 "source_level": source_level,
                 "target_level": target_level,
-                "target_department_id": dto.target_department_id,
+                "new_agent_id": str(target_agent.id),
             },
         )
 
@@ -357,7 +391,7 @@ class TicketService:
             )
 
         target_agent_roles = target_agent.roles_names()
-        if "agent" not in target_agent_roles and "admin" not in target_agent_roles:
+        if not self._can_be_ticket_agent(target_agent_roles):
             raise AppHTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="The provided user cannot be assigned as a ticket agent.",
@@ -373,8 +407,6 @@ class TicketService:
                 detail="Direct ticket transfer must keep the same support level.",
             )
 
-        # The current Ticket model has no department snapshot, so same-department
-        # validation cannot be completed here without inventing state.
         now = datetime.now(UTC)
         current_assignment.exit_date = now
         current_assignment.transfer_reason = dto.reason
@@ -615,13 +647,6 @@ class TicketService:
             return ticket.agent_history[-1]
         return None
 
-    def _resolve_ticket_level(self, ticket: Ticket) -> str | None:
-        current_assignment = self._get_active_assignment(ticket)
-        if current_assignment is not None:
-            return self._normalize_support_level(current_assignment.level)
-
-        return None
-
     def _normalize_support_level(self, level: str) -> str:
         normalized = level.strip().upper()
         if normalized == "AGENT":
@@ -657,6 +682,13 @@ class TicketService:
 
     def _resolve_user_display_name(self, user: UserWithRoles) -> str:
         return user.name or user.username or user.email
+
+    def _can_be_ticket_agent(self, roles_names: list[str]) -> bool:
+        for role_name in roles_names:
+            normalized = role_name.strip().upper()
+            if normalized in {"AGENT", "ADMIN", "N1", "N2", "N3"}:
+                return True
+        return False
 
     def _resolve_agent_level(self, roles_names: list[str]) -> str:
         for role_name in roles_names:
