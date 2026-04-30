@@ -9,6 +9,7 @@ from app.core.dependencies import (
     PasswordSecurityDep,
     ResetTokenSecurityDep,
 )
+from app.core.event_dispatcher import EventDispatcherDep
 from app.core.exceptions import AppHTTPException
 from app.core.logger import user_id_ctx
 from app.db.postgres.dependencies import PgSessionDep
@@ -98,6 +99,7 @@ def get_password_service(
     password_security: PasswordSecurityDep,
     email_strategy: EmailServiceDep,
     reset_token_security: ResetTokenSecurityDep,
+    dispatcher: EventDispatcherDep,
 ) -> PasswordService:
     return PasswordService(
         user_service=user_service,
@@ -105,6 +107,7 @@ def get_password_service(
         password_security=password_security,
         email_strategy=email_strategy,
         reset_token_security=reset_token_security,
+        dispatcher=dispatcher,
     )
 
 
@@ -115,6 +118,7 @@ def get_auth_service(
     jwt_service: JWTServiceDep,
     password_security: PasswordSecurityDep,
     password_service: Annotated[PasswordService, Depends(get_password_service)],
+    dispatcher: EventDispatcherDep,
 ) -> AuthService:
     return AuthService(
         user_service=user_service,
@@ -123,6 +127,7 @@ def get_auth_service(
         password_security=password_security,
         role_service=role_service,
         password_service=password_service,
+        dispatcher=dispatcher,
     )
 
 

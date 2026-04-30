@@ -2,6 +2,8 @@ from typing import Any
 from uuid import UUID
 
 from app.core.config import get_settings
+from app.core.event_dispatcher import AppEvent, EventDispatcher
+from app.core.event_dispatcher.schemas import WelcomeInviteEventSchema
 from app.core.http.schemas import SessionDeviceInfo
 from app.core.logger import get_logger
 from app.core.security import JWTService, PasswordSecurity
@@ -39,6 +41,7 @@ class AuthService:
         password_security: PasswordSecurity,
         role_service: RoleService,
         password_service: PasswordService,
+        dispatcher: EventDispatcher,
     ):
         self.user_service = user_service
         self.session_service = session_service
@@ -46,6 +49,7 @@ class AuthService:
         self.passwordSecurity = password_security
         self.role_service = role_service
         self.password_service = password_service
+        self.dispatcher = dispatcher
         self.logger = get_logger("app.auth.service")
 
     async def register(
@@ -219,10 +223,18 @@ class AuthService:
         self.logger.info("Admin registered user", extra={"user_id": str(user.id), "email": dto.email})
 
         raw_token = await self.password_service.create_reset_token(user.id, TokenPurpose.INVITE)
-
-        try:
-            await self.password_service.send_welcome_email(user, raw_token, password)
-        except Exception:
-            self.logger.exception("Welcome email dispatch failed after admin_register")
+        settings = get_settings()
+        await self.dispatcher.publish(
+            AppEvent.USER_WELCOME_INVITE,
+            WelcomeInviteEventSchema(
+                user_id=user.id,
+                user_name=user.name or str(user.id),
+                user_email=user.email,
+                roles=user.roles_names(),
+                raw_token=raw_token,
+                one_time_password=password,
+                max_attempts=settings.EMAIL_OUTBOX_MAX_ATTEMPTS,
+            ),
+        )
 
         return user

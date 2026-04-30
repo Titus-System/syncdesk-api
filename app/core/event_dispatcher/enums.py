@@ -8,3 +8,5 @@ class AppEvent(Enum):
     TICKET_ESCALATED = "ticket.escalated"
     TICKET_ASSIGNEE_UPDATED = "ticket.assignee_updated"
     TICKET_CLOSED = "ticket.closed"
+    USER_WELCOME_INVITE = "auth.welcome_invite"
+    USER_PASSWORD_RESET = "auth.password_reset"
