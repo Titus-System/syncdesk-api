@@ -1,18 +1,29 @@
+import asyncio
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from beanie import PydanticObjectId
+from bson import ObjectId
 from httpx import AsyncClient
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from sqlalchemy import text
 
 from app.core.event_dispatcher import get_event_dispatcher
 from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.schemas import (
     TicketAssigneeUpdatedEventSchema,
+    TicketClosedEventSchema,
     TicketEscalatedEventSchema,
 )
+from app.domains.chatbot.enums import AttendanceStatus
+from app.domains.chatbot.listeners import ChatbotListener
+from app.domains.chatbot.repositories.chatbot_repository import ChatbotRepository
+from app.domains.chatbot.services.chatbot_service import ChatbotService
 from app.domains.live_chat.entities import Conversation
+from app.domains.live_chat.listeners import ConversationListener
+from app.domains.live_chat.repositories.conversation_repository import ConversationRepository
+from app.domains.live_chat.services.conversation_service import ConversationService
 from app.domains.ticket.models import Ticket
 from tests.app.e2e.conftest import AuthActions
 
@@ -70,6 +81,16 @@ async def _list_tickets_for_client(
     return response.json()["data"]["items"]
 
 
+async def _drain_background_tasks() -> None:
+    pending = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task() and not task.done()
+    ]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 async def _create_assigned_ticket(
     client: AsyncClient,
     auth: AuthActions,
@@ -104,6 +125,26 @@ async def _create_assigned_ticket(
     assert assign_response.status_code == 200, assign_response.text
 
     return ticket_id, created_user, headers, agent_data
+
+
+def _isolate_dispatcher_handlers(monkeypatch: pytest.MonkeyPatch) -> Any:
+    dispatcher = get_event_dispatcher()
+    monkeypatch.setattr(dispatcher, "_handlers", {})
+    return dispatcher
+
+
+async def _finish_ticket(
+    client: AsyncClient,
+    ticket_id: str,
+    headers: dict[str, str],
+) -> dict[str, Any]:
+    response = await client.patch(
+        f"/api/tickets/{ticket_id}",
+        json={"status": "finished"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 async def _register_agent_with_support_level(
@@ -259,6 +300,191 @@ class TestTicketRoutes:
         assert data["status"] == "in_progress"
         assert data["criticality"] == "medium"
         assert data["description"] == "Chamado assumido e em andamento."
+
+    @pytest.mark.asyncio
+    async def test_finish_ticket_publishes_ticket_closed_event(
+        self, client: AsyncClient, auth: AuthActions, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ticket_id, created_user, headers, _agent_data = await _create_assigned_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-close-event@test.com",
+            admin_username="ticketadmincloseevent",
+            client_email="ticket-client-close-event@test.com",
+            client_username="ticketclientcloseevent",
+            agent_email="ticket-agent-close-event@test.com",
+            agent_username="ticketagentcloseevent",
+            product="Produto Close Event",
+        )
+        ticket = await Ticket.get(PydanticObjectId(ticket_id))
+        assert ticket is not None
+
+        dispatcher = _isolate_dispatcher_handlers(monkeypatch)
+        original_publish = dispatcher.publish
+        published: list[TicketClosedEventSchema] = []
+
+        async def spy_publish(event: AppEvent, payload: Any) -> None:
+            if event == AppEvent.TICKET_CLOSED:
+                assert isinstance(payload, TicketClosedEventSchema)
+                published.append(payload)
+            await original_publish(event, payload)
+
+        monkeypatch.setattr(dispatcher, "publish", spy_publish)
+
+        data = await _finish_ticket(client, ticket_id, headers)
+
+        assert data["status"] == "finished"
+        assert len(published) == 1
+        assert str(published[0].ticket_id) == ticket_id
+        assert published[0].triage_id == ticket.triage_id
+        assert str(published[0].client_id) == created_user["id"]
+
+    @pytest.mark.asyncio
+    async def test_finish_ticket_redundant_status_does_not_publish_duplicate_event(
+        self, client: AsyncClient, auth: AuthActions, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ticket_id, _created_user, headers, _agent_data = await _create_assigned_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-close-idem@test.com",
+            admin_username="ticketadmincloseidem",
+            client_email="ticket-client-close-idem@test.com",
+            client_username="ticketclientcloseidem",
+            agent_email="ticket-agent-close-idem@test.com",
+            agent_username="ticketagentcloseidem",
+            product="Produto Close Idempotent",
+        )
+
+        dispatcher = _isolate_dispatcher_handlers(monkeypatch)
+        original_publish = dispatcher.publish
+        published: list[TicketClosedEventSchema] = []
+
+        async def spy_publish(event: AppEvent, payload: Any) -> None:
+            if event == AppEvent.TICKET_CLOSED:
+                assert isinstance(payload, TicketClosedEventSchema)
+                published.append(payload)
+            await original_publish(event, payload)
+
+        monkeypatch.setattr(dispatcher, "publish", spy_publish)
+
+        first_data = await _finish_ticket(client, ticket_id, headers)
+        assert first_data["status"] == "finished"
+        assert len(published) == 1
+
+        published.clear()
+        second_data = await _finish_ticket(client, ticket_id, headers)
+
+        assert second_data["status"] == "finished"
+        assert published == []
+
+    @pytest.mark.asyncio
+    async def test_finish_ticket_closes_active_live_chat_conversation(
+        self,
+        client: AsyncClient,
+        auth: AuthActions,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await Ticket.delete_all()
+        await Conversation.delete_all()
+
+        ticket_id, created_user, headers, agent_data = await _create_assigned_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-close-livechat@test.com",
+            admin_username="ticketadmincloselivechat",
+            client_email="ticket-client-close-livechat@test.com",
+            client_username="ticketclientcloselivechat",
+            agent_email="ticket-agent-close-livechat@test.com",
+            agent_username="ticketagentcloselivechat",
+            product="Produto Close Live Chat",
+        )
+        conversation = await Conversation(
+            ticket_id=PydanticObjectId(ticket_id),
+            agent_id=UUID(agent_data["id"]),
+            client_id=UUID(created_user["id"]),
+        ).insert()
+        assert conversation.id is not None
+
+        dispatcher = _isolate_dispatcher_handlers(monkeypatch)
+        conversation_listener = ConversationListener(
+            ConversationService(ConversationRepository(mongo_db_conn))
+        )
+        dispatcher.subscribe(AppEvent.TICKET_CLOSED, conversation_listener.on_ticket_closed)
+
+        data = await _finish_ticket(client, ticket_id, headers)
+        await _drain_background_tasks()
+
+        assert data["status"] == "finished"
+        updated_conversation = await Conversation.get(conversation.id)
+        assert updated_conversation is not None
+        assert updated_conversation.finished_at is not None
+        assert updated_conversation.is_opened() is False
+        assert any(
+            message.sender_id == "System" and "encerr" in message.content.lower()
+            for message in updated_conversation.messages
+        )
+
+    @pytest.mark.asyncio
+    async def test_finish_ticket_marks_chatbot_attendance_finished_pending_evaluation(
+        self,
+        client: AsyncClient,
+        auth: AuthActions,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await Ticket.delete_all()
+        await Conversation.delete_all()
+        await mongo_db_conn["atendimentos"].delete_many({})
+
+        ticket_id, created_user, headers, _agent_data = await _create_assigned_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-close-chatbot@test.com",
+            admin_username="ticketadminclosechatbot",
+            client_email="ticket-client-close-chatbot@test.com",
+            client_username="ticketclientclosechatbot",
+            agent_email="ticket-agent-close-chatbot@test.com",
+            agent_username="ticketagentclosechatbot",
+            product="Produto Close Chatbot",
+        )
+        ticket = await Ticket.get(PydanticObjectId(ticket_id))
+        assert ticket is not None
+
+        triage_object_id = ObjectId(str(ticket.triage_id))
+        await mongo_db_conn["atendimentos"].insert_one(
+            {
+                "_id": triage_object_id,
+                "status": AttendanceStatus.IN_PROGRESS.value,
+                "start_date": "2026-04-14T12:00:00+00:00",
+                "end_date": None,
+                "client": {
+                    "id": created_user["id"],
+                    "name": created_user["username"],
+                    "email": created_user["email"],
+                    "company": None,
+                },
+                "triage": [],
+                "result": {"type": "Ticket", "closure_message": "Ticket criado."},
+                "evaluation": None,
+            }
+        )
+
+        dispatcher = _isolate_dispatcher_handlers(monkeypatch)
+        chatbot_listener = ChatbotListener(
+            ChatbotService(ChatbotRepository(mongo_db_conn))
+        )
+        dispatcher.subscribe(AppEvent.TICKET_CLOSED, chatbot_listener.on_ticket_closed)
+
+        data = await _finish_ticket(client, ticket_id, headers)
+        await _drain_background_tasks()
+
+        assert data["status"] == "finished"
+        attendance = await mongo_db_conn["atendimentos"].find_one({"_id": triage_object_id})
+        assert attendance is not None
+        assert attendance["status"] == AttendanceStatus.FINISHED.value
+        assert attendance["end_date"] is not None
+        assert attendance["evaluation"] is None
 
     @pytest.mark.asyncio
     async def test_assign_ticket_returns_200_and_updates_ticket_history_and_status(
