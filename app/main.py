@@ -20,6 +20,7 @@ from app.db.postgres.engine import engine as pg_engine
 from app.domains.chatbot.models import Attendance
 from app.domains.live_chat import Conversation
 from app.domains.live_chat.listeners import register_conversation_listener
+from app.domains.notifications.listeners import register_email_outbox_listener
 from app.domains.ticket import Ticket
 from app.domains.ticket.listeners import register_ticket_listener
 
@@ -28,6 +29,7 @@ def register_app_events_listeners(dispatcher: EventDispatcher) -> None:
     logger = get_logger("app.main")
     register_conversation_listener(dispatcher)
     register_ticket_listener(dispatcher)
+    register_email_outbox_listener(dispatcher)
     logger.info("Registered event listeners to EventDispatcher.")
 
 

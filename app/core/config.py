@@ -135,6 +135,14 @@ class Settings(BaseSettings):
     RUN_RESEND_INTEGRATION_TESTS: bool = False
     RESEND_TEST_TO_EMAIL: str = ""
 
+    # Email Outbox
+    EMAIL_OUTBOX_ENABLED: bool = True
+    EMAIL_OUTBOX_POLL_SECONDS: int = 5
+    EMAIL_OUTBOX_BATCH_SIZE: int = 50
+    EMAIL_OUTBOX_MAX_ATTEMPTS: int = 5
+    EMAIL_OUTBOX_BACKOFF_MAX_SECONDS: int = 900
+    EMAIL_OUTBOX_WORKER_ID: str = ""
+
     model_config = SettingsConfigDict(extra="allow", env_file=".env", env_file_encoding="utf-8")
 
 

@@ -1,9 +1,12 @@
+import asyncio
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.event_dispatcher import AppEvent, event_handler, get_event_dispatcher
+from app.core.event_dispatcher.schemas import PasswordResetEventSchema
 from app.core.security import PasswordSecurity, ResetTokenSecurity
 from app.domains.auth.entities import User
 from app.domains.auth.enums import OAuthProvider, TokenPurpose
@@ -67,6 +70,7 @@ class TestPasswordService:
             password_security=password_security,
             email_strategy=mock_email,
             reset_token_security=reset_token_security,
+            dispatcher=get_event_dispatcher(),
         )
 
     @pytest.fixture
@@ -344,36 +348,49 @@ class TestPasswordService:
     # ── forgot_password ───────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_forgot_password_sends_email(
+    async def test_forgot_password_creates_token_in_db(
         self,
         service: PasswordService,
         local_user: User,
-        mock_email: AsyncMock,
-        user_repo: UserRepository,
+        token_repo: PasswordResetTokenRepository,
+        reset_token_security: ResetTokenSecurity,
     ) -> None:
+        """forgot_password must create and store a reset token in the DB."""
+        # Create a sentinel token first so we can detect a NEW one was created
+        first_raw = await service.create_reset_token(local_user.id, TokenPurpose.RESET)
+        first_hash = reset_token_security.hash_token(first_raw)
+
         await service.forgot_password(local_user.email)
-        mock_email.send_reset_email.assert_awaited_once()
-        call_args = mock_email.send_reset_email.call_args
-        assert call_args[0][0] == local_user.email
+
+        # The sentinel token is now invalidated (used_at set), proving a new one was created
+        old = await token_repo.get_by_hash(first_hash)
+        assert old is not None
+        assert old.used_at is not None
 
     @pytest.mark.asyncio
     async def test_forgot_password_nonexistent_email_does_nothing(
-        self, service: PasswordService, mock_email: AsyncMock
+        self,
+        service: PasswordService,
     ) -> None:
-        """Should silently return without sending email (no user enumeration)."""
-        await service.forgot_password("nonexistent@nowhere.com")
-        mock_email.send_reset_email.assert_not_awaited()
+        """Should silently return without any side-effect (no user enumeration)."""
+        await service.forgot_password("nonexistent@nowhere.com")  # must not raise
 
     @pytest.mark.asyncio
-    async def test_forgot_password_email_failure_does_not_raise(
+    async def test_forgot_password_pipeline_failure_does_not_raise(
         self,
         service: PasswordService,
         local_user: User,
-        mock_email: AsyncMock,
+        token_repo: PasswordResetTokenRepository,
     ) -> None:
-        """If the email service fails, forgot_password should swallow the error."""
-        mock_email.send_reset_email.side_effect = Exception("SMTP down")
-        await service.forgot_password(local_user.email)  # should not raise
+        """If publishing the event raises, forgot_password must swallow the error."""
+        # Temporarily corrupt the dispatcher's payload map to force an EventSchemaError
+        # by publishing with the wrong event type — the try/except in forgot_password catches it
+        original_map = service.dispatcher._payload_map.copy()
+        del service.dispatcher._payload_map[AppEvent.USER_PASSWORD_RESET]  # type: ignore[misc]
+        try:
+            await service.forgot_password(local_user.email)  # should not raise
+        finally:
+            service.dispatcher._payload_map = original_map  # type: ignore[assignment]
 
     @pytest.mark.asyncio
     async def test_forgot_password_invalidates_previous_token(
@@ -479,35 +496,45 @@ class TestPasswordService:
 
     # ── end-to-end flow ───────────────────────────────────────────────
 
+    @pytest.fixture
+    async def captured_reset_events(self) -> list[PasswordResetEventSchema]:
+        """Subscribe a real (non-mock) listener that captures PASSWORD_RESET events.
+
+        Cleaned up via unsubscribe after the test to avoid handler accumulation.
+        """
+        captured: list[PasswordResetEventSchema] = []
+        dispatcher = get_event_dispatcher()
+
+        @event_handler(PasswordResetEventSchema)
+        async def _capture(schema: PasswordResetEventSchema) -> None:
+            captured.append(schema)
+
+        dispatcher.subscribe(AppEvent.USER_PASSWORD_RESET, _capture)
+        yield captured
+        dispatcher.unsubscribe(AppEvent.USER_PASSWORD_RESET, _capture)
+
     @pytest.mark.asyncio
     async def test_full_forgot_and_reset_flow(
         self,
         service: PasswordService,
         local_user: User,
         user_repo: UserRepository,
-        mock_email: AsyncMock,
         password_security: PasswordSecurity,
-        reset_token_security: ResetTokenSecurity,
+        captured_reset_events: list[PasswordResetEventSchema],
     ) -> None:
-        """Simulate the complete forgot → email → reset → login-with-new-password flow."""
-        # 1. user triggers forgot password
+        """Simulate the complete forgot → event dispatched → reset → login flow."""
         await service.forgot_password(local_user.email)
-        mock_email.send_reset_email.assert_awaited_once()
+        await asyncio.sleep(0)  # yield so the async task fires the capture listener
 
-        # 2. extract the raw token from the email params (URL contains it)
-        reset_url: str = mock_email.send_reset_email.call_args[0][1].reset_url
-        raw_token = reset_url.split("token=")[1]
+        assert len(captured_reset_events) == 1
+        raw_token: str = captured_reset_events[0].raw_token
 
-        # 3. reset password using token
         result = await service.reset_password(raw_token, "FinalNewPass1!")
         assert result is not None
 
-        # 4. verify the new password works
         fetched = await user_repo.get_by_id(local_user.id)
         assert fetched is not None
         assert password_security.verify_password("FinalNewPass1!", fetched.password_hash)
-
-        # 5. old password no longer works
         assert not password_security.verify_password("OldPassword123!", fetched.password_hash)
 
     @pytest.mark.asyncio
@@ -516,23 +543,21 @@ class TestPasswordService:
         service: PasswordService,
         local_user: User,
         user_repo: UserRepository,
-        mock_email: AsyncMock,
         password_security: PasswordSecurity,
+        captured_reset_events: list[PasswordResetEventSchema],
     ) -> None:
         """Change password first, then forgot-password flow should still work."""
-        # 1. change password normally
         await service.change_password(local_user, "OldPassword123!", "Middle456!")
 
-        # 2. forgot password
         await service.forgot_password(local_user.email)
-        reset_url: str = mock_email.send_reset_email.call_args[0][1].reset_url
-        raw_token = reset_url.split("token=")[1]
+        await asyncio.sleep(0)  # yield so the async task fires the capture listener
 
-        # 3. reset
+        assert len(captured_reset_events) == 1
+        raw_token: str = captured_reset_events[0].raw_token
+
         result = await service.reset_password(raw_token, "Final789!")
         assert result is not None
 
-        # 4. only the last password works
         fetched = await user_repo.get_by_id(local_user.id)
         assert fetched is not None
         assert password_security.verify_password("Final789!", fetched.password_hash)

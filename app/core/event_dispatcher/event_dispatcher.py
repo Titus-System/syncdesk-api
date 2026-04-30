@@ -29,6 +29,11 @@ class EventDispatcher:
         self._payload_map = payload_map
         self.logger = logger
 
+    def unsubscribe(self, event: AppEvent, handler: EventHandler) -> None:
+        """Remove a previously registered handler. No-op if not found."""
+        if event in self._handlers:
+            self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
+
     def subscribe(self, event: AppEvent, handler: EventHandler) -> None:
         """Register a handler to react to an event.
 
