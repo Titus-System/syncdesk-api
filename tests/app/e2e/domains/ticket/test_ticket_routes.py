@@ -1497,3 +1497,112 @@ class TestTicketRoutes:
             headers=headers,
         )
         assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_get_ticket_history_returns_entries_after_assign_and_escalate(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        ticket_id, _created_user, headers, first_agent = await _create_assigned_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-history@test.com",
+            admin_username="ticketadminhistory",
+            client_email="ticket-client-history@test.com",
+            client_username="ticketclienthistory",
+            agent_email="ticket-agent-history@test.com",
+            agent_username="ticketagenthistory",
+            product="Produto Histórico",
+        )
+        target_agent = await _register_agent_with_support_level(
+            auth,
+            email="ticket-agent-history-n2@test.com",
+            username="ticketagenthistoryn2",
+            level="N2",
+        )
+        escalate_response = await client.post(
+            f"/api/tickets/{ticket_id}/escalate",
+            json={
+                "target_agent_id": target_agent["id"],
+                "reason": "Subir para N2 no histórico",
+            },
+            headers=headers,
+        )
+        assert escalate_response.status_code == 200, escalate_response.text
+
+        response = await client.get(
+            f"/api/tickets/{ticket_id}/history",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        data: list[dict[str, Any]] = response.json()["data"]
+        assert isinstance(data, list)
+        assert len(data) == 2
+
+        previous, current = data
+        assert previous["agent_id"] == first_agent["id"]
+        assert previous["name"] == "ticketagenthistory"
+        assert previous["exit_date"] is not None
+        assert previous["transfer_reason"] == "Subir para N2 no histórico"
+        assert current["agent_id"] == target_agent["id"]
+        assert current["name"] == "ticketagenthistoryn2"
+        assert current["level"] == "N2"
+        assert current["exit_date"] is None
+        assert current["transfer_reason"] == "Subir para N2 no histórico"
+
+    @pytest.mark.asyncio
+    async def test_get_ticket_history_returns_empty_list_for_unassigned_ticket(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-historyempty@test.com",
+            admin_username="ticketadminhistoryempty",
+            client_email="ticket-client-historyempty@test.com",
+            client_username="ticketclienthistoryempty",
+            product="Produto Histórico Vazio",
+        )
+        items = await _list_tickets_for_client(client, headers, created_user["id"])
+        ticket_id = items[0]["id"]
+
+        response = await client.get(
+            f"/api/tickets/{ticket_id}/history",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_ticket_history_returns_404_for_missing_ticket(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="ticket-admin-history404@test.com",
+            username="ticketadminhistory404",
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        response = await client.get(
+            "/api/tickets/67f0c9b8e4b0b1a2c3d4e5ff/history",
+            headers=headers,
+        )
+        assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_get_ticket_history_requires_permission(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, admin_headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-historyperm@test.com",
+            admin_username="ticketadminhistoryperm",
+            client_email="ticket-client-historyperm@test.com",
+            client_username="ticketclienthistoryperm",
+            product="Produto Histórico Permissão",
+        )
+        items = await _list_tickets_for_client(client, admin_headers, created_user["id"])
+        ticket_id = items[0]["id"]
+
+        unauthenticated = await client.get(f"/api/tickets/{ticket_id}/history")
+        assert unauthenticated.status_code == 403, unauthenticated.text

@@ -290,6 +290,8 @@ class TestTicketAssigneeUpdatedPubSub:
         ticket_id = PydanticObjectId(created.id)
         agent_id = uuid4()
 
+        await _drain_background_tasks()
+
         await ticket_service.assign_ticket(
             ticket_id,
             AssignTicketRequest(agent_id=agent_id, reason="Encaminhado para atendimento"),

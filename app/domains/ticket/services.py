@@ -553,6 +553,11 @@ class TicketService:
             current_status=updated_ticket.status,
         )
 
+
+    async def get_ticket_history(self, ticket_id: PydanticObjectId) -> list[TicketHistory] | None:
+        return await self.repo.get_ticket_history(ticket_id)
+
+
     async def _build_ticket_client(
         self,
         client_id: UUID,

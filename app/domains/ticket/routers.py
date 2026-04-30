@@ -7,6 +7,7 @@ from starlette.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
+from app.db.exceptions import ResourceNotFoundError
 from app.domains.auth import CurrentUserSessionDep, require_permission
 from app.domains.ticket.dependencies import TicketServiceDep
 from app.domains.ticket.schemas import (
@@ -533,3 +534,26 @@ async def delete_ticket_comment(
         )
 
     return response.success(data = comment.model_dump(mode="json"), status_code=status.HTTP_200_OK)
+
+
+@ticket_router.get(
+    "/{ticket_id}/history",
+    dependencies=[require_permission("ticket:read")],
+    tags=["Tickets"]
+)
+async def get_ticket_history(
+    ticket_id: PydanticObjectId,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    hist = await service.get_ticket_history(ticket_id)
+    if hist is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ticket {ticket_id} not found."
+        )
+
+    return response.success(
+        data=[entry.model_dump(mode="json") for entry in hist],
+        status_code=status.HTTP_200_OK,
+    )
