@@ -157,10 +157,17 @@ class ChatbotService:
 
     async def finish_attendance_pending_evaluation(self, triage_id: str) -> bool:
         finished_at = datetime.now(UTC)
-        updated = await self.repository.finish_attendance_pending_evaluation(
-            triage_id,
-            finished_at.isoformat(),
-        )
+        try:
+            updated = await self.repository.finish_attendance_pending_evaluation(
+                triage_id,
+                finished_at.isoformat(),
+            )
+        except Exception:
+            self.logger.exception(
+                "Failed to finish attendance from ticket close event",
+                extra={"triage_id": triage_id},
+            )
+            return False
         if updated:
             self.logger.info(
                 "Attendance finished from ticket close event",

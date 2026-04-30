@@ -2,6 +2,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
 from pymongo import DESCENDING
+from app.core.logger import get_logger
 from app.domains.chatbot.schemas import AttendanceSearchFiltersDTO, CreateAttendanceDTO
 
 class ChatbotRepository:
@@ -9,6 +10,7 @@ class ChatbotRepository:
         # Nomes das coleções mantidos como no banco de dados para evitar perda de referência
         self.attendances_collection = db["atendimentos"]
         self.tickets_collection = db["tickets"]
+        self.logger = get_logger("app.chatbot.repository")
 
     async def create_attendance(self, dto: CreateAttendanceDTO, triage_id: str) -> dict[str, Any]:
         document = dto.model_dump(mode="json")
@@ -59,21 +61,28 @@ class ChatbotRepository:
         finished_at: str,
     ) -> bool:
         try:
-            query_id = ObjectId(attendance_id)
-        except Exception:
-            query_id = attendance_id
+            try:
+                query_id = ObjectId(attendance_id)
+            except Exception:
+                query_id = attendance_id
 
-        result = await self.attendances_collection.update_one(
-            {"_id": query_id},
-            {
-                "$set": {
-                    "status": "finished",
-                    "end_date": finished_at,
-                    "evaluation": None,
-                }
-            },
-        )
-        return result.matched_count > 0
+            result = await self.attendances_collection.update_one(
+                {"_id": query_id},
+                {
+                    "$set": {
+                        "status": "finished",
+                        "end_date": finished_at,
+                        "evaluation": None,
+                    }
+                },
+            )
+            return result.matched_count > 0
+        except Exception:
+            self.logger.exception(
+                "Failed to finish attendance pending evaluation",
+                extra={"attendance_id": attendance_id},
+            )
+            return False
 
     async def list_attendances(
         self, filters: AttendanceSearchFiltersDTO
