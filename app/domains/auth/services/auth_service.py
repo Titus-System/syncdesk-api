@@ -87,17 +87,25 @@ class AuthService:
         user = await self.user_service.get_by_email_with_roles(email=dto.email)
         if user is None:
             login_total.labels(status="user_not_found").inc()
+            self.logger.info("Login failed: user not found", extra={"email": dto.email})
             raise UserNotFoundError()
 
         password_hash = user.password_hash
         if not password_hash:
+            self.logger.info(
+                "Login failed: password not configured",
+                extra={"user_id": str(user.id), "email": user.email},
+            )
             login_total.labels(status="no_password").inc()
             raise UserPasswordNotConfiguredError()
 
         is_authenticated = self.passwordSecurity.verify_password(dto.password, password_hash)
         if not is_authenticated:
             login_total.labels(status="invalid_password").inc()
-            self.logger.warning("Failed login attempt", extra={"email": dto.email})
+            self.logger.warning(
+                "Login failed: invalid password",
+                extra={"user_id": str(user.id), "email": dto.email},
+            )
             raise InvalidPasswordError(user.email)
 
         role_names = [r.name for r in user.roles] if user.roles is not None else []
