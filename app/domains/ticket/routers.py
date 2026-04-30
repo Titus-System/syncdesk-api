@@ -7,6 +7,7 @@ from starlette.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
+from app.db.exceptions import ResourceNotFoundError
 from app.domains.auth import CurrentUserSessionDep, require_permission
 from app.domains.ticket.dependencies import TicketServiceDep
 from app.domains.ticket.schemas import (
@@ -308,6 +309,8 @@ async def assign_ticket(
     ticket_id: PydanticObjectId,
     dto: AssignTicketRequest,
     _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
 ) -> JSONResponse:
     """
     HTTP POST /api/tickets/{ticket_id}/assign
@@ -327,8 +330,11 @@ async def assign_ticket(
     Events:
     - ticket.assignee_updated
     """
-    _ = (ticket_id, dto)
-    _contract_not_implemented("Ticket assignment")
+    result = await service.assign_ticket(ticket_id, dto)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.post(
@@ -338,7 +344,7 @@ async def assign_ticket(
     dependencies=[require_permission("ticket:escalate")],
     summary="Escalate a ticket",
     description=(
-        "Escalation contract for moving a ticket to a higher support level or target department. "
+        "Escalation contract for moving a ticket to an agent at a higher support level. "
         "This route is expected to emit 'ticket.escalated' after the "
         "business implementation is added."
     ),
@@ -347,6 +353,8 @@ async def escalate_ticket(
     ticket_id: PydanticObjectId,
     dto: EscalateTicketRequest,
     _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
 ) -> JSONResponse:
     """
     HTTP POST /api/tickets/{ticket_id}/escalate
@@ -364,14 +372,17 @@ async def escalate_ticket(
     - ticket:escalate
 
     Business notes:
-    - target_department_id and target_level are provisional contract fields.
-    - Only upward level transitions are valid once the rule implementation lands.
+    - Direct escalation assigns the ticket to a target agent at a higher support level.
+    - Department routing is intentionally out of scope for the current ticket model.
 
     Events:
     - ticket.escalated
     """
-    _ = (ticket_id, dto)
-    _contract_not_implemented("Ticket escalation")
+    result = await service.escalate_ticket(ticket_id, dto)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.post(
@@ -381,7 +392,7 @@ async def escalate_ticket(
     dependencies=[require_permission("ticket:transfer")],
     summary="Transfer a ticket",
     description=(
-        "Transfer contract for moving a ticket between agents on the same level/department. "
+        "Transfer contract for moving a ticket between agents on the same support level. "
         "This route is expected to emit 'ticket.assignee_updated' after "
         "the business implementation is added."
     ),
@@ -390,6 +401,8 @@ async def transfer_ticket(
     ticket_id: PydanticObjectId,
     dto: TransferTicketRequest,
     _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
 ) -> JSONResponse:
     """
     HTTP POST /api/tickets/{ticket_id}/transfer
@@ -409,8 +422,11 @@ async def transfer_ticket(
     Events:
     - ticket.assignee_updated
     """
-    _ = (ticket_id, dto)
-    _contract_not_implemented("Ticket transfer")
+    result = await service.transfer_ticket(ticket_id, dto)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @ticket_router.post(
@@ -518,3 +534,26 @@ async def delete_ticket_comment(
         )
 
     return response.success(data = comment.model_dump(mode="json"), status_code=status.HTTP_200_OK)
+
+
+@ticket_router.get(
+    "/{ticket_id}/history",
+    dependencies=[require_permission("ticket:read")],
+    tags=["Tickets"]
+)
+async def get_ticket_history(
+    ticket_id: PydanticObjectId,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    hist = await service.get_ticket_history(ticket_id)
+    if hist is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ticket {ticket_id} not found."
+        )
+
+    return response.success(
+        data=[entry.model_dump(mode="json") for entry in hist],
+        status_code=status.HTTP_200_OK,
+    )

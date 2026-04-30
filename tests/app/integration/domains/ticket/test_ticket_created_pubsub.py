@@ -11,9 +11,13 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
-from app.core.event_dispatcher.schemas import EVENT_PAYLOAD_MAP, TicketCreatedEventSchema
+from app.core.event_dispatcher.schemas import (
+    EVENT_PAYLOAD_MAP,
+    TicketAssigneeUpdatedEventSchema,
+    TicketCreatedEventSchema,
+)
 from app.core.logger import get_logger
-from app.domains.auth.entities import User
+from app.domains.auth.entities import Role, User, UserWithRoles
 from app.domains.auth.services.user_service import UserService
 from app.domains.live_chat.entities import Conversation
 from app.domains.live_chat.listeners import ConversationListener
@@ -21,7 +25,7 @@ from app.domains.live_chat.repositories.conversation_repository import Conversat
 from app.domains.live_chat.services.conversation_service import ConversationService
 from app.domains.ticket.models import Ticket, TicketCriticality, TicketType
 from app.domains.ticket.repositories import TicketRepository
-from app.domains.ticket.schemas import CreateTicketDTO
+from app.domains.ticket.schemas import AssignTicketRequest, CreateTicketDTO
 from app.domains.ticket.services import TicketService
 
 
@@ -51,7 +55,17 @@ def user_service() -> UserService:
             username="testclient",
         )
 
+    async def _get_by_id_with_roles(user_id: UUID) -> UserWithRoles:
+        return UserWithRoles(
+            id=user_id,
+            email="agent@example.com",
+            name="Test Agent",
+            username="testagent",
+            roles=[Role(id=1, name="agent")],
+        )
+
     service.get_by_id.side_effect = _get_by_id
+    service.get_by_id_with_roles.side_effect = _get_by_id_with_roles
     return service
 
 
@@ -215,3 +229,77 @@ class TestTicketCreatedPubSub:
             PydanticObjectId(response.id)
         )
         assert len(convs) == 1
+
+
+class TestTicketAssigneeUpdatedPubSub:
+    @pytest.mark.asyncio
+    async def test_publishes_ticket_assignee_updated_event(
+        self,
+        ticket_service: TicketService,
+        dispatcher: EventDispatcher,
+    ) -> None:
+        received: list[TicketAssigneeUpdatedEventSchema] = []
+
+        original_publish = dispatcher.publish
+
+        async def spy_publish(event: AppEvent, payload: Any) -> None:
+            if event == AppEvent.TICKET_ASSIGNEE_UPDATED:
+                received.append(payload)
+            await original_publish(event, payload)
+
+        dispatcher.publish = spy_publish  # type: ignore[method-assign]
+
+        dto = _make_dto()
+        created = await ticket_service.create_ticket(dto)
+        ticket_id = PydanticObjectId(created.id)
+        agent_id = uuid4()
+
+        response = await ticket_service.assign_ticket(
+            ticket_id,
+            AssignTicketRequest(agent_id=agent_id, reason="Primeira atribuicao"),
+        )
+        await _drain_background_tasks()
+
+        assert response.status.value == "in_progress"
+        assert response.assigned_agent_id == agent_id
+        assert len(received) == 1
+        event = received[0]
+        assert isinstance(event, TicketAssigneeUpdatedEventSchema)
+        assert event.ticket_id == ticket_id
+        assert event.client_id == dto.client_id
+        assert event.new_agent_id == agent_id
+        assert event.reason == "Primeira atribuicao"
+
+    @pytest.mark.asyncio
+    async def test_listener_reacts_to_published_assignee_event(
+        self,
+        ticket_service: TicketService,
+        conversation_listener: ConversationListener,
+        dispatcher: EventDispatcher,
+    ) -> None:
+        dispatcher.subscribe(
+            AppEvent.TICKET_CREATED, conversation_listener.on_ticket_created
+        )
+        dispatcher.subscribe(
+            AppEvent.TICKET_ASSIGNEE_UPDATED,
+            conversation_listener.on_ticket_assignee_updated,
+        )
+
+        dto = _make_dto()
+        created = await ticket_service.create_ticket(dto)
+        ticket_id = PydanticObjectId(created.id)
+        agent_id = uuid4()
+
+        await _drain_background_tasks()
+
+        await ticket_service.assign_ticket(
+            ticket_id,
+            AssignTicketRequest(agent_id=agent_id, reason="Encaminhado para atendimento"),
+        )
+        await _drain_background_tasks()
+
+        convs = await conversation_listener.service.get_chats_from_ticket(ticket_id)
+        assert len(convs) == 2
+        assert not convs[0].is_opened()
+        assert convs[1].is_opened()
+        assert convs[1].agent_id == agent_id

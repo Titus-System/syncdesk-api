@@ -148,6 +148,27 @@ class ConversationService:
         c = await self.repo.update(c)
         return c
 
+    async def close_active_ticket_conversation(
+        self,
+        ticket_id: PydanticObjectId,
+        system_message: str,
+        finished_at: datetime | None = None,
+    ) -> Conversation | None:
+        conversation = await self.get_latest_open_by_ticket_id(ticket_id)
+        if conversation is None or conversation.id is None:
+            return None
+
+        await self.add_message_to_conversation(
+            conversation.id,
+            ChatMessage.create(
+                conversation_id=conversation.id,
+                sender_id="System",
+                type="text",
+                content=system_message,
+            ),
+        )
+        return await self.end_conversation(conversation.id, finished_at)
+
     async def append_conversation_to_ticket(
         self,
         ticket_id: PydanticObjectId,

@@ -148,6 +148,31 @@ class ChatbotService:
             raise AttendanceNotFoundException(triage_id)
         return self._map_attendance_response(attendance)
 
+    async def finish_attendance_pending_evaluation(self, triage_id: str) -> bool:
+        finished_at = datetime.now(UTC)
+        try:
+            updated = await self.repository.finish_attendance_pending_evaluation(
+                triage_id,
+                finished_at.isoformat(),
+            )
+        except Exception:
+            self.logger.exception(
+                "Failed to finish attendance from ticket close event",
+                extra={"triage_id": triage_id},
+            )
+            return False
+        if updated:
+            self.logger.info(
+                "Attendance finished from ticket close event",
+                extra={"triage_id": triage_id},
+            )
+        else:
+            self.logger.debug(
+                "Skipping attendance finish from ticket close event - attendance not found",
+                extra={"triage_id": triage_id},
+            )
+        return updated
+
     async def set_evaluation(
         self, triage_id: str, payload: EvaluationRequest
     ) -> EvaluationResponse:

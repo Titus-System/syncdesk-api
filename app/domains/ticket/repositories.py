@@ -4,7 +4,7 @@ from uuid import UUID
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.domains.ticket.models import Ticket, TicketComment
+from app.domains.ticket.models import Ticket, TicketComment, TicketHistory
 from app.domains.ticket.schemas import TicketQueueFiltersDTO, TicketSearchFiltersDTO
 from app.domains.ticket.schemas import TicketSearchFiltersDTO, UpdateTicketCommentDTO
 
@@ -79,6 +79,14 @@ class TicketRepository:
         ticket.comments = [c for c in ticket.comments if c.comment_id != comment_id]
         await ticket.save()
         return comment
+    
+    async def get_ticket_history(
+        self, ticket_id: PydanticObjectId
+    ) -> list[TicketHistory] | None:
+        ticket = await Ticket.get(ticket_id)
+        if ticket is None:
+            return None
+        return ticket.agent_history
 
     @staticmethod
     def _build_query(filters: TicketSearchFiltersDTO) -> dict[str, Any]:
