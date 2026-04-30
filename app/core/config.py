@@ -19,8 +19,8 @@ class Settings(BaseSettings):
 
     ENVIRONMENT: str = "development"
 
-    MOBILE_FRONTEND_URL: str = "syncdesk:/"
-    WEB_FRONTEND_URL: str = "http://localhost:3000"
+    MOBILE_FRONTEND_URL: str = "http://syncdesk.pro"
+    WEB_FRONTEND_URL: str = "http://syncdesk.pro"
 
     # CORS settings
     CORS_ALLOW_ORIGINS: list[str] = ["*"]
