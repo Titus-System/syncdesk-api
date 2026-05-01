@@ -207,3 +207,10 @@ class ConversationService:
                 await self.repo.add_child(last_conv.id, new_conv.id)
 
         return new_conv
+    
+
+    async def search_conversation_by_text(
+        self, search_query: str, user: UserWithRoles
+    ) -> list[Conversation] | None:
+        ...
+    

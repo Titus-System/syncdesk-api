@@ -556,6 +556,25 @@ class TicketService:
 
     async def get_ticket_history(self, ticket_id: PydanticObjectId) -> list[TicketHistory] | None:
         return await self.repo.get_ticket_history(ticket_id)
+    
+    async def search_ticket_by_text(
+        self, search_query: str, user: UserWithRoles
+    ) -> list[Ticket] | None:
+        if not search_query.strip():
+            return []
+
+        roles = user.roles_names()
+
+        if "admin" in roles:
+            return await self.repo.search_ticket(
+                search_query, company_id=user.company_id
+            )
+
+        if any(role.strip().upper() in {"AGENT", "N1", "N2", "N3"} for role in roles):
+            return await self.repo.search_ticket(search_query, agent_id=user.id)
+
+        return await self.repo.search_ticket(search_query, client_id=user.id)
+
 
 
     async def _build_ticket_client(

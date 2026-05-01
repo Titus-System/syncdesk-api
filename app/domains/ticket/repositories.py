@@ -1,3 +1,4 @@
+import re
 from typing import Any
 from uuid import UUID
 
@@ -87,6 +88,38 @@ class TicketRepository:
         if ticket is None:
             return None
         return ticket.agent_history
+    
+
+    async def search_ticket(
+        self,
+        search_query: str,
+        client_id: UUID | None = None,
+        agent_id: UUID | None = None,
+        company_id: UUID | None = None,
+    ) -> list[Ticket] | None:
+        pattern = re.escape(search_query)
+        text_filter: dict[str, Any] = {
+            "$or": [
+                {"description": {"$regex": pattern, "$options": "i"}},
+                {"comments.text": {"$regex": pattern, "$options": "i"}},
+            ]
+        }
+
+        scope_filter: dict[str, Any] | None = None
+        if client_id is not None:
+            scope_filter = {"client.id": client_id}
+        elif agent_id is not None:
+            scope_filter = {"agent_history.agent_id": agent_id}
+        elif company_id is not None:
+            scope_filter = {"client.company.id": company_id}
+        else:
+            return []
+
+        try:
+            return await Ticket.find({"$and": [text_filter, scope_filter]}).to_list()
+        except Exception:
+            return None
+
 
     @staticmethod
     def _build_query(filters: TicketSearchFiltersDTO) -> dict[str, Any]:
