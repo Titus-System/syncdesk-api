@@ -566,8 +566,6 @@ class TicketService:
         roles = user.roles_names()
 
         if "admin" in roles:
-            if user.company_id is None:
-                return []
             return await self.repo.search_ticket(
                 search_query, company_id=user.company_id
             )

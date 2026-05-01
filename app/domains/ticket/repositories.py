@@ -113,7 +113,7 @@ class TicketRepository:
         elif company_id is not None:
             scope_filter = {"client.company.id": company_id}
         else:
-            return None
+            return []
 
         try:
             return await Ticket.find({"$and": [text_filter, scope_filter]}).to_list()

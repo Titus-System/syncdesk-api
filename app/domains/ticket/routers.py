@@ -7,7 +7,6 @@ from starlette.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
-from app.db.exceptions import ResourceNotFoundError
 from app.domains.auth import CurrentUserSessionDep, require_permission
 from app.domains.ticket.dependencies import TicketServiceDep
 from app.domains.ticket.schemas import (
@@ -180,8 +179,14 @@ async def search_tickets_by_text(
     auth: CurrentUserSessionDep,
     service: TicketServiceDep,
     response: ResponseFactoryDep,
-    search_query: str = Query(default=""),
+    search_query: str | None = Query(default=None, min_length=5, max_length=100),
 ) -> JSONResponse:
+    if search_query is None:
+        raise AppHTTPException(
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail="provide a search text using search_query in the query string"
+        )
+    
     res = await service.search_ticket_by_text(search_query, auth[0])
     if res is None:
         raise AppHTTPException(

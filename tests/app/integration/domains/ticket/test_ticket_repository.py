@@ -246,7 +246,7 @@ class TestSearchTicketEdgeCases:
 
         result = await repository.search_ticket("qualquer")
 
-        assert result is None
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_special_regex_characters_are_escaped(

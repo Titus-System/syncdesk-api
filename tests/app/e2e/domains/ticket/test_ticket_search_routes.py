@@ -404,5 +404,5 @@ class TestSearchTicketByTextRoute:
 
         status_code, body = await _search(client, client_headers, "")
 
-        assert status_code == 200, body
-        assert body["data"] == []
+        assert status_code == 422, body
+        assert body["title"] == "Validation Error"
