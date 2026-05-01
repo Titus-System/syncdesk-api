@@ -141,21 +141,7 @@ class UserRepository:
         row = result.scalar_one_or_none()
         if row is None:
             return None
-        roles = [RoleEntity(id=r.id, name=r.name, description=r.description) for r in row.roles]
-        return UserWithRoles(
-            id=row.id,
-            email=row.email,
-            password_hash=row.password_hash,
-            username=row.username,
-            name=row.name,
-            oauth_provider=row.oauth_provider,
-            oauth_provider_id=row.oauth_provider_id,
-            is_active=row.is_active,
-            is_verified=row.is_verified,
-            must_change_password=row.must_change_password,
-            must_accept_terms=row.must_accept_terms,
-            roles=roles,
-        )
+        return self._to_user_with_roles(row)
 
     async def get_by_email_with_roles(self, email: str) -> UserWithRoles | None:
         stmt = (
@@ -165,21 +151,7 @@ class UserRepository:
         row = result.scalar_one_or_none()
         if row is None:
             return None
-        roles = [RoleEntity(id=r.id, name=r.name, description=r.description) for r in row.roles]
-        return UserWithRoles(
-            id=row.id,
-            email=row.email,
-            password_hash=row.password_hash,
-            username=row.username,
-            name=row.name,
-            oauth_provider=row.oauth_provider,
-            oauth_provider_id=row.oauth_provider_id,
-            is_active=row.is_active,
-            is_verified=row.is_verified,
-            must_change_password=row.must_change_password,
-            must_accept_terms=row.must_accept_terms,
-            roles=roles,
-        )
+        return self._to_user_with_roles(row)
 
     async def add_roles(
         self, id: UUID, role_ids: list[int]
@@ -345,6 +317,7 @@ class UserRepository:
             name=model.name,
             oauth_provider=model.oauth_provider,
             oauth_provider_id=model.oauth_provider_id,
+            company_id=model.company_id,
             is_active=model.is_active,
             is_verified=model.is_verified,
             must_change_password=model.must_change_password,
@@ -361,6 +334,7 @@ class UserRepository:
             name=model.name,
             oauth_provider=model.oauth_provider,
             oauth_provider_id=model.oauth_provider_id,
+            company_id=model.company_id,
             is_active=model.is_active,
             is_verified=model.is_verified,
             must_change_password=model.must_change_password,

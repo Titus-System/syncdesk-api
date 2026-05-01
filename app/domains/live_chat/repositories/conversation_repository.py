@@ -369,6 +369,15 @@ class ConversationRepository:
             for doc in docs
         ]
 
+    async def search_conversation_by_text(
+        self, search_query: str, user_id: UUID | None = None, company_id: UUID | None = None
+    ) -> list[Conversation] | None:
+        ...
+
+
+
+
+
     @staticmethod
     def _normalize_uuid_value(value: Any) -> UUID | None:
         if value is None:

@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from beanie import PydanticObjectId
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from starlette.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
@@ -30,6 +30,7 @@ from app.domains.ticket.schemas import (
 from app.domains.ticket.swagger_utils import (
     comment_on_ticket_swagger,
     get_ticket_comments_swagger,
+    search_tickets_by_text_swagger,
 )
 from app.schemas.response import GenericSuccessContent
 
@@ -167,6 +168,35 @@ async def create_ticket(
         data=result.model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
     )
+
+
+@ticket_router.get(
+    "/search",
+    tags=["Tickets"],
+    dependencies=[require_permission("chat:read")],
+    **search_tickets_by_text_swagger,
+)
+async def search_tickets_by_text(
+    auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+    search_query: str = Query(default=""),
+) -> JSONResponse:
+    res = await service.search_ticket_by_text(search_query, auth[0])
+    if res is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Não foi possível executar a busca de tickets: "
+                "o usuário autenticado não possui um escopo de busca válido "
+                "(cliente, atendente ou empresa)."
+            ),
+        )
+    return response.success(
+        data=[c.model_dump(mode="json") for c in res],
+        status_code=status.HTTP_200_OK,
+    )
+
 
 
 @ticket_router.get(

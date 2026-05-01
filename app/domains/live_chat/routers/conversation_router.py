@@ -43,6 +43,33 @@ async def get_active_conversations(
 
 
 @conversation_router.get(
+    "/search",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:read")],
+)
+async def search_conversations_text(
+    auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+    search_query: str = Query(default="", description="Search conversations by text.")
+) -> JSONResponse:
+    """client can only find their own conversations
+    agents acan only find conversations they were a part of
+    admins can find any conversations on their company
+    """
+
+    res = await service.search_conversation_by_text(search_query, auth[0])
+    if res is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail = ""
+        )
+    return response.success(
+        data=[c.model_dump(mode="json") for c in res],
+        status_code=status.HTTP_200_OK)
+
+
+@conversation_router.get(
     "/client/{client_id}",
     tags=["Conversations"],
     dependencies=[require_permission("chat:read")],
