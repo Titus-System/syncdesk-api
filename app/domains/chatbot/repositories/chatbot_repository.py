@@ -27,13 +27,8 @@ class ChatbotRepository:
 
         await self.attendances_collection.insert_one(document)
 
-        return {
-            "triage_id": str(query_id),
-            "status": document.get("status"),
-            "start_date": document.get("start_date"),
-            "client": document.get("client"),
-            "triage": document.get("triage"),
-        }
+        document["triage_id"] = str(query_id)
+        return document
 
     async def find_attendance(self, attendance_id: str) -> dict[str, Any] | None:
         query_id: ObjectId | str
