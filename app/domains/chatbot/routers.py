@@ -41,7 +41,7 @@ async def create_triage(
     )
     res = await service.create_attendance(c)
     return response.success(
-        data=res,
+        data=res.model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
     )
 

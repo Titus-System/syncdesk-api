@@ -20,6 +20,7 @@ from app.domains.chatbot.schemas import (
     CreateAttendanceDTO,
     EvaluationRequest,
     EvaluationResponse,
+    InternalBotResponseDTO,
     QuickReply,
     TriageData,
     TriageInputDef,
@@ -38,10 +39,18 @@ class ChatbotService:
         self,
         client: AttendanceClient,
         triage_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TriageData:
         dto = CreateAttendanceDTO(client=client)
         final_triage_id = triage_id or str(ObjectId())
-        return await self.repository.create_attendance(dto, final_triage_id)
+        attendance = await self.repository.create_attendance(dto, final_triage_id)
+
+        bot_response = ChatbotFSM.process_interaction(None, "")
+        self._record_step_metric(bot_response)
+
+        attendance["triage"] = [self._build_triage_step(bot_response)]
+        await self.repository.save_attendance(final_triage_id, attendance)
+
+        return self._build_triage_data(final_triage_id, bot_response)
 
     async def process_message(self, payload: TriageInputDTO) -> TriageData:
         attendance_db = await self.repository.find_attendance(payload.triage_id)
@@ -58,12 +67,14 @@ class ChatbotService:
 
         triage: list[dict[str, Any]] = attendance.get("triage", [])
         current_state: TriageState | None = None
+        last_step: str | None = None
 
         if triage:
             last_interaction = triage[-1]
             step = last_interaction.get("step")
 
             current_state = TriageState(step) if step is not None else None
+            last_step = step
 
             if payload.answer_text is not None:
                 last_interaction["answer_text"] = payload.answer_text
@@ -73,27 +84,7 @@ class ChatbotService:
         user_message = payload.answer_value if payload.answer_value else (payload.answer_text or "")
 
         bot_response = ChatbotFSM.process_interaction(current_state, user_message)
-
-        step_label = bot_response.new_state.value if bot_response.new_state else "unknown"
-        chatbot_messages_total.labels(step=step_label).inc()
-
-        if not bot_response.is_finished:
-            new_question: dict[str, Any] = {
-                "step": bot_response.new_state.value if bot_response.new_state else "UNKNOWN",
-                "question": bot_response.response_text,
-                "answer_text": None,
-                "answer_value": None,
-                "type": "free_text" if bot_response.is_free_text else "quick_replies",
-            }
-            triage.append(new_question)
-
-        attendance["triage"] = triage
-
-        formatted_step_id = (
-            f"step_{bot_response.new_state.value.lower()}"
-            if bot_response.new_state
-            else "step_unknown"
-        )
+        self._record_step_metric(bot_response)
 
         if bot_response.is_finished:
             is_ticket = bot_response.new_state == TriageState.TICKET_CREATED
@@ -104,37 +95,18 @@ class ChatbotService:
                 "type": "Ticket" if is_ticket else "Resolved",
                 "closure_message": bot_response.response_text,
             }
-
-            data = TriageData(
-                triage_id=payload.triage_id,
-                finished=True,
-                closure_message=bot_response.response_text,
-                result=(
-                    TriageResult(type="Ticket", id=payload.triage_id) if is_ticket else None
-                ),
-            )
         else:
-            input_def = TriageInputDef(
-                mode="free_text" if bot_response.is_free_text else "quick_replies",
-                quick_replies=(
-                    [
-                        QuickReply(label=op["label"], value=op["value"])
-                        for op in bot_response.quick_replies
-                    ]
-                    if bot_response.quick_replies
-                    else None
-                ),
+            new_state_value = (
+                bot_response.new_state.value if bot_response.new_state else "UNKNOWN"
             )
-            data = TriageData(
-                triage_id=payload.triage_id,
-                step_id=formatted_step_id,
-                message=bot_response.response_text,
-                input=input_def,
-            )
+            if new_state_value != last_step:
+                triage.append(self._build_triage_step(bot_response))
+
+        attendance["triage"] = triage
 
         await self.repository.save_attendance(payload.triage_id, attendance)
 
-        return data
+        return self._build_triage_data(payload.triage_id, bot_response)
 
     async def list_attendances(
         self, filters: AttendanceSearchFiltersDTO
@@ -196,6 +168,56 @@ class ChatbotService:
             triage_id=triage_id,
             rating=payload.rating,
             evaluated_at=evaluated_at,
+        )
+
+    def _record_step_metric(self, bot_response: InternalBotResponseDTO) -> None:
+        step_label = bot_response.new_state.value if bot_response.new_state else "unknown"
+        chatbot_messages_total.labels(step=step_label).inc()
+
+    def _build_triage_step(self, bot_response: InternalBotResponseDTO) -> dict[str, Any]:
+        return {
+            "step": bot_response.new_state.value if bot_response.new_state else "UNKNOWN",
+            "question": bot_response.response_text,
+            "answer_text": None,
+            "answer_value": None,
+            "type": "free_text" if bot_response.is_free_text else "quick_replies",
+        }
+
+    def _build_triage_data(
+        self, triage_id: str, bot_response: InternalBotResponseDTO
+    ) -> TriageData:
+        if bot_response.is_finished:
+            is_ticket = bot_response.new_state == TriageState.TICKET_CREATED
+            return TriageData(
+                triage_id=triage_id,
+                finished=True,
+                closure_message=bot_response.response_text,
+                result=(
+                    TriageResult(type="Ticket", id=triage_id) if is_ticket else None
+                ),
+            )
+
+        formatted_step_id = (
+            f"step_{bot_response.new_state.value.lower()}"
+            if bot_response.new_state
+            else "step_unknown"
+        )
+        input_def = TriageInputDef(
+            mode="free_text" if bot_response.is_free_text else "quick_replies",
+            quick_replies=(
+                [
+                    QuickReply(label=op["label"], value=op["value"])
+                    for op in bot_response.quick_replies
+                ]
+                if bot_response.quick_replies
+                else None
+            ),
+        )
+        return TriageData(
+            triage_id=triage_id,
+            step_id=formatted_step_id,
+            message=bot_response.response_text,
+            input=input_def,
         )
 
     def _build_attendance_client_from_payload(self, payload: TriageInputDTO) -> AttendanceClient:

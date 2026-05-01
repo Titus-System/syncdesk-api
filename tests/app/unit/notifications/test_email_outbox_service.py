@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.config import get_settings
 from app.core.event_dispatcher.schemas import (
     PasswordResetEventSchema,
     WelcomeInviteEventSchema,
@@ -74,7 +75,7 @@ class TestEmailOutboxService:
         await service.enqueue_welcome_invite(_welcome_schema(roles=["admin"]))
         dto = repo.enqueue.call_args[0][0]
         assert isinstance(dto.payload, WelcomeInvitePayload)
-        assert dto.payload.frontend_url.startswith("http")  # WEB_FRONTEND_URL
+        assert dto.payload.frontend_url == get_settings().WEB_FRONTEND_URL
 
     @pytest.mark.asyncio
     async def test_enqueue_welcome_invite_uses_mobile_url_for_client(
@@ -83,7 +84,7 @@ class TestEmailOutboxService:
         await service.enqueue_welcome_invite(_welcome_schema(roles=["client"]))
         dto = repo.enqueue.call_args[0][0]
         assert isinstance(dto.payload, WelcomeInvitePayload)
-        assert dto.payload.frontend_url.startswith("syncdesk")  # MOBILE_FRONTEND_URL
+        assert dto.payload.frontend_url == get_settings().MOBILE_FRONTEND_URL
 
     @pytest.mark.asyncio
     async def test_enqueue_welcome_invite_event_type(

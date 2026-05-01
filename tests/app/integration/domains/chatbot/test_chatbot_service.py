@@ -42,10 +42,14 @@ class TestChatbotService:
 		)
 
 		created = await service.create_attendance(client)
-		stored = await service.repository.find_attendance(created["triage_id"])
+		stored = await service.repository.find_attendance(created.triage_id)
+
+		assert created.step_id == "step_a"
+		assert created.input is not None
+		assert created.input.mode == "quick_replies"
 
 		assert stored is not None
-		assert str(stored["_id"]) == created["triage_id"]
+		assert str(stored["_id"]) == created.triage_id
 		assert stored["status"] == "opened"
 		assert isinstance(stored["start_date"], str)
 		assert stored["end_date"] is None
@@ -54,7 +58,10 @@ class TestChatbotService:
 		assert stored["client"]["company"]["name"] == "Tech Solutions"
 		assert stored["result"] is None
 		assert stored["evaluation"] is None
-		assert stored["triage"] == []
+		assert len(stored["triage"]) == 1
+		assert stored["triage"][0]["step"] == "A"
+		assert stored["triage"][0]["answer_text"] is None
+		assert stored["triage"][0]["answer_value"] is None
 
 	@pytest.mark.asyncio
 	async def test_process_message_bootstraps_attendance_for_unknown_triage_id(
