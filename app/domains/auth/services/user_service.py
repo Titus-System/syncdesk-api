@@ -53,6 +53,12 @@ class UserService:
         self.logger.info("User soft-deleted", extra={"user_id": str(id)})
         return await self.repo.soft_delete(id)
 
+    async def deactivate(self, id: UUID) -> User | None:
+        user = await self.repo.update(id, UpdateUserDTO(is_active=False))
+        if user is not None:
+            self.logger.info("User deactivated", extra={"user_id": str(id)})
+        return user
+
     async def hard_delete(self, id: UUID) -> User | None:
         self.logger.warning("User hard-deleted", extra={"user_id": str(id)})
         return await self.repo.hard_delete(id)

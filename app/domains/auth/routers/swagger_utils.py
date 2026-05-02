@@ -667,6 +667,32 @@ update_user_swagger: dict[str, Any] = {
     "responses": update_user_responses,
 }
 
+deactivate_user_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "User deactivated successfully (is_active set to False).",
+        "model": GenericSuccessContent[User],
+    },
+    403: {
+        "description": "Missing permission to update users.",
+        "model": ErrorContent,
+    },
+    404: {
+        "description": "User not found.",
+        "model": ErrorContent,
+    },
+}
+
+deactivate_user_swagger: dict[str, Any] = {
+    "summary": "Deactivate a user",
+    "description": (
+        "Marks the user identified by UUID as inactive (is_active = False). "
+        "The user is preserved (no soft or hard delete) and can be reactivated "
+        "via the standard update endpoint. Returns 404 if the user is not found."
+    ),
+    "response_model": GenericSuccessContent[User],
+    "responses": deactivate_user_responses,
+}
+
 add_user_roles_responses: dict[int | str, dict[str, Any]] = {
     200: {
         "description": "Roles added to user successfully.",

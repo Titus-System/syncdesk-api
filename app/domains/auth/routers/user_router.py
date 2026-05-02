@@ -13,6 +13,7 @@ from ..schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUser
 from .swagger_utils import (
     add_user_roles_swagger,
     create_user_swagger,
+    deactivate_user_swagger,
     get_user_swagger,
     list_users_swagger,
     remove_user_roles_swagger,
@@ -121,6 +122,30 @@ async def update_user(
     if user is None:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+        )
+    return response.success(
+        data=user.to_response_dict(),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@user_router.patch(
+    "/{user_id}/deactivate",
+    tags=["Users"],
+    dependencies=[require_permission("user:update")],
+    **deactivate_user_swagger,
+)
+async def deactivate_user(
+    user_id: UUID,
+    _auth: CurrentUserSessionDep,
+    service: UserServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    user = await service.deactivate(user_id)
+    if user is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id '{user_id}' was not found.",
         )
     return response.success(
         data=user.to_response_dict(),
