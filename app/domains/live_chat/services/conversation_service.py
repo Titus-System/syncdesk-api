@@ -211,6 +211,16 @@ class ConversationService:
 
     async def search_conversation_by_text(
         self, search_query: str, user: UserWithRoles
-    ) -> list[Conversation] | None:
-        ...
-    
+    ) -> list[Conversation]:
+        roles = user.roles_names()
+        if "admin" in roles:
+            return await self.repo.search_conversation_by_text(search_query)
+
+        if any(role.strip().upper() in {"AGENT", "N1", "N2", "N3"} for role in roles):
+            return await self.repo.search_conversation_by_text(
+                search_query, agent_id=user.id
+            )
+
+        return await self.repo.search_conversation_by_text(
+            search_query, client_id=user.id
+        )
