@@ -369,6 +369,59 @@ class ConversationRepository:
             for doc in docs
         ]
 
+    async def search_conversation_by_text(
+        self,
+        search_query: str,
+        client_id: UUID | None = None,
+        agent_id: UUID | None = None,
+    ) -> list[Conversation]:
+        pattern = re.escape(search_query)
+        regex = {"$regex": pattern, "$options": "i"}
+        match_stage: dict[str, Any] = {"messages.content": regex}
+
+        if client_id is not None:
+            match_stage["client_id"] = Binary(client_id.bytes, subtype=4)
+
+        if agent_id is not None:
+            match_stage["$or"] = [
+                {"agent_id": Binary(agent_id.bytes, subtype=4)},
+                {"agent_id": str(agent_id)},
+            ]
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match_stage},
+            {
+                "$addFields": {
+                    "match_score": {
+                        "$size": {
+                            "$filter": {
+                                "input": {"$ifNull": ["$messages", []]},
+                                "as": "msg",
+                                "cond": {
+                                    "$regexMatch": {
+                                        "input": "$$msg.content",
+                                        "regex": pattern,
+                                        "options": "i",
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+            },
+            {"$sort": {"match_score": -1, "sequential_index": -1}},
+            {"$group": {"_id": "$ticket_id", "doc": {"$first": "$$ROOT"}}},
+            {"$replaceRoot": {"newRoot": "$doc"}},
+            {"$sort": {"match_score": -1, "sequential_index": -1}},
+            {"$unset": "match_score"},
+        ]
+
+        query: AggregationQuery[Conversation] = Conversation.aggregate(
+            pipeline,
+            projection_model=Conversation,
+        )
+        return await query.to_list()
+
     @staticmethod
     def _normalize_uuid_value(value: Any) -> UUID | None:
         if value is None:

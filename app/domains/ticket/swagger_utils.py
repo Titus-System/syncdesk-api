@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import status
 
-from app.domains.ticket.schemas import TicketCommentResponse
+from app.domains.ticket.schemas import TicketCommentResponse, TicketResponse
 from app.schemas.response import ErrorContent, GenericSuccessContent
 
 comment_on_ticket_responses: dict[int | str, dict[str, Any]] = {
@@ -66,4 +66,40 @@ get_ticket_comments_swagger: dict[str, Any] = {
     "status_code": status.HTTP_200_OK,
     "response_model": GenericSuccessContent[list[TicketCommentResponse]],
     "responses": get_ticket_comments_responses,
+}
+
+
+search_tickets_by_text_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "List of tickets whose `description` or comments match the query. "
+            "Results are scoped by the requester's role and may be empty."
+        ),
+        "model": GenericSuccessContent[list[TicketResponse]],
+    },
+    401: {
+        "description": "Missing or invalid authentication token.",
+        "model": ErrorContent,
+    },
+    403: {
+        "description": "User lacks the `chat:read` permission.",
+        "model": ErrorContent,
+    },
+}
+
+search_tickets_by_text_swagger: dict[str, Any] = {
+    "summary": "Search tickets by text",
+    "description": (
+        "Case-insensitive substring search across the ticket `description` and the "
+        "text of every comment. Results are scoped by the requester's role:\n\n"
+        "- **client**: only tickets where the requester is the client.\n"
+        "- **agent / N1 / N2 / N3**: only tickets where the requester appears in "
+        "the assignment history.\n"
+        "- **admin**: only tickets whose client belongs to the same company as the "
+        "requester. An admin without an associated company sees an empty list.\n\n"
+        "A blank `search_query` always returns an empty list."
+    ),
+    "status_code": status.HTTP_200_OK,
+    "response_model": GenericSuccessContent[list[TicketResponse]],
+    "responses": search_tickets_by_text_responses,
 }

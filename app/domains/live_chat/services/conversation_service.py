@@ -148,6 +148,27 @@ class ConversationService:
         c = await self.repo.update(c)
         return c
 
+    async def close_active_ticket_conversation(
+        self,
+        ticket_id: PydanticObjectId,
+        system_message: str,
+        finished_at: datetime | None = None,
+    ) -> Conversation | None:
+        conversation = await self.get_latest_open_by_ticket_id(ticket_id)
+        if conversation is None or conversation.id is None:
+            return None
+
+        await self.add_message_to_conversation(
+            conversation.id,
+            ChatMessage.create(
+                conversation_id=conversation.id,
+                sender_id="System",
+                type="text",
+                content=system_message,
+            ),
+        )
+        return await self.end_conversation(conversation.id, finished_at)
+
     async def append_conversation_to_ticket(
         self,
         ticket_id: PydanticObjectId,
@@ -186,3 +207,20 @@ class ConversationService:
                 await self.repo.add_child(last_conv.id, new_conv.id)
 
         return new_conv
+    
+
+    async def search_conversation_by_text(
+        self, search_query: str, user: UserWithRoles
+    ) -> list[Conversation]:
+        roles = user.roles_names()
+        if "admin" in roles:
+            return await self.repo.search_conversation_by_text(search_query)
+
+        if any(role.strip().upper() in {"AGENT", "N1", "N2", "N3"} for role in roles):
+            return await self.repo.search_conversation_by_text(
+                search_query, agent_id=user.id
+            )
+
+        return await self.repo.search_conversation_by_text(
+            search_query, client_id=user.id
+        )

@@ -368,9 +368,8 @@ class TestWebSocketChat:
         creator, creator_token = await self._register_client_user(auth)
         conv_id = await self._create_conversation(client, auth, creator_token, creator.id)
 
-        outsider_tokens = await auth.register_and_login_admin(
-            email="outsider@test.com", username="outsider"
-        )
+        await auth.register_agent(email="outsider@test.com", username="outsider")
+        outsider_tokens = await auth.login(email="outsider@test.com")
 
         with pytest.raises(WebSocketDeniedError) as exc_info:
             async with AsyncWebSocket(
@@ -381,4 +380,4 @@ class TestWebSocketChat:
                 pass
 
         assert exc_info.value.status == 403
-        assert "not a participant" in exc_info.value.body
+        assert "not allowed to join" in exc_info.value.body

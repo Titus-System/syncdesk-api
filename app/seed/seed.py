@@ -68,6 +68,7 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "ticket:read", "description": "Read tickets"},
         {"name": "ticket:create", "description": "Create tickets"},
         {"name": "ticket:update", "description": "Update ticket fields"},
+        {"name": "ticket:update_status", "description": "Update ticket status"},
         {"name": "ticket:queue", "description": "Read ticket queue"},
         {"name": "ticket:assign", "description": "Assign tickets"},
         {"name": "ticket:transfer", "description": "Transfer tickets"},

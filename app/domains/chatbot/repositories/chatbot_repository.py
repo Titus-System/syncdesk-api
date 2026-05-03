@@ -1,60 +1,48 @@
+from datetime import datetime
 from typing import Any
-from motor.motor_asyncio import AsyncIOMotorDatabase
+
 from bson import ObjectId
-from pymongo import DESCENDING
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from app.domains.chatbot.enums import AttendanceStatus
 from app.domains.chatbot.schemas import AttendanceSearchFiltersDTO, CreateAttendanceDTO
 
+
 class ChatbotRepository:
-    def __init__(self, db: AsyncIOMotorDatabase[dict[str, Any]]):
-        # Nomes das coleções mantidos como no banco de dados para evitar perda de referência
-        self.attendances_collection = db["atendimentos"]
-        self.tickets_collection = db["tickets"]
+    def __init__(self, db: AsyncIOMotorDatabase[dict[str, Any]]) -> None:
+        self.db = db
+        self.collection = db["atendimentos"]
 
-    async def create_attendance(self, dto: CreateAttendanceDTO, triage_id: str) -> dict[str, Any]:
-        document = dto.model_dump(mode="json")
+    async def create_attendance(
+        self,
+        dto: CreateAttendanceDTO,
+        triage_id: str,
+    ) -> dict[str, Any]:
+        object_id = ObjectId(triage_id)
+        data = dto.model_dump(mode="json")
+        data["_id"] = object_id
+        await self.collection.insert_one(data)
+        return data
 
-        query_id: ObjectId | str
-        if ObjectId.is_valid(triage_id):
-            query_id = ObjectId(triage_id)
-        else:
-            query_id = triage_id
+    async def find_attendance(self, triage_id: str) -> dict[str, Any] | None:
+        return await self.collection.find_one({"_id": ObjectId(triage_id)})
 
-        document["_id"] = query_id
-        document["triage"] = []
-
-        await self.attendances_collection.insert_one(document)
-
-        return {
-            "triage_id": str(query_id),
-            "status": document.get("status"),
-            "start_date": document.get("start_date"),
-            "client": document.get("client"),
-            "triage": document.get("triage"),
-        }
-
-    async def find_attendance(self, attendance_id: str) -> dict[str, Any] | None:
-        try:
-            query_id = ObjectId(attendance_id)
-        except Exception:
-            query_id = attendance_id
-        return await self.attendances_collection.find_one({"_id": query_id})
-
-    async def save_attendance(self, attendance_id: str, full_attendance: dict[str, Any]) -> None:
-        try:
-            query_id = ObjectId(attendance_id)
-        except Exception:
-            query_id = attendance_id
-
-        full_attendance["_id"] = query_id
-
-        await self.attendances_collection.replace_one(
-            {"_id": query_id},
-            full_attendance,
-            upsert=True
+    async def save_attendance(
+        self,
+        triage_id: str,
+        attendance: dict[str, Any],
+    ) -> None:
+        object_id = ObjectId(triage_id)
+        attendance["_id"] = object_id
+        await self.collection.replace_one(
+            {"_id": object_id},
+            attendance,
+            upsert=True,
         )
 
     async def list_attendances(
-        self, filters: AttendanceSearchFiltersDTO
+        self,
+        filters: AttendanceSearchFiltersDTO,
     ) -> list[dict[str, Any]]:
         query: dict[str, Any] = {}
 
@@ -62,7 +50,10 @@ class ChatbotRepository:
             query["client.id"] = str(filters.client_id)
 
         if filters.client_name is not None:
-            query["client.name"] = {"$regex": filters.client_name, "$options": "i"}
+            query["client.name"] = {
+                "$regex": filters.client_name,
+                "$options": "i",
+            }
 
         if filters.status is not None:
             query["status"] = filters.status.value
@@ -70,21 +61,73 @@ class ChatbotRepository:
         if filters.result_type is not None:
             query["result.type"] = filters.result_type
 
-        if filters.start_date_from is not None or filters.start_date_to is not None:
-            date_query: dict[str, Any] = {}
-            if filters.start_date_from is not None:
-                date_query["$gte"] = filters.start_date_from.isoformat()
-            if filters.start_date_to is not None:
-                date_query["$lte"] = filters.start_date_to.isoformat()
-            query["start_date"] = date_query
-
-        if filters.has_evaluation is True:
-            query["evaluation"] = {"$ne": None}
-        elif filters.has_evaluation is False:
-            query["evaluation"] = None
+        if filters.has_evaluation is not None:
+            query["evaluation"] = {"$ne": None} if filters.has_evaluation else None
 
         if filters.rating is not None:
             query["evaluation.rating"] = filters.rating
 
-        cursor = self.attendances_collection.find(query).sort("start_date", DESCENDING)
+        date_query: dict[str, Any] = {}
+
+        if filters.start_date_from is not None:
+            date_query["$gte"] = filters.start_date_from.isoformat()
+
+        if filters.start_date_to is not None:
+            date_query["$lte"] = filters.start_date_to.isoformat()
+
+        if date_query:
+            query["start_date"] = date_query
+
+        cursor = self.collection.find(query).sort("start_date", -1)
         return await cursor.to_list(length=None)
+
+    async def finish_attendance_pending_evaluation(
+        self,
+        triage_id: str,
+        finished_at: str,
+    ) -> bool:
+        result = await self.collection.update_one(
+            {
+                "_id": ObjectId(triage_id),
+                "status": {"$ne": AttendanceStatus.FINISHED.value},
+            },
+            {
+                "$set": {
+                    "status": AttendanceStatus.FINISHED.value,
+                    "end_date": finished_at,
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    async def find_ticket_and_conversation_ids_by_triage_id(
+        self,
+        triage_id: str,
+    ) -> tuple[str | None, str | None]:
+        triage_object_id = ObjectId(triage_id)
+
+        ticket = await self.db["tickets"].find_one(
+            {"triage_id": triage_object_id},
+            sort=[("_id", -1)],
+        )
+
+        if ticket is None:
+            return None, None
+
+        ticket_id = str(ticket["_id"])
+        chat_id: str | None = None
+
+        chat_ids = ticket.get("chat_ids") or []
+        if chat_ids:
+            chat_id = str(chat_ids[-1])
+
+        if chat_id is None:
+            conversation = await self.db["conversations"].find_one(
+                {"ticket_id": ticket["_id"]},
+                sort=[("sequential_index", -1)],
+            )
+
+            if conversation is not None:
+                chat_id = str(conversation["_id"])
+
+        return ticket_id, chat_id

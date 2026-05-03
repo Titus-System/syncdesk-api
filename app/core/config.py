@@ -19,8 +19,8 @@ class Settings(BaseSettings):
 
     ENVIRONMENT: str = "development"
 
-    MOBILE_FRONTEND_URL: str = "syncdesk:/"
-    WEB_FRONTEND_URL: str = "http://localhost:3000"
+    MOBILE_FRONTEND_URL: str = "http://syncdesk.pro"
+    WEB_FRONTEND_URL: str = "http://syncdesk.pro"
 
     # CORS settings
     CORS_ALLOW_ORIGINS: list[str] = ["*"]
@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     RESEND_FROM_EMAIL: str = "no_reply@syncdesk.pro"
     RUN_RESEND_INTEGRATION_TESTS: bool = False
     RESEND_TEST_TO_EMAIL: str = ""
+
+    # Email Outbox
+    EMAIL_OUTBOX_ENABLED: bool = True
+    EMAIL_OUTBOX_POLL_SECONDS: int = 5
+    EMAIL_OUTBOX_BATCH_SIZE: int = 50
+    EMAIL_OUTBOX_MAX_ATTEMPTS: int = 5
+    EMAIL_OUTBOX_BACKOFF_MAX_SECONDS: int = 900
+    EMAIL_OUTBOX_WORKER_ID: str = ""
 
     model_config = SettingsConfigDict(extra="allow", env_file=".env", env_file_encoding="utf-8")
 
