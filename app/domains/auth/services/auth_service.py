@@ -67,7 +67,7 @@ class AuthService:
         user = await self.user_service.create(create_user_dto)
         role_names = [r.name for r in user.roles] if user.roles is not None else []
         access_token, refresh_token = await self.session_service.init_session(
-            user.id, role_names, device_info
+            user.id, role_names, device_info, user.company_id
         )
 
         registration_total.labels(method="self").inc()
@@ -102,7 +102,7 @@ class AuthService:
 
         role_names = [r.name for r in user.roles] if user.roles is not None else []
         access_token, refresh_token = await self.session_service.init_session(
-            user.id, role_names, device_info
+            user.id, role_names, device_info, user.company_id
         )
 
         login_total.labels(status="success").inc()
@@ -156,10 +156,10 @@ class AuthService:
             raise InvalidSessionError("New login required.")
 
         access_token = self.jwt_service.create_access_token(
-            current_session.user_id, current_user.roles_names(), current_session.id
+            current_session.user_id, current_user.roles_names(), current_session.id, current_user.company_id
         )
         new_refresh_token = self.jwt_service.create_refresh_token(
-            current_session.user_id, current_user.roles_names(), current_session.id
+            current_session.user_id, current_user.roles_names(), current_session.id, current_user.company_id
         )
         new_refresh_token_hash = self.passwordSecurity.generate_token_hash(new_refresh_token)
 
