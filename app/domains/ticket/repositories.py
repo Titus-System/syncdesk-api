@@ -96,6 +96,7 @@ class TicketRepository:
         client_id: UUID | None = None,
         agent_id: UUID | None = None,
         company_id: UUID | None = None,
+        global_scope: bool = False,
     ) -> list[Ticket] | None:
         pattern = re.escape(search_query)
         text_filter: dict[str, Any] = {
@@ -112,11 +113,13 @@ class TicketRepository:
             scope_filter = {"agent_history.agent_id": agent_id}
         elif company_id is not None:
             scope_filter = {"client.company.id": company_id}
-        else:
+        elif not global_scope:
             return []
 
+        query = text_filter if scope_filter is None else {"$and": [text_filter, scope_filter]}
+
         try:
-            return await Ticket.find({"$and": [text_filter, scope_filter]}).to_list()
+            return await Ticket.find(query).to_list()
         except Exception:
             return None
 
