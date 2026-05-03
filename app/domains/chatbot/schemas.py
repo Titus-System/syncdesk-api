@@ -1,34 +1,37 @@
-# app/domains/chatbot/schemas.py
 from datetime import UTC, datetime
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional, List, Dict
 
 from app.core.schemas import BaseDTO
-from app.domains.chatbot.enums import AttendanceStatus, TriageState
-from app.domains.chatbot.models import AttendanceClient, AttendanceEvaluation, AttendanceResult
+from app.domains.chatbot.enums import AttendanceStatus
+from app.domains.chatbot.models import (
+    AttendanceClient,
+    AttendanceEvaluation,
+    AttendanceResult,
+)
 
-# --- ENTRADA (Frontend -> Backend) ---
+
 class TriageInputDTO(BaseModel):
     triage_id: str = Field(..., description="Identificador da sessão de triagem")
     step_id: str = Field(..., description="Etapa que está sendo respondida")
     answer_text: Optional[str] = Field(None, description="Resposta em texto livre")
-    answer_value: Optional[str] = Field(None, description="Valor da opção selecionada (quick reply)")
+    answer_value: Optional[str] = Field(None, description="Valor da opção selecionada")
     client_id: UUID | None = Field(
         None,
-        description="UUID do cliente. Obrigatorio quando triage_id nao existir.",
+        description="UUID do cliente. Obrigatório quando triage_id não existir.",
     )
     client_name: str | None = Field(
         None,
-        description="Nome do cliente. Obrigatorio quando triage_id nao existir.",
+        description="Nome do cliente. Obrigatório quando triage_id não existir.",
     )
     client_email: str | None = Field(
         None,
-        description="Email do cliente. Obrigatorio quando triage_id nao existir.",
+        description="Email do cliente. Obrigatório quando triage_id não existir.",
     )
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def check_answers(self) -> "TriageInputDTO":
         if self.answer_text is not None and self.answer_value is not None:
             raise ValueError("answer_text e answer_value não devem ser enviados juntos.")
@@ -44,20 +47,22 @@ class CreateAttendanceDTO(BaseModel):
     evaluation: AttendanceEvaluation | None = None
 
 
-# --- SAÍDA (Backend -> Frontend) ---
 class QuickReply(BaseModel):
     label: str
     value: str
 
+
 class TriageInputDef(BaseModel):
     mode: str
     quick_replies: Optional[List[QuickReply]] = None
+
 
 class TriageResult(BaseModel):
     type: str
     id: str
     ticket_id: str | None = None
     chat_id: str | None = None
+
 
 class TriageData(BaseModel):
     triage_id: str
@@ -70,7 +75,7 @@ class TriageData(BaseModel):
 
 
 class InternalBotResponseDTO(BaseModel):
-    new_state: TriageState | None
+    new_state: object | None
     response_text: str
     is_free_text: bool = False
     quick_replies: Optional[List[Dict[str, str]]] = None
@@ -96,7 +101,7 @@ class TriageStepSchema(BaseModel):
 
 
 class EvaluationRequest(BaseModel):
-    rating: int = Field(..., ge=1, le=5, description="Nota de satisfacao (1-5)")
+    rating: int = Field(..., ge=1, le=5, description="Nota de satisfação de 1 a 5")
 
 
 class EvaluationResponse(BaseModel):
@@ -111,10 +116,13 @@ class AttendanceResponse(BaseModel):
     start_date: datetime
     end_date: datetime | None = None
     client: AttendanceClient
-    triage: list[TriageStepSchema] = Field(default_factory=list[TriageStepSchema])
+    triage: list[TriageStepSchema] = Field(default_factory=list)
     result: AttendanceResult | None = None
     evaluation: AttendanceEvaluation | None = None
     needs_evaluation: bool = False
+    current_step_id: str | None = None
+    current_message: str | None = None
+    current_input: TriageInputDef | None = None
 
     @model_validator(mode="after")
     def compute_needs_evaluation(self) -> "AttendanceResponse":

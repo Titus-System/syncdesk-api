@@ -18,7 +18,7 @@ class ChatbotListener:
 
 def register_chatbot_listener(dispatcher: EventDispatcher) -> None:
     repo = ChatbotRepository(mongo_db.get_db())
-    service = ChatbotService(repo)
+    service = ChatbotService(repo, dispatcher)
     listener = ChatbotListener(service)
 
     dispatcher.subscribe(AppEvent.TICKET_CLOSED, listener.on_ticket_closed)

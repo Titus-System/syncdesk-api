@@ -40,8 +40,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger = get_logger("app.main")
     settings = get_settings()
     logger.info("Starting Application...")
-    tasks = global_background_tasks(pg_engine)
 
+    tasks: list[asyncio.Task] = []
     dispatcher = get_event_dispatcher()
 
     try:
@@ -51,16 +51,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await mongo_db.connect()
         await init_beanie(
             database=mongo_db.get_db(),
-            document_models=[Conversation, Ticket, Attendance]
+            document_models=[Conversation, Ticket, Attendance],
         )
-        register_app_events_listeners(dispatcher)    
+
+        register_app_events_listeners(dispatcher)
+
+        tasks = global_background_tasks(pg_engine)
+
         yield
 
     finally:
         logger.info("🛑 Shutting Down Application...")
+
         for task in tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         await close_postgres_db()
         await mongo_db.disconnect()
         stop_logger()
