@@ -237,9 +237,67 @@ class TestSearchTicketByCompany:
         assert result[0].client.company.id == target_company
 
 
+class TestSearchTicketGlobalScope:
+    @pytest.mark.asyncio
+    async def test_global_scope_returns_matches_across_clients(
+        self, repository: TicketRepository
+    ) -> None:
+        await repository.create_ticket(
+            _make_ticket(description="erro global no faturamento", client_id=uuid4())
+        )
+        await repository.create_ticket(
+            _make_ticket(description="erro global no envio", client_id=uuid4())
+        )
+        await repository.create_ticket(
+            _make_ticket(description="cobrança comum", client_id=uuid4())
+        )
+
+        result = await repository.search_ticket("global", global_scope=True)
+
+        assert result is not None
+        descriptions = sorted(t.description for t in result)
+        assert descriptions == ["erro global no envio", "erro global no faturamento"]
+
+    @pytest.mark.asyncio
+    async def test_global_scope_matches_text_in_comments(
+        self, repository: TicketRepository
+    ) -> None:
+        await repository.create_ticket(
+            _make_ticket(
+                description="ticket sem termo na descrição",
+                comments=[_make_comment("Cliente reportou indisponibilidade total")],
+            )
+        )
+
+        result = await repository.search_ticket("indisponibilidade", global_scope=True)
+
+        assert result is not None
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_specific_scope_takes_precedence_over_global(
+        self, repository: TicketRepository
+    ) -> None:
+        target_client = uuid4()
+        await repository.create_ticket(
+            _make_ticket(description="alvo do cliente", client_id=target_client)
+        )
+        await repository.create_ticket(
+            _make_ticket(description="alvo de outro cliente", client_id=uuid4())
+        )
+
+        result = await repository.search_ticket(
+            "alvo", client_id=target_client, global_scope=True
+        )
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].client.id == target_client
+
+
 class TestSearchTicketEdgeCases:
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_scope_provided(
+    async def test_returns_empty_when_no_scope_and_not_global(
         self, repository: TicketRepository
     ) -> None:
         await repository.create_ticket(_make_ticket(description="qualquer"))

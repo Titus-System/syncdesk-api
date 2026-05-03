@@ -564,13 +564,20 @@ class TicketService:
             return []
 
         roles = user.roles_names()
+        is_admin = "admin" in roles
+        is_agent = any(
+            role.strip().upper() in {"AGENT", "N1", "N2", "N3"} for role in roles
+        )
 
-        if "admin" in roles:
+        if (is_admin or is_agent) and user.company_id is None:
+            return await self.repo.search_ticket(search_query, global_scope=True)
+
+        if is_admin:
             return await self.repo.search_ticket(
                 search_query, company_id=user.company_id
             )
 
-        if any(role.strip().upper() in {"AGENT", "N1", "N2", "N3"} for role in roles):
+        if is_agent:
             return await self.repo.search_ticket(search_query, agent_id=user.id)
 
         return await self.repo.search_ticket(search_query, client_id=user.id)

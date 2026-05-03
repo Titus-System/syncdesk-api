@@ -275,6 +275,7 @@ class TestSearchTicketByTextRoute:
             email="search-agent@test.com",
             username="searchagent",
         )
+        await _attach_company_to_user(auth, agent["id"], "55555")
 
         await _create_ticket(
             client,
@@ -351,31 +352,98 @@ class TestSearchTicketByTextRoute:
         assert data[0]["client"]["company"]["id"] == str(company_id)
 
     @pytest.mark.asyncio
-    async def test_admin_without_company_returns_empty(
+    async def test_admin_without_company_searches_globally(
         self, client: AsyncClient, auth: AuthActions
     ) -> None:
         admin_tokens = await auth.register_and_login_admin(
-            email="search-admin-nocompany@test.com",
-            username="searchadminnocompany",
+            email="search-admin-global@test.com",
+            username="searchadminglobal",
+        )
+        admin_headers = auth.auth_headers(admin_tokens["access_token"])
+
+        client_a = await auth.register(
+            email="search-client-global-a@test.com",
+            username="searchclientglobala",
+        )
+        client_b = await auth.register(
+            email="search-client-global-b@test.com",
+            username="searchclientglobalb",
+        )
+        await _create_ticket(
+            client,
+            admin_headers,
+            client_id=client_a["id"],
+            description="Falha global na sincronização A",
+            product="Produto Global A",
+            company_id=str(uuid4()),
+        )
+        await _create_ticket(
+            client,
+            admin_headers,
+            client_id=client_b["id"],
+            description="Falha global na sincronização B",
+            product="Produto Global B",
+            company_id=str(uuid4()),
+        )
+
+        status_code, body = await _search(client, admin_headers, "global")
+
+        assert status_code == 200, body
+        descriptions = sorted(item["description"] for item in body["data"])
+        assert descriptions == [
+            "Falha global na sincronização A",
+            "Falha global na sincronização B",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_agent_without_company_searches_globally(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        admin_tokens = await auth.register_and_login_admin(
+            email="search-admin-agentglobal@test.com",
+            username="searchadminagentglobal",
         )
         admin_headers = auth.auth_headers(admin_tokens["access_token"])
 
         client_user = await auth.register(
-            email="search-client-nocompany@test.com",
-            username="searchclientnocompany",
+            email="search-client-agentglobal@test.com",
+            username="searchclientagentglobal",
+        )
+        agent = await auth.register_agent(
+            email="search-agent-global@test.com",
+            username="searchagentglobal",
+        )
+
+        await _create_ticket(
+            client,
+            admin_headers,
+            client_id=client_user["id"],
+            description="Erro global de processamento atribuído",
+            product="Produto Agente Global Atribuído",
         )
         await _create_ticket(
             client,
             admin_headers,
             client_id=client_user["id"],
-            description="Qualquer descrição buscável",
-            product="Produto Search Sem Empresa",
+            description="Erro global de processamento não atribuído",
+            product="Produto Agente Global NaoAtribuido",
         )
 
-        status_code, body = await _search(client, admin_headers, "buscável")
+        items = await _list_tickets(client, admin_headers, client_user["id"])
+        assigned = next(t for t in items if "atribuído" in t["description"])
+        await _assign_ticket(client, admin_headers, assigned["id"], agent["id"])
+
+        agent_tokens = await auth.login(email="search-agent-global@test.com")
+        agent_headers = auth.auth_headers(agent_tokens["access_token"])
+
+        status_code, body = await _search(client, agent_headers, "global")
 
         assert status_code == 200, body
-        assert body["data"] == []
+        descriptions = sorted(item["description"] for item in body["data"])
+        assert descriptions == [
+            "Erro global de processamento atribuído",
+            "Erro global de processamento não atribuído",
+        ]
 
     @pytest.mark.asyncio
     async def test_blank_query_returns_empty_list(
