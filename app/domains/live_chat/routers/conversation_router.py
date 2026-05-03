@@ -16,10 +16,68 @@ from .swagger_utils import (
     get_convs_swagger,
     get_messages_swagger,
     post_conv_swagger,
+    search_convs_swagger,
     set_agent_swagger,
 )
 
 conversation_router = APIRouter()
+
+
+@conversation_router.get(
+    "/active",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:read")],
+)
+async def get_active_conversations(
+    auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+    search: str = Query(default="", description="Search by client name, email or last message."),
+) -> JSONResponse:
+    user = auth[0]
+    chats = await service.get_active_conversations(user, search)
+
+    return response.success(
+        data=[chat.model_dump(mode="json") for chat in chats],
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@conversation_router.get(
+    "/search",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:read")],
+    **search_convs_swagger,
+)
+async def search_conversations_text(
+    auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+    search_query: str | None = Query(
+        default=None,
+        min_length=5,
+        max_length=100,
+        description="Substring to match against message content (case-insensitive).",
+    ),
+) -> JSONResponse:
+    """Search conversations by message content.
+
+    Scope is enforced by role:
+    - clients can only find their own conversations
+    - agents can only find conversations they are assigned to
+    - admins can find any conversation
+    """
+    if search_query is None or not search_query.strip():
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="provide a search text using search_query in the query string",
+        )
+
+    res = await service.search_conversation_by_text(search_query, auth[0])
+    return response.success(
+        data=[c.model_dump(mode="json") for c in res],
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @conversation_router.get(
@@ -131,6 +189,44 @@ async def create_conversation(
             status_code=status.HTTP_409_CONFLICT,
             detail="Chat already exists.",
         ) from e
+
+
+@conversation_router.post(
+    "/{chat_id}/assume",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:set_agent")],
+)
+async def assume_conversation(
+    chat_id: PydanticObjectId,
+    auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    user = auth[0]
+
+    try:
+        chat = await service.assume_conversation(chat_id, user)
+
+        if chat is None:
+            raise AppHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation {chat_id} does not exist.",
+            )
+
+        return response.success(
+            data=chat.model_dump(mode="json"),
+            status_code=status.HTTP_200_OK,
+        )
+    except PermissionError as err:
+        raise AppHTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(err),
+        ) from err
+    except ValueError as err:
+        raise AppHTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(err),
+        ) from err
 
 
 @conversation_router.patch(

@@ -84,7 +84,7 @@ class JWTService:
                 raise ValueError("Invalid token type")
 
     def create_token(
-        self, user_id: UUID, roles_names: list[str], session_id: UUID, token_type: TokenType
+        self, user_id: UUID, roles_names: list[str], session_id: UUID, token_type: TokenType, company_id: UUID | None = None
     ) -> str:
         token_payload: dict[str, Any] = {
             "sub": str(user_id),
@@ -95,6 +95,7 @@ class JWTService:
             "aud": settings.project_client_identifier,
             "type": token_type.value,
             "sid": str(session_id),
+            "company_id": str(company_id) if company_id else None,
         }
         token: str = jwt.encode(  # pyright: ignore
             token_payload, self.secret_key(token_type), algorithm=self.algorithm
@@ -118,11 +119,11 @@ class JWTService:
         except Exception:
             raise ValueError("Invalid token") from None
 
-    def create_access_token(self, user_id: UUID, roles_names: list[str], session_id: UUID) -> str:
-        return self.create_token(user_id, roles_names, session_id, self.TokenType.ACCESS)
+    def create_access_token(self, user_id: UUID, roles_names: list[str], session_id: UUID, company_id: UUID | None = None) -> str:
+        return self.create_token(user_id, roles_names, session_id, self.TokenType.ACCESS, company_id)
 
-    def create_refresh_token(self, user_id: UUID, roles_names: list[str], session_id: UUID) -> str:
-        return self.create_token(user_id, roles_names, session_id, self.TokenType.REFRESH)
+    def create_refresh_token(self, user_id: UUID, roles_names: list[str], session_id: UUID, company_id: UUID | None = None) -> str:
+        return self.create_token(user_id, roles_names, session_id, self.TokenType.REFRESH, company_id)
 
     def decode_access_token(self, token: str) -> dict[str, Any]:
         token_payload = self.decode_token(token, self.TokenType.ACCESS)

@@ -49,6 +49,8 @@ live_chat/
 ├── entities.py                  # Pydantic/Beanie models for Conversation, ChatMessage
 ├── schemas.py                   # Pydantic DTOs for request/response validation
 ├── chat_manager.py              # In-memory chat room manager (singleton)
+├── listeners.py                 # Event handlers for ticket lifecycle events
+├── metrics.py                   # Prometheus metrics (chat_messages_total)
 ├── dependencies.py              # FastAPI dependency injection wiring
 ├── exceptions.py                # Domain-specific exceptions
 ```
@@ -60,6 +62,24 @@ live_chat/
 3. **Send/Receive Messages**: Messages are exchanged in real time. Each message is validated (including content size limits via `MAX_CHAT_MESSAGE_CONTENT_SIZE` setting), persisted, and broadcast to all participants in the room.
 4. **Room Lifecycle**: Chat rooms are created on demand and deleted when empty.
 
+### Event-Driven Conversation Lifecycle
+
+`ConversationListener` reacts to ticket lifecycle events emitted by the event dispatcher. It automates conversation management so that conversations stay in sync with ticket state without manual intervention.
+
+| Event | Behavior |
+|---|---|
+| `TICKET_CREATED` | Creates the first conversation (index 0) for the ticket. Idempotent — skips if a conversation already exists. |
+| `TICKET_ASSIGNEE_UPDATED` | Closes the current conversation with a system message, opens a new one for the new agent, and links them via `parent_id`/`children_ids`. |
+| `TICKET_ESCALATED` | Same as assignee update, plus posts an escalation system message to the new conversation. |
+| `TICKET_STATUS_UPDATED` | Posts a system message with the new status to the current conversation. |
+| `TICKET_CLOSED` | Posts a closing system message and ends the current conversation. Idempotent — skips if already closed. |
+
+Conversation chaining is handled by `ConversationService.append_conversation_to_ticket`, which:
+1. Creates the new conversation **before** closing the old one (so a failure doesn't leave the ticket without an open conversation).
+2. Posts the closing message on the old conversation.
+3. Ends the old conversation.
+4. Links old → new via `children_ids`.
+
 ## Data Models
 
 ### Conversation
@@ -67,7 +87,8 @@ live_chat/
 - `ticket_id` (ObjectId): Associated ticket
 - `client_id` (UUID): Client user
 - `agent_id` (UUID, optional): Agent user
-- `parent_id` (ObjectId, optional): Parent conversation (for threading)
+- `sequential_index` (int): Zero-based index within the ticket's conversation chain. Unique together with `ticket_id`.
+- `parent_id` (ObjectId, optional): Parent conversation (for chaining)
 - `children_ids` (list[ObjectId]): Child conversations
 - `started_at` (datetime): Start timestamp
 - `finished_at` (datetime, optional): End timestamp
@@ -173,5 +194,4 @@ If a message is invalid, the server responds with an error message but keeps the
 | 🔴 Critical  | Test WebSocket endpoint unsecured                          | `/test/room/{conversation_id}` has no authentication/authorization; must be removed or secured before production.                  |
 | 🔴 High      | No logic for conversations >16MB (MongoDB limit)           | Conversations exceeding 16MB will fail to save; needs pagination or splitting.                                                     |
 | 🔴 High      | No treatment for files                                     | File messages are accepted as base64 but not processed; needs HTTP endpoint, storage, and URL generation.                          |
-| 🟠 Medium    | No logic to handle the scaling of a conversation           | No implementation for creating child conversations.                                                                                |
 | 🔵 Low       | Duplicate parent_id validation                             | Both service and repository check parent existence, causing double DB queries.                                                     |

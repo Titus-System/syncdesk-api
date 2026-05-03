@@ -20,8 +20,15 @@ from app.core.config import get_settings
 from app.core.dependencies import get_email_service
 from app.core.email.schemas import ResetPasswordEmailParams, WelcomeEmailParams
 from app.core.email.strategy import EmailStrategy
+from app.core.event_dispatcher import AppEvent, event_handler, get_event_dispatcher
+from app.core.event_dispatcher.schemas import PasswordResetEventSchema, WelcomeInviteEventSchema
 from app.db.mongo.dependencies import get_mongo_session
 from app.db.postgres.base import Base
+
+import app.domains.auth.models  # noqa: F401 — register models with Base.metadata
+import app.domains.companies.models  # noqa: F401 — register models with Base.metadata
+import app.domains.notifications.models  # noqa: F401 — register models with Base.metadata
+import app.domains.products.models  # noqa: F401 — register models with Base.metadata
 from app.db.postgres.dependencies import get_postgres_session
 from app.domains.auth.entities import UserWithRoles
 from app.main import create_app
@@ -164,6 +171,8 @@ def fake_email() -> FakeEmailStrategy:
 
 @pytest.fixture
 def app(fake_email: FakeEmailStrategy) -> FastAPI:
+    # Fresh dispatcher per test so handlers don't bleed across tests
+    get_event_dispatcher.cache_clear()
     application = create_app()
     application.dependency_overrides[get_email_service] = lambda: fake_email
     return application
@@ -172,6 +181,7 @@ def app(fake_email: FakeEmailStrategy) -> FastAPI:
 @pytest.fixture
 async def client(
     app: FastAPI,
+    fake_email: FakeEmailStrategy,
     db_session: AsyncSession,
     mongo_db_conn: AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]
     ) -> AsyncGenerator[AsyncClient, None]:
@@ -188,9 +198,48 @@ async def client(
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # Lifespan has run; subscribe test capture handlers on the fresh dispatcher
+        _register_email_capture(get_event_dispatcher(), fake_email)
         yield ac
 
     app.dependency_overrides.clear()
+
+
+def _register_email_capture(dispatcher: Any, fake_email: FakeEmailStrategy) -> None:
+    """Subscribe lightweight handlers that feed event data into FakeEmailStrategy."""
+
+    @event_handler(WelcomeInviteEventSchema)
+    async def _capture_welcome(schema: WelcomeInviteEventSchema) -> None:
+        cfg = get_settings()
+        base_url = (
+            cfg.WEB_FRONTEND_URL
+            if ("agent" in schema.roles or "admin" in schema.roles)
+            else cfg.MOBILE_FRONTEND_URL
+        )
+        params = WelcomeEmailParams(
+            user_name=schema.user_name,
+            user_email=schema.user_email,
+            one_time_password=schema.one_time_password,
+            login_url=f"{base_url}/login?token={schema.raw_token}",
+        )
+        await fake_email.send_welcome_email(schema.user_email, params)
+
+    @event_handler(PasswordResetEventSchema)
+    async def _capture_reset(schema: PasswordResetEventSchema) -> None:
+        cfg = get_settings()
+        base_url = (
+            cfg.WEB_FRONTEND_URL
+            if ("agent" in schema.roles or "admin" in schema.roles)
+            else cfg.MOBILE_FRONTEND_URL
+        )
+        params = ResetPasswordEmailParams(
+            user_email=schema.user_email,
+            reset_url=f"{base_url}/reset-password?token={schema.raw_token}",
+        )
+        await fake_email.send_reset_email(schema.user_email, params)
+
+    dispatcher.subscribe(AppEvent.USER_WELCOME_INVITE, _capture_welcome)
+    dispatcher.subscribe(AppEvent.USER_PASSWORD_RESET, _capture_reset)
 
 
 # ────────────────────────────────────────────────────────

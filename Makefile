@@ -1,4 +1,5 @@
-.PHONY: install run dev lint format typecheck test seed migrate makemigration pre-commit
+.PHONY: install run dev lint format typecheck test seed migrate makemigration pre-commit up down logs
+
 
 install:
 	poetry install
@@ -41,3 +42,12 @@ pre-commit:
 	poetry run mypy app/
 	poetry run bandit -c pyproject.toml -r app/
 	poetry run pytest
+
+up:
+	docker compose up --build
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f

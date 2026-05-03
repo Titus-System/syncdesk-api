@@ -4,6 +4,7 @@ from app.core.logger import get_logger
 from app.db.exceptions import ResourceNotFoundError
 from app.domains.auth.exceptions import UserCannotLoseLoginMethodError
 from app.domains.auth.repositories.user_repository import UserRepository
+from app.domains.auth.schemas.user_schemas import UpdateUserRolesDTO
 
 from ..entities import Permission, Role, User, UserWithRoles
 from ..schemas import CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
@@ -19,6 +20,9 @@ class UserService:
 
     async def get_all(self) -> list[User]:
         return await self.repo.get_all()
+
+    async def get_all_with_roles(self) -> list[UserWithRoles]:
+        return await self.repo.get_all_with_roles()
 
     async def get_by_id(self, id: UUID) -> User | None:
         return await self.repo.get_by_id(id)
@@ -49,6 +53,12 @@ class UserService:
         self.logger.info("User soft-deleted", extra={"user_id": str(id)})
         return await self.repo.soft_delete(id)
 
+    async def deactivate(self, id: UUID) -> User | None:
+        user = await self.repo.update(id, UpdateUserDTO(is_active=False))
+        if user is not None:
+            self.logger.info("User deactivated", extra={"user_id": str(id)})
+        return user
+
     async def hard_delete(self, id: UUID) -> User | None:
         self.logger.warning("User hard-deleted", extra={"user_id": str(id)})
         return await self.repo.hard_delete(id)
@@ -60,6 +70,39 @@ class UserService:
         if missing_ids is not None:
             raise ValueError(f"Roles not found: {missing_ids}")
         self.logger.info("Roles assigned to user", extra={"user_id": str(id), "role_ids": role_ids})
+        return user
+
+    async def remove_roles(self, user_id: UUID, role_ids: list[int]) -> UserWithRoles:
+        await self.repo.remove_roles(user_id, role_ids)
+        user = await self.get_by_id_with_roles(user_id)
+        if user is None:
+            raise ResourceNotFoundError("User", str(user_id))
+        return user
+
+    async def update_user_roles(self, user_id: UUID, dto: UpdateUserRolesDTO) -> UserWithRoles:
+        user, missing_ids = await self.repo.update_user_roles(
+            user_id, dto.add_role_ids, dto.remove_role_ids
+        )
+        if missing_ids:
+            self.logger.warning(
+                "Update user roles failed: roles not found",
+                extra={"user_id": str(user_id), "missing_role_ids": list(missing_ids)},
+            )
+            raise ValueError(f"Roles not found: {missing_ids}")
+        if user is None:
+            self.logger.warning(
+                "Update user roles failed: user not found",
+                extra={"user_id": str(user_id)},
+            )
+            raise ResourceNotFoundError("User", str(user_id))
+        self.logger.info(
+            "User roles updated",
+            extra={
+                "user_id": str(user_id),
+                "added": dto.add_role_ids,
+                "removed": dto.remove_role_ids,
+            },
+        )
         return user
 
     async def get_user_permissions(self, id: UUID) -> list[Permission]:

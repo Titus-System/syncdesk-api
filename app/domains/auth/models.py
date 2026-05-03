@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Table, func
@@ -10,6 +13,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.postgres.base import Base
 
 from .enums import OAuthProvider, SessionStatus, TokenPurpose, enum_values
+
+if TYPE_CHECKING:
+    from app.domains.companies.models import Company
 
 user_roles = Table(
     "user_roles",
@@ -47,6 +53,9 @@ class User(Base):
         nullable=True,
     )
     oauth_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    company_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -61,6 +70,8 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     roles: Mapped[list["Role"]] = relationship(secondary=user_roles, back_populates="users")
+
+    company: Mapped["Company | None"] = relationship(back_populates="users")
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, name='{self.name}')>"

@@ -130,7 +130,7 @@ class ChatbotFSM:
                     return ChatbotFSM._get_state_response(next_state)
 
             # Cai aqui se a mensagem não bater com nenhuma opção válida
-            return ChatbotFSM._invalid_response(current_state, current_menu)
+            return ChatbotFSM._get_state_response(current_state)
         
         return ChatbotFSM._get_state_response(TriageState.MAIN_MENU)
 
@@ -165,19 +165,4 @@ class ChatbotFSM:
             new_state=TriageState.SERVICE_FINISHED,
             response_text="Atendimento finalizado! Momento de avaliação do atendimento.",
             is_finished=True
-        )
-
-    @staticmethod
-    def _invalid_response(state: TriageState, menu: MenuConfig) -> InternalBotResponseDTO:
-        is_free_text = menu["input_type"] == "free_text"
-        
-        options = None
-        if not is_free_text:
-            options = [{"label": o["label"], "value": o["value"]} for o in menu.get("options", [])]
-            
-        return InternalBotResponseDTO(
-            new_state=state,
-            response_text="Opção inválida. Por favor, selecione uma das opções válidas abaixo.",
-            is_free_text=is_free_text,
-            quick_replies=options
         )

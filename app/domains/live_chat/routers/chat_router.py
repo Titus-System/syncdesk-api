@@ -10,17 +10,48 @@ from pydantic import ValidationError
 from app.core.dependencies import WSResponseFactoryDep
 from app.core.logger import get_logger
 from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
-
-logger = get_logger("app.live_chat.router")
+from app.domains.auth.entities import UserWithRoles
+from app.domains.live_chat.entities import Conversation
 
 from ..chat_manager import ChatConnection, get_chat_manager
 from ..dependencies import ConversationServiceDep
 from ..exceptions import ChatRoomNotFoundError, InvalidMessageError
 
+logger = get_logger("app.live_chat.router")
+
 
 def ensure_ws_request_id(ws: WebSocket) -> None:
     if not hasattr(ws.state, "request_id"):
         ws.state.request_id = ws.headers.get("x-request-id") or str(uuid4())
+
+
+def get_role_names(user: UserWithRoles) -> set[str]:
+    return {str(role).strip().lower() for role in user.roles_names()}
+
+
+def is_admin(user: UserWithRoles) -> bool:
+    return "admin" in get_role_names(user)
+
+
+def can_user_join_conversation(user: UserWithRoles, conversation: Conversation) -> bool:
+    if is_admin(user):
+        return True
+
+    return user.id in conversation.participants()
+
+
+def get_accepted_subprotocol(ws: WebSocket) -> str | None:
+    requested = ws.headers.get("sec-websocket-protocol")
+
+    if not requested:
+        return None
+
+    parts = [part.strip() for part in requested.split(",")]
+
+    if "access_token" in parts:
+        return "access_token"
+
+    return None
 
 
 chat_manager = get_chat_manager()
@@ -37,19 +68,37 @@ async def connect_to_conversation(
     response: WSResponseFactoryDep,
 ) -> None:
     user = auth[0]
-
     chat = await service.get_by_id(chat_id)
 
-    if chat is None or not chat.is_opened() or user.id not in chat.participants():
+    if chat is None:
         await ws.send_denial_response(
             JSONResponse(
                 status_code=403,
-                content={"detail": "Chat does not exist or user is not a participant."},
+                content={"detail": "Chat does not exist."},
             )
         )
         return
 
-    await ws.accept(subprotocol="access_token")
+    if not chat.is_opened():
+        await ws.send_denial_response(
+            JSONResponse(
+                status_code=403,
+                content={"detail": "Chat is already closed."},
+            )
+        )
+        return
+
+    if not can_user_join_conversation(user, chat):
+        await ws.send_denial_response(
+            JSONResponse(
+                status_code=403,
+                content={"detail": "User is not allowed to join this chat."},
+            )
+        )
+        return
+
+    await ws.accept(subprotocol=get_accepted_subprotocol(ws))
+
     conn = ChatConnection(ws, response, user)
     joined = False
 
@@ -63,21 +112,31 @@ async def connect_to_conversation(
                 message = service.handle_message(chat_id, user.id, payload)
 
                 await service.add_message_to_conversation(chat_id, message)
-
                 await chat_manager.broadcast(chat_id, message)
 
             except WebSocketDisconnect:
                 break
             except (InvalidMessageError, ValidationError) as e:
-                await conn.send_error(WebSocketException(code=1003, reason=str(e) or ""))
+                await conn.send_error(
+                    WebSocketException(code=1003, reason=str(e) or "")
+                )
             except ValueError as e:
-                await conn.send_error(WebSocketException(code=1008, reason=str(e)))
+                await conn.send_error(
+                    WebSocketException(code=1008, reason=str(e))
+                )
             except RuntimeError as e:
-                await conn.send_error(WebSocketException(code=1011, reason=str(e)))
+                await conn.send_error(
+                    WebSocketException(code=1011, reason=str(e))
+                )
+
     except ChatRoomNotFoundError as e:
-        logger.warning("Chat room not found during connection", extra={"chat_id": str(chat_id)})
+        logger.warning(
+            "Chat room not found during connection",
+            extra={"chat_id": str(chat_id)},
+        )
         await conn.send_error(WebSocketException(code=1011, reason=str(e)))
         await conn.close(code=1011, reason="Chat room unavailable")
+
     finally:
         if joined:
             await chat_manager.leave_room(chat_id, conn)
@@ -92,8 +151,10 @@ async def connect_to_conversation_test(
     response: WSResponseFactoryDep,
 ) -> None:
     await ws.accept()
+
     conn = ChatConnection(ws, response)
     user_id = uuid4()
+
     await chat_manager.join_room(conversation_id, conn)
 
     try:

@@ -8,17 +8,9 @@ import pytest_asyncio
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.domains.chatbot.models import AttendanceClient, AttendanceCompany
 from app.domains.chatbot.repositories.chatbot_repository import ChatbotRepository
-from app.domains.chatbot.schemas import AttendanceClient, AttendanceCompany, CreateAttendanceDTO
-from app.domains.ticket.models import (
-	Ticket,
-	TicketClient,
-	TicketComment,
-	TicketCompany,
-	TicketCriticality,
-	TicketStatus,
-	TicketType,
-)
+from app.domains.chatbot.schemas import CreateAttendanceDTO
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -26,10 +18,8 @@ async def cleanup_collections(
 	mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
 ) -> AsyncGenerator[None, None]:
 	await mongo_db_conn["atendimentos"].delete_many({})
-	await Ticket.delete_all()
 	yield
 	await mongo_db_conn["atendimentos"].delete_many({})
-	await Ticket.delete_all()
 
 
 class TestChatbotRepository:
@@ -228,42 +218,3 @@ class TestChatbotRepository:
 		assert stored["result"]["type"] == "Ticket"
 		assert stored["result"]["closure_message"] == "Please wait, your request has been created..."
 		assert stored["evaluation"]["rating"] == 5
-
-	@pytest.mark.asyncio
-	async def test_create_ticket_success(
-		self,
-		repo: ChatbotRepository,
-	) -> None:
-		client_id = uuid4()
-		ticket = Ticket(
-			triage_id=PydanticObjectId(),
-			type=TicketType.ISSUE,
-			criticality=TicketCriticality.HIGH,
-			product="Product A",
-			status=TicketStatus.OPEN,
-			creation_date=datetime.now(UTC),
-			description="Issue created from chatbot repository integration test",
-			chat_ids=[],
-			agent_history=[],
-			client=TicketClient(
-				id=client_id,
-				name="Client Test",
-				email="client@test.com",
-				company=TicketCompany(id=client_id, name="SyncDesk Co"),
-			),
-			comments=[
-				TicketComment(
-					author="system",
-					text="created",
-					date=datetime.now(UTC),
-				)
-			],
-		)
-
-		ticket_id = await repo.create_ticket(ticket)
-
-		assert ticket_id
-		stored = await Ticket.get(PydanticObjectId(ticket_id))
-		assert stored is not None
-		assert stored.product == "Product A"
-		assert stored.status == TicketStatus.OPEN

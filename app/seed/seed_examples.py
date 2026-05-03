@@ -1,23 +1,23 @@
 """
 Seed example data for a professional SyncDesk demo.
-
 Creates:
-  - Postgres: agent and client users with proper roles
+  - Postgres: companies, products, agent and client users with proper roles
   - MongoDB:  attendances (triage sessions), tickets, and conversations
 """
-
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import PasswordSecurity
 from app.domains.auth.models import Role, User, user_roles
+from app.domains.companies.models import Company, company_products
+from app.domains.products.models import Product
 
 # ---------------------------------------------------------------------------
 # Fixed UUIDs so relationships stay consistent across seeds
@@ -27,14 +27,12 @@ AGENT_IDS: dict[str, UUID] = {
     "camila": UUID("a1000000-0000-0000-0000-000000000002"),
     "rafael": UUID("a1000000-0000-0000-0000-000000000003"),
 }
-
 CLIENT_IDS: dict[str, UUID] = {
     "marcos": UUID("c1000000-0000-0000-0000-000000000001"),
     "ana": UUID("c1000000-0000-0000-0000-000000000002"),
     "fernanda": UUID("c1000000-0000-0000-0000-000000000003"),
     "ricardo": UUID("c1000000-0000-0000-0000-000000000004"),
 }
-
 COMPANY_IDS: dict[str, UUID] = {
     "techsol": UUID("d1000000-0000-0000-0000-000000000001"),
     "dataflow": UUID("d1000000-0000-0000-0000-000000000002"),
@@ -47,8 +45,51 @@ CONVERSATION_IDS = [ObjectId() for _ in range(6)]
 
 NOW = datetime(2026, 4, 4, 14, 0, 0, tzinfo=UTC)
 
-
 # ===== POSTGRES =====
+
+async def seed_example_companies_and_products(session: AsyncSession) -> None:
+    """Seed example companies, products, and their relationships."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    future = now + timedelta(days=365)
+
+    # 1. Inserindo Produtos
+    products_payload = [
+        {"id": 1, "name": "Produto A", "description": "Sistema de Gestão Financeira", "created_at": now},
+        {"id": 2, "name": "Produto B", "description": "Dashboard de Analytics e BI", "created_at": now},
+        {"id": 3, "name": "Produto C", "description": "Módulo de Autenticação e SSO", "created_at": now},
+    ]
+    await session.execute(pg_insert(Product).values(products_payload).on_conflict_do_nothing())
+    await session.execute(
+        text("SELECT setval('products_id_seq', (SELECT COALESCE(MAX(id), 1) FROM products))")
+    )
+
+    # 2. Inserindo Empresas
+    companies_payload = [
+        {
+            "id": COMPANY_IDS["techsol"],
+            "legal_name": "TechSol Sistemas Ltda",
+            "trade_name": "TechSol Sistemas",
+            "tax_id": "12345678000190",
+            "created_at": now
+        },
+        {
+            "id": COMPANY_IDS["dataflow"],
+            "legal_name": "DataFlow Analytics S/A",
+            "trade_name": "DataFlow Analytics",
+            "tax_id": "98765432000110",
+            "created_at": now
+        },
+    ]
+    await session.execute(pg_insert(Company).values(companies_payload).on_conflict_do_nothing())
+
+    # 3. Associando Produtos às Empresas
+    company_products_payload = [
+        {"company_id": COMPANY_IDS["techsol"], "product_id": 1, "bought_at": now, "support_until": future},
+        {"company_id": COMPANY_IDS["techsol"], "product_id": 2, "bought_at": now, "support_until": future},
+        {"company_id": COMPANY_IDS["dataflow"], "product_id": 1, "bought_at": now, "support_until": future},
+        {"company_id": COMPANY_IDS["dataflow"], "product_id": 3, "bought_at": now, "support_until": future},
+    ]
+    await session.execute(pg_insert(company_products).values(company_products_payload).on_conflict_do_nothing())
 
 async def seed_example_users(session: AsyncSession) -> None:
     """Seed agent and client users."""
@@ -56,13 +97,14 @@ async def seed_example_users(session: AsyncSession) -> None:
     default_password = "Demo@2026!"
 
     users_payload: list[dict[str, Any]] = [
-        # Agents
+        # Agents (Sem vínculo com empresa)
         {
             "id": AGENT_IDS["lucas"],
             "email": "lucas.silva@syncdesk.pro",
             "password_hash": pw.generate_password_hash(default_password),
             "username": "lucas.silva",
             "name": "Lucas Silva",
+            "company_id": None,
             "must_change_password": False,
             "must_accept_terms": False,
         },
@@ -72,6 +114,7 @@ async def seed_example_users(session: AsyncSession) -> None:
             "password_hash": pw.generate_password_hash(default_password),
             "username": "camila.santos",
             "name": "Camila Santos",
+            "company_id": None,
             "must_change_password": False,
             "must_accept_terms": False,
         },
@@ -81,16 +124,18 @@ async def seed_example_users(session: AsyncSession) -> None:
             "password_hash": pw.generate_password_hash(default_password),
             "username": "rafael.costa",
             "name": "Rafael Costa",
+            "company_id": None,
             "must_change_password": False,
             "must_accept_terms": False,
         },
-        # Clients
+        # Clients (Com vínculo de empresa)
         {
             "id": CLIENT_IDS["marcos"],
             "email": "marcos.oliveira@techsol.com.br",
             "password_hash": pw.generate_password_hash(default_password),
             "username": "marcos.oliveira",
             "name": "Marcos Oliveira",
+            "company_id": COMPANY_IDS["techsol"],
             "must_change_password": False,
             "must_accept_terms": False,
         },
@@ -100,6 +145,7 @@ async def seed_example_users(session: AsyncSession) -> None:
             "password_hash": pw.generate_password_hash(default_password),
             "username": "ana.pereira",
             "name": "Ana Pereira",
+            "company_id": COMPANY_IDS["techsol"],
             "must_change_password": False,
             "must_accept_terms": False,
         },
@@ -109,6 +155,7 @@ async def seed_example_users(session: AsyncSession) -> None:
             "password_hash": pw.generate_password_hash(default_password),
             "username": "fernanda.lima",
             "name": "Fernanda Lima",
+            "company_id": COMPANY_IDS["dataflow"],
             "must_change_password": False,
             "must_accept_terms": False,
         },
@@ -118,6 +165,7 @@ async def seed_example_users(session: AsyncSession) -> None:
             "password_hash": pw.generate_password_hash(default_password),
             "username": "ricardo.mendes",
             "name": "Ricardo Mendes",
+            "company_id": COMPANY_IDS["dataflow"],
             "must_change_password": False,
             "must_accept_terms": False,
         },
@@ -125,7 +173,6 @@ async def seed_example_users(session: AsyncSession) -> None:
 
     insert_stmt = pg_insert(User).values(users_payload).on_conflict_do_nothing()
     await session.execute(insert_stmt)
-
 
 async def seed_example_user_roles(session: AsyncSession) -> None:
     """Assign agent and client roles to seeded users."""
@@ -145,7 +192,7 @@ async def seed_example_user_roles(session: AsyncSession) -> None:
         await session.execute(stmt)
 
 
-# ===== MONGODB — helpers =====
+# ===== MONGODB - helpers =====
 
 def _client_doc(name: str, email: str, client_id: UUID, company_name: str, company_id: UUID) -> dict[str, Any]:
     return {
@@ -154,7 +201,6 @@ def _client_doc(name: str, email: str, client_id: UUID, company_name: str, compa
         "email": email,
         "company": {"id": str(company_id), "name": company_name},
     }
-
 
 CLIENTS_DOC = {
     "marcos": _client_doc("Marcos Oliveira", "marcos.oliveira@techsol.com.br",
@@ -167,13 +213,12 @@ CLIENTS_DOC = {
                            CLIENT_IDS["ricardo"], "DataFlow Analytics", COMPANY_IDS["dataflow"]),
 }
 
-
-# ===== MONGODB — attendances (triage sessions) =====
+# ===== MONGODB - attendances (triage sessions) =====
 
 def _build_attendances() -> list[dict[str, Any]]:
     """Build 6 attendance documents representing completed triage flows."""
     return [
-        # 0 — Marcos: Product A → system failure → ticket created
+        # 0 - Marcos: Product A - system failure - ticket created
         {
             "_id": TRIAGE_IDS[0],
             "status": "finished",
@@ -194,7 +239,7 @@ def _build_attendances() -> list[dict[str, Any]]:
                  "answer_text": None, "answer_value": None, "type": "quick_replies"},
             ],
         },
-        # 1 — Ana: Product B → new feature request → ticket created
+        # 1 - Ana: Product B - new feature request - ticket created
         {
             "_id": TRIAGE_IDS[1],
             "status": "finished",
@@ -215,7 +260,7 @@ def _build_attendances() -> list[dict[str, Any]]:
                  "answer_text": None, "answer_value": None, "type": "quick_replies"},
             ],
         },
-        # 2 — Fernanda: access request → ticket created
+        # 2 - Fernanda: access request - ticket created
         {
             "_id": TRIAGE_IDS[2],
             "status": "finished",
@@ -234,7 +279,7 @@ def _build_attendances() -> list[dict[str, Any]]:
                  "answer_text": None, "answer_value": None, "type": "quick_replies"},
             ],
         },
-        # 3 — Ricardo: Product C → system failure → ticket created
+        # 3 - Ricardo: Product C - system failure - ticket created
         {
             "_id": TRIAGE_IDS[3],
             "status": "finished",
@@ -255,7 +300,7 @@ def _build_attendances() -> list[dict[str, Any]]:
                  "answer_text": None, "answer_value": None, "type": "quick_replies"},
             ],
         },
-        # 4 — Marcos: doubt about deadlines → resolved without ticket
+        # 4 - Marcos: doubt about deadlines - resolved without ticket
         {
             "_id": TRIAGE_IDS[4],
             "status": "finished",
@@ -275,7 +320,7 @@ def _build_attendances() -> list[dict[str, Any]]:
                  "answer_text": None, "answer_value": None, "type": "quick_replies"},
             ],
         },
-        # 5 — Ana: Product A → system failure → ticket (most recent)
+        # 5 - Ana: Product A - system failure - ticket (most recent)
         {
             "_id": TRIAGE_IDS[5],
             "status": "finished",
@@ -290,7 +335,7 @@ def _build_attendances() -> list[dict[str, Any]]:
                 {"step": "B", "question": "Como posso te ajudar hoje em relação ao Produto escolhido?",
                  "answer_text": None, "answer_value": "1", "type": "quick_replies"},
                 {"step": "F", "question": "Por favor, explique da maneira mais detalhada possível o seu problema.",
-                 "answer_text": "A integração com a API de pagamentos no Produto A parou de funcionar. As transações ficam pendentes e não são processadas. Urgente pois está impactando o faturamento.",
+                 "answer_text": "A integração com a API de pagamentos no Produto A parou de funcionar. As transações ficam pendentes e não processadas. Urgente pois está impactando o faturamento.",
                  "answer_value": None, "type": "free_text"},
                 {"step": "E", "question": "Aguarde, sua solicitação foi criada.",
                  "answer_text": None, "answer_value": None, "type": "quick_replies"},
@@ -299,12 +344,12 @@ def _build_attendances() -> list[dict[str, Any]]:
     ]
 
 
-# ===== MONGODB — tickets =====
+# ===== MONGODB - tickets =====
 
 def _build_tickets() -> list[dict[str, Any]]:
     """Build 5 tickets (indices 0-3 and 5 from attendances; #4 had no ticket)."""
     return [
-        # Ticket 0 — Marcos / Product A issue / in_progress (assigned to Lucas)
+        # Ticket 0 - Marcos / Product A issue / in_progress (assigned to Lucas)
         {
             "_id": TICKET_IDS[0],
             "triage_id": TRIAGE_IDS[0],
@@ -336,7 +381,7 @@ def _build_tickets() -> list[dict[str, Any]]:
                 },
             ],
         },
-        # Ticket 1 — Ana / Product B new feature / open
+        # Ticket 1 - Ana / Product B new feature / open
         {
             "_id": TICKET_IDS[1],
             "triage_id": TRIAGE_IDS[1],
@@ -351,7 +396,7 @@ def _build_tickets() -> list[dict[str, Any]]:
             "client": CLIENTS_DOC["ana"],
             "comments": [],
         },
-        # Ticket 2 — Fernanda / access request / waiting_for_provider
+        # Ticket 2 - Fernanda / access request / waiting_for_provider
         {
             "_id": TICKET_IDS[2],
             "triage_id": TRIAGE_IDS[2],
@@ -383,7 +428,7 @@ def _build_tickets() -> list[dict[str, Any]]:
                 },
             ],
         },
-        # Ticket 3 — Ricardo / Product C issue / in_progress (escalated)
+        # Ticket 3 - Ricardo / Product C issue / in_progress (escalated)
         {
             "_id": TICKET_IDS[3],
             "triage_id": TRIAGE_IDS[3],
@@ -409,7 +454,7 @@ def _build_tickets() -> list[dict[str, Any]]:
                     "level": "N2",
                     "assignment_date": (NOW - timedelta(hours=4)).isoformat(),
                     "exit_date": (NOW - timedelta(hours=4)).isoformat(),
-                    "transfer_reason": "Escalado para N2 — problema de infraestrutura de autenticação",
+                    "transfer_reason": "Escalado para N2 - problema de infraestrutura de autenticação",
                 },
             ],
             "client": CLIENTS_DOC["ricardo"],
@@ -430,7 +475,7 @@ def _build_tickets() -> list[dict[str, Any]]:
                 },
             ],
         },
-        # Ticket 4 (index 5 from attendances) — Ana / Product A issue / open (newest)
+        # Ticket 4 (index 5 from attendances) - Ana / Product A issue / open (newest)
         {
             "_id": TICKET_IDS[5],
             "triage_id": TRIAGE_IDS[5],
@@ -439,7 +484,7 @@ def _build_tickets() -> list[dict[str, Any]]:
             "product": "Product A",
             "status": "open",
             "creation_date": (NOW - timedelta(hours=1, minutes=50)).isoformat(),
-            "description": "A integração com a API de pagamentos no Produto A parou de funcionar. As transações ficam pendentes e não são processadas. Urgente pois está impactando o faturamento.",
+            "description": "A integração com a API de pagamentos no Produto A parou de funcionar. As transações ficam pendentes e não processadas. Urgente pois está impactando o faturamento.",
             "chat_ids": [],
             "agent_history": [],
             "client": CLIENTS_DOC["ana"],
@@ -448,12 +493,12 @@ def _build_tickets() -> list[dict[str, Any]]:
     ]
 
 
-# ===== MONGODB — conversations =====
+# ===== MONGODB - conversations =====
 
 def _build_conversations() -> list[dict[str, Any]]:
     """Build conversations linked to tickets that have chat_ids."""
     return [
-        # Conversation 0 — Ticket 0 (Marcos ↔ Lucas, Product A PDF export)
+        # Conversation 0 - Ticket 0 (Marcos -> Lucas, Product A PDF export)
         {
             "_id": CONVERSATION_IDS[0],
             "ticket_id": TICKET_IDS[0],
@@ -515,7 +560,7 @@ def _build_conversations() -> list[dict[str, Any]]:
                 },
             ],
         },
-        # Conversation 2 — Ticket 2 (Fernanda ↔ Camila, access request)
+        # Conversation 2 - Ticket 2 (Fernanda -> Camila, access request)
         {
             "_id": CONVERSATION_IDS[2],
             "ticket_id": TICKET_IDS[2],
@@ -561,7 +606,7 @@ def _build_conversations() -> list[dict[str, Any]]:
                 },
             ],
         },
-        # Conversation 3 — Ticket 3 (Ricardo ↔ Camila → Rafael, auth issue)
+        # Conversation 3 - Ticket 3 (Ricardo -> Camila -> Rafael, auth issue)
         {
             "_id": CONVERSATION_IDS[3],
             "ticket_id": TICKET_IDS[3],
@@ -595,7 +640,7 @@ def _build_conversations() -> list[dict[str, Any]]:
                     "sender_id": str(CLIENT_IDS["ricardo"]),
                     "timestamp": (NOW - timedelta(hours=5, minutes=22)).isoformat(),
                     "type": "text",
-                    "content": "Oi Camila! Uns 5 de 12 usuários. O padrão é estranho — funciona, falha, funciona de novo. Parece aleatório.",
+                    "content": "Oi Camila! Uns 5 de 12 usuários. O padrão é meio estranho – funciona, falha, funciona de novo. Parece aleatório.",
                 },
                 {
                     "id": str(uuid4()),
@@ -642,14 +687,11 @@ def _build_conversations() -> list[dict[str, Any]]:
     ]
 
 
-# ===== MONGODB — seed functions =====
-
 async def seed_example_attendances(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
     """Insert example attendance (triage) documents into MongoDB."""
     collection = db["atendimentos"]
     for doc in _build_attendances():
         await collection.replace_one({"_id": doc["_id"]}, doc, upsert=True)
-
 
 async def seed_example_tickets(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
     """Insert example ticket documents into MongoDB."""
@@ -657,11 +699,9 @@ async def seed_example_tickets(db: AsyncIOMotorDatabase) -> None:  # type: ignor
     for doc in _build_tickets():
         await collection.replace_one({"_id": doc["_id"]}, doc, upsert=True)
 
-
 async def seed_example_conversations(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
     """Insert example conversation documents into MongoDB."""
     collection = db["conversations"]
-
     # Drop legacy index that conflicts with the current schema
     indexes = await collection.index_information()
     legacy = "service_session_id_1_sequential_index_1"

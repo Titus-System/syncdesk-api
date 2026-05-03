@@ -7,11 +7,13 @@ from pydantic import BaseModel
 from app.core.config import get_settings
 from app.core.dependencies import ResponseFactoryDep
 from app.domains.auth import auth_router, permission_router, role_router, user_router
+from app.domains.companies import company_router
 from app.domains.live_chat import chat_router, conversation_router
-from app.domains.ticket import ticket_router
+from app.domains.products import product_router
+from app.domains.ticket.routers import ticket_router
 from app.schemas.response import ErrorContent, GenericSuccessContent
 
-from app.domains.chatbot.routers import router as chatbot_router
+from app.domains.chatbot import chatbot_router
 
 api_router = APIRouter()
 
@@ -51,4 +53,7 @@ api_router.include_router(conversation_router, prefix="/conversations", tags=["C
 
 api_router.include_router(ticket_router, prefix="/tickets", tags=["Tickets"])
 
-api_router.include_router(chatbot_router)
+api_router.include_router(chatbot_router, prefix="/chatbot", tags=["Chatbot URA"])
+
+api_router.include_router(company_router, prefix="/companies", tags=["Companies"])
+api_router.include_router(product_router, prefix="/products", tags=["Products"])

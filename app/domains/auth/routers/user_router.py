@@ -3,18 +3,22 @@ from uuid import UUID
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
-from app.core.dependencies import ResponseFactoryDep
+from app.core.dependencies import PasswordSecurityDep, ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.dependencies import CurrentUserSessionDep, UserServiceDep, require_permission
+from app.domains.auth.schemas.user_schemas import RemoveUserRolesDTO, UpdateUserRolesDTO
 
-from ..schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
+from ..schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO, UserResponseDTO
 from .swagger_utils import (
     add_user_roles_swagger,
     create_user_swagger,
+    deactivate_user_swagger,
     get_user_swagger,
     list_users_swagger,
+    remove_user_roles_swagger,
     replace_user_swagger,
+    update_user_roles_swagger,
     update_user_swagger,
 )
 
@@ -32,10 +36,19 @@ async def create_user(
     _auth: CurrentUserSessionDep,
     service: UserServiceDep,
     response: ResponseFactoryDep,
+    password_security: PasswordSecurityDep,
 ) -> JSONResponse:
     try:
-        user = await service.create(dto)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_201_CREATED)
+        dto_to_create = dto
+        if dto.password_hash:
+            dto_to_create = dto.model_copy(
+                update={
+                    "password_hash": password_security.generate_password_hash(dto.password_hash)
+                }
+            )
+        user = await service.create(dto_to_create)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_201_CREATED)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -52,9 +65,10 @@ async def create_user(
 async def get_users(
     _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
-    users = await service.get_all()
+    users = await service.get_all_with_roles()
+    safe_data = [UserResponseDTO.model_validate(user).model_dump(mode="json") for user in users]
     return response.success(
-        data=[user.to_response_dict() for user in users], status_code=status.HTTP_200_OK
+        data=safe_data, status_code=status.HTTP_200_OK
     )
 
 
@@ -65,12 +79,13 @@ async def get_users(
 async def get_user(
     id: UUID, _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
-    user = await service.get_by_id(id)
+    user = await service.get_by_id_with_roles(id)
     if not user:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
         )
-    return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+    safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+    return response.success(data=safe_data, status_code=status.HTTP_200_OK)
 
 
 @user_router.put(
@@ -89,8 +104,9 @@ async def replace_user(
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
         )
+    safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
     return response.success(
-        data=user.to_response_dict(),
+        data=safe_data,
         status_code=status.HTTP_200_OK,
     )
 
@@ -110,6 +126,31 @@ async def update_user(
     if user is None:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+        )
+    safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+    return response.success(
+        data=safe_data,
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@user_router.patch(
+    "/{user_id}/deactivate",
+    tags=["Users"],
+    dependencies=[require_permission("user:update")],
+    **deactivate_user_swagger,
+)
+async def deactivate_user(
+    user_id: UUID,
+    _auth: CurrentUserSessionDep,
+    service: UserServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    user = await service.deactivate(user_id)
+    if user is None:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id '{user_id}' was not found.",
         )
     return response.success(
         data=user.to_response_dict(),
@@ -134,10 +175,70 @@ async def add_user_roles(
         )
     try:
         user = await service.add_roles(id, dto.role_ids)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_200_OK)
     except ResourceNotFoundError as e:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
+        ) from e
+    except ValueError as e:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+
+@user_router.delete(
+    "/{user_id}/roles",
+    tags=["Users", "Roles"],
+    dependencies=[require_permission("user:update_roles")],
+    **remove_user_roles_swagger,
+)
+async def remove_user_roles(
+    user_id: UUID,
+    dto: RemoveUserRolesDTO,
+    _auth: CurrentUserSessionDep,
+    service: UserServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    if not dto.role_ids:
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No role ids were informed"
+        )
+    try:
+        user = await service.remove_roles(user_id, dto.role_ids)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_200_OK)
+    except ResourceNotFoundError as e:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{user_id}' was not found."
+        ) from e
+    except ValueError as e:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    
+
+@user_router.patch(
+    "/{user_id}/roles",
+    tags=["Users", "Roles"],
+    dependencies=[require_permission("user:update_roles")],
+    **update_user_roles_swagger,
+)
+async def update_user_roles(
+    user_id: UUID,
+    dto: UpdateUserRolesDTO,
+    _auth: CurrentUserSessionDep,
+    service: UserServiceDep,
+    response: ResponseFactoryDep
+) -> JSONResponse:
+    if not dto.add_role_ids and not dto.remove_role_ids:
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No role ids were informed"
+        )
+
+    try:
+        user = await service.update_user_roles(user_id, dto)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_200_OK)
+    except ResourceNotFoundError as e:
+        raise AppHTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{user_id}' was not found."
         ) from e
     except ValueError as e:
         raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
