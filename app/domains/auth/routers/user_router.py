@@ -9,7 +9,7 @@ from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.dependencies import CurrentUserSessionDep, UserServiceDep, require_permission
 from app.domains.auth.schemas.user_schemas import RemoveUserRolesDTO, UpdateUserRolesDTO
 
-from ..schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
+from ..schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO, UserResponseDTO
 from .swagger_utils import (
     add_user_roles_swagger,
     create_user_swagger,
@@ -47,7 +47,8 @@ async def create_user(
                 }
             )
         user = await service.create(dto_to_create)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_201_CREATED)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_201_CREATED)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -65,8 +66,9 @@ async def get_users(
     _auth: CurrentUserSessionDep, service: UserServiceDep, response: ResponseFactoryDep
 ) -> JSONResponse:
     users = await service.get_all_with_roles()
+    safe_data = [UserResponseDTO.model_validate(user).model_dump(mode="json") for user in users]
     return response.success(
-        data=[user.to_response_dict() for user in users], status_code=status.HTTP_200_OK
+        data=safe_data, status_code=status.HTTP_200_OK
     )
 
 
@@ -82,7 +84,8 @@ async def get_user(
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
         )
-    return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+    safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+    return response.success(data=safe_data, status_code=status.HTTP_200_OK)
 
 
 @user_router.put(
@@ -101,8 +104,9 @@ async def replace_user(
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
         )
+    safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
     return response.success(
-        data=user.to_response_dict(),
+        data=safe_data,
         status_code=status.HTTP_200_OK,
     )
 
@@ -123,8 +127,9 @@ async def update_user(
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
         )
+    safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
     return response.success(
-        data=user.to_response_dict(),
+        data=safe_data,
         status_code=status.HTTP_200_OK,
     )
 
@@ -170,7 +175,8 @@ async def add_user_roles(
         )
     try:
         user = await service.add_roles(id, dto.role_ids)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_200_OK)
     except ResourceNotFoundError as e:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{id}' was not found."
@@ -198,7 +204,8 @@ async def remove_user_roles(
         )
     try:
         user = await service.remove_roles(user_id, dto.role_ids)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_200_OK)
     except ResourceNotFoundError as e:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{user_id}' was not found."
@@ -227,7 +234,8 @@ async def update_user_roles(
 
     try:
         user = await service.update_user_roles(user_id, dto)
-        return response.success(data=user.to_response_dict(), status_code=status.HTTP_200_OK)
+        safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
+        return response.success(data=safe_data, status_code=status.HTTP_200_OK)
     except ResourceNotFoundError as e:
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id '{user_id}' was not found."

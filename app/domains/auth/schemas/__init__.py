@@ -9,7 +9,15 @@ from .session_schemas import (
     RefreshSessionDTO,
     UpdateSessionDTO,
 )
-from .user_schemas import AddUserRolesDTO, CreateUserDTO, ReplaceUserDTO, UpdateUserDTO, UserCompliance
+from .user_schemas import (
+    AddUserRolesDTO, 
+    CreateUserDTO, 
+    ReplaceUserDTO, 
+    UpdateUserDTO, 
+    UserCompliance, 
+    UserResponseDTO, 
+    RoleResponseDTO
+)
 
 __all__ = [
     "CreateRoleDTO",
@@ -28,6 +36,8 @@ __all__ = [
     "UpdateUserDTO",
     "AddUserRolesDTO",
     "UserCompliance",
+    "UserResponseDTO",
+    "RoleResponseDTO",
     "CreatePasswordResetTokenDTO",
     "LoginResponse",
     "RefreshSessionRequest",
