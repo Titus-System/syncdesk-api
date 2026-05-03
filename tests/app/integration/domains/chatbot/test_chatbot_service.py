@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -7,6 +8,7 @@ import pytest_asyncio
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.event_dispatcher.event_dispatcher import EventDispatcher
 from app.core.exceptions import AppHTTPException
 from app.domains.chatbot.models import AttendanceClient, AttendanceCompany
 from app.domains.chatbot.repositories.chatbot_repository import ChatbotRepository
@@ -27,7 +29,8 @@ class TestChatbotService:
 	@pytest.fixture
 	def service(self, mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]]) -> ChatbotService:
 		repo = ChatbotRepository(mongo_db_conn)
-		return ChatbotService(repo)
+		dispatcher = AsyncMock(spec=EventDispatcher)
+		return ChatbotService(repo, dispatcher)
 
 	@pytest.mark.asyncio
 	async def test_create_attendance_persists_expected_base_model(

@@ -472,7 +472,7 @@ class TestTicketRoutes:
 
         dispatcher = _isolate_dispatcher_handlers(monkeypatch)
         chatbot_listener = ChatbotListener(
-            ChatbotService(ChatbotRepository(mongo_db_conn))
+            ChatbotService(ChatbotRepository(mongo_db_conn), dispatcher)
         )
         dispatcher.subscribe(AppEvent.TICKET_CLOSED, chatbot_listener.on_ticket_closed)
 
