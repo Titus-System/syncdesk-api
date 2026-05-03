@@ -3,6 +3,7 @@ from datetime import datetime, UTC
 from sqlalchemy import select, update, delete, exc, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.domains.companies.entities import Company as CompanyEntity
 from app.domains.companies.models import Company as CompanyModel, company_products
@@ -118,6 +119,7 @@ class CompanyRepository:
 
         result = await self.db.execute(
             select(UserModel)
+            .options(selectinload(UserModel.roles))
             .where(UserModel.company_id == company_id, UserModel.deleted_at.is_(None))
             .offset(skip)
             .limit(limit)
@@ -135,9 +137,13 @@ class CompanyRepository:
             {"company_id": company_id, "product_id": pid, "bought_at": now, "support_until": future}
             for pid in set(product_ids)
         ]
-        
-        await self.db.execute(pg_insert(company_products).values(values).on_conflict_do_nothing())
-        await self.db.commit()
+
+        try:
+            await self.db.execute(pg_insert(company_products).values(values).on_conflict_do_nothing())
+            await self.db.commit()
+        except exc.IntegrityError as e:
+            await self.db.rollback()
+            raise ValueError("One or more product_ids do not exist") from e
 
     async def remove_products(self, company_id: UUID, product_ids: list[int]) -> None:
         if not product_ids:

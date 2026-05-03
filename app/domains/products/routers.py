@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import APIRouter, Query, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
@@ -36,7 +37,7 @@ async def create_product(
 ) -> JSONResponse:
     try:
         product = await service.create(dto)
-        return response.success(data=product.__dict__, status_code=status.HTTP_201_CREATED)
+        return response.success(data=jsonable_encoder(product), status_code=status.HTTP_201_CREATED)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
@@ -57,7 +58,7 @@ async def get_product(
     product = await service.get_by_id(product_id)
     if not product:
         raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-    return response.success(data=product.__dict__, status_code=status.HTTP_200_OK)
+    return response.success(data=jsonable_encoder(product), status_code=status.HTTP_200_OK)
 
 
 @product_router.put("/{product_id}", dependencies=[require_permission("product:replace")], **replace_product_swagger)
@@ -68,7 +69,7 @@ async def replace_product(
         product = await service.update(product_id, dto)
         if not product:
             raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-        return response.success(data=product.__dict__, status_code=status.HTTP_200_OK)
+        return response.success(data=jsonable_encoder(product), status_code=status.HTTP_200_OK)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
@@ -81,7 +82,7 @@ async def update_product(
         product = await service.update(product_id, dto)
         if not product:
             raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-        return response.success(data=product.__dict__, status_code=status.HTTP_200_OK)
+        return response.success(data=jsonable_encoder(product), status_code=status.HTTP_200_OK)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 

@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import APIRouter, Query, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from app.core.dependencies import ResponseFactoryDep
@@ -41,7 +42,7 @@ async def create_company(
 ) -> JSONResponse:
     try:
         company = await service.create(dto)
-        return response.success(data=company.__dict__, status_code=status.HTTP_201_CREATED)
+        return response.success(data=jsonable_encoder(company), status_code=status.HTTP_201_CREATED)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
@@ -60,7 +61,7 @@ async def get_company(
     company = await service.get_by_id(company_id)
     if not company:
         raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
-    return response.success(data=company.__dict__, status_code=status.HTTP_200_OK)
+    return response.success(data=jsonable_encoder(company), status_code=status.HTTP_200_OK)
 
 @company_router.put("/{company_id}", dependencies=[require_permission("company:replace")], **replace_company_swagger)
 async def replace_company(
@@ -70,7 +71,7 @@ async def replace_company(
         company = await service.update(company_id, dto)
         if not company:
             raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
-        return response.success(data=company.__dict__, status_code=status.HTTP_200_OK)
+        return response.success(data=jsonable_encoder(company), status_code=status.HTTP_200_OK)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
@@ -82,7 +83,7 @@ async def update_company(
         company = await service.update(company_id, dto)
         if not company:
             raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
-        return response.success(data=company.__dict__, status_code=status.HTTP_200_OK)
+        return response.success(data=jsonable_encoder(company), status_code=status.HTTP_200_OK)
     except ResourceAlreadyExistsError as e:
         raise AppHTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 

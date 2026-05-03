@@ -134,14 +134,17 @@ class ProductRepository:
         now = datetime.now(UTC).replace(tzinfo=None)
         future = now + timedelta(days=365)
         
-        # Tipagem rígida explícita para evitar o erro do Pylance
         values: list[dict[str, Any]] = [
             {"company_id": cid, "product_id": product_id, "bought_at": now, "support_until": future}
             for cid in set(company_ids)
         ]
-        
-        await self.db.execute(pg_insert(company_products).values(values).on_conflict_do_nothing())
-        await self.db.commit()
+
+        try:
+            await self.db.execute(pg_insert(company_products).values(values).on_conflict_do_nothing())
+            await self.db.commit()
+        except exc.IntegrityError as e:
+            await self.db.rollback()
+            raise ValueError("One or more company_ids do not exist") from e
 
     async def remove_companies(self, product_id: int, company_ids: list[UUID]) -> None:
         if not company_ids:

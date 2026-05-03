@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,6 +59,9 @@ async def seed_example_companies_and_products(session: AsyncSession) -> None:
         {"id": 3, "name": "Produto C", "description": "Módulo de Autenticação e SSO", "created_at": now},
     ]
     await session.execute(pg_insert(Product).values(products_payload).on_conflict_do_nothing())
+    await session.execute(
+        text("SELECT setval('products_id_seq', (SELECT COALESCE(MAX(id), 1) FROM products))")
+    )
 
     # 2. Inserindo Empresas
     companies_payload = [
