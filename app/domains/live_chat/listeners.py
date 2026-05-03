@@ -9,6 +9,10 @@ from app.core.event_dispatcher.schemas import (
 )
 from app.db.mongo.db import mongo_db
 from app.domains.live_chat.entities import ChatMessage
+from app.domains.live_chat.metrics import (
+    listener_conversations_closed_total,
+    listener_conversations_created_total,
+)
 from app.domains.live_chat.repositories.conversation_repository import ConversationRepository
 from app.domains.live_chat.services.conversation_service import ConversationService
 from app.domains.ticket.models import Ticket
@@ -34,6 +38,8 @@ class ConversationListener:
         if conversation.id is not None:
             await self._attach_chat_to_ticket(str(schema.ticket_id), str(conversation.id))
 
+        listener_conversations_created_total.labels(event="ticket_created").inc()
+
     @event_handler(TicketAssigneeUpdatedEventSchema)
     async def on_ticket_assignee_updated(
         self,
@@ -50,6 +56,8 @@ class ConversationListener:
 
             if conversation.id is not None:
                 await self._attach_chat_to_ticket(str(schema.ticket_id), str(conversation.id))
+
+            listener_conversations_created_total.labels(event="ticket_assignee_updated").inc()
 
             return
 
@@ -80,12 +88,18 @@ class ConversationListener:
         if conversation.id is not None:
             await self._attach_chat_to_ticket(str(schema.ticket_id), str(conversation.id))
 
+        listener_conversations_created_total.labels(event="ticket_escalated").inc()
+        listener_conversations_closed_total.labels(event="ticket_escalated").inc()
+
     @event_handler(TicketClosedEventSchema)
     async def on_ticket_closed(self, schema: TicketClosedEventSchema) -> None:
-        await self.service.close_active_ticket_conversation(
+        closed = await self.service.close_active_ticket_conversation(
             ticket_id=schema.ticket_id,
             system_message="Atendimento encerrado.",
         )
+
+        if closed is not None:
+            listener_conversations_closed_total.labels(event="ticket_closed").inc()
 
     async def _attach_chat_to_ticket(self, ticket_id: str, chat_id: str) -> None:
         ticket = await Ticket.get(ticket_id)
