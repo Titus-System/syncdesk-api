@@ -461,3 +461,94 @@ class TestCompanyRepository:
         self, company_repo: CompanyRepository, company: object
     ) -> None:
         await company_repo.remove_products(company.id, [])  # type: ignore[attr-defined]
+
+    # ── get_company_products_paginated ────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_company_products_paginated_returns_total_and_items(
+        self,
+        company_repo: CompanyRepository,
+        db_session: AsyncSession,
+        company: object,
+    ) -> None:
+        product_ids: list[int] = []
+        for _ in range(3):
+            p = await _make_product(db_session)
+            product_ids.append(p.id)
+        await company_repo.add_products(company.id, product_ids)  # type: ignore[attr-defined]
+
+        result = await company_repo.get_company_products_paginated(
+            company.id, skip=0, limit=10  # type: ignore[attr-defined]
+        )
+        assert result.total == 3
+        assert len(result.items) == 3
+        assert result.page == 1
+        assert result.limit == 10
+        assert {p.id for p in result.items} == set(product_ids)
+        assert all(p.name and p.created_at for p in result.items)
+
+    @pytest.mark.asyncio
+    async def test_get_company_products_paginated_pagination_skip_and_limit(
+        self,
+        company_repo: CompanyRepository,
+        db_session: AsyncSession,
+        company: object,
+    ) -> None:
+        product_ids: list[int] = []
+        for _ in range(5):
+            p = await _make_product(db_session)
+            product_ids.append(p.id)
+        await company_repo.add_products(company.id, product_ids)  # type: ignore[attr-defined]
+
+        page = await company_repo.get_company_products_paginated(
+            company.id, skip=2, limit=2  # type: ignore[attr-defined]
+        )
+        assert page.total == 5
+        assert len(page.items) == 2
+        assert page.page == 2
+        assert page.limit == 2
+
+    @pytest.mark.asyncio
+    async def test_get_company_products_paginated_excludes_other_companies(
+        self,
+        company_repo: CompanyRepository,
+        db_session: AsyncSession,
+        company: object,
+    ) -> None:
+        other_company = await company_repo.create(
+            CreateCompanyDTO(
+                legal_name=_legal_name("other"), trade_name="Other", tax_id=_tax_id()
+            )
+        )
+        own_product = await _make_product(db_session)
+        outsider_product = await _make_product(db_session)
+        await company_repo.add_products(company.id, [own_product.id])  # type: ignore[attr-defined]
+        await company_repo.add_products(other_company.id, [outsider_product.id])
+
+        result = await company_repo.get_company_products_paginated(
+            company.id, skip=0, limit=10  # type: ignore[attr-defined]
+        )
+        assert result.total == 1
+        assert [p.id for p in result.items] == [own_product.id]
+
+    @pytest.mark.asyncio
+    async def test_get_company_products_paginated_empty_company(
+        self, company_repo: CompanyRepository, company: object
+    ) -> None:
+        result = await company_repo.get_company_products_paginated(
+            company.id, skip=0, limit=10  # type: ignore[attr-defined]
+        )
+        assert result.total == 0
+        assert result.items == []
+        assert result.page == 1
+        assert result.limit == 10
+
+    @pytest.mark.asyncio
+    async def test_get_company_products_paginated_unknown_company_returns_empty(
+        self, company_repo: CompanyRepository
+    ) -> None:
+        result = await company_repo.get_company_products_paginated(
+            uuid4(), skip=0, limit=10
+        )
+        assert result.total == 0
+        assert result.items == []

@@ -5,6 +5,7 @@ from pydantic import model_validator
 from app.core.schemas import BaseDTO, PaginatedItems
 from app.domains.auth.entities import User
 from app.domains.companies.entities import Company, CompanyProduct
+from app.domains.products.entities import Product
 from app.schemas.response import GenericSuccessContent
 
 
@@ -92,3 +93,5 @@ class RemoveCompanyUsersDTO(AddCompanyUsersDTO):
 
 
 GetCompanyUsersResponse = GenericSuccessContent[PaginatedItems[User]]
+
+GetCompanyProductsResponse = GenericSuccessContent[PaginatedItems[Product]]
