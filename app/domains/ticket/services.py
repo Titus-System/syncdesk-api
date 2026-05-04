@@ -788,7 +788,10 @@ class TicketService:
             TicketCriticality.MEDIUM: 1,
             TicketCriticality.LOW: 2,
         }
-        return criticality_priority[ticket.criticality], ticket.creation_date
+        creation_date = ticket.creation_date
+        if creation_date.tzinfo is None:
+            creation_date = creation_date.replace(tzinfo=UTC)
+        return criticality_priority[ticket.criticality], creation_date
 
     def _to_ticket_queue_item_response(self, ticket: Ticket) -> TicketQueueItemResponse:
         current_assignment = self._get_active_assignment(ticket)
