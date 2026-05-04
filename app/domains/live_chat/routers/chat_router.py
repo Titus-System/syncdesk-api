@@ -68,9 +68,14 @@ async def connect_to_conversation(
     response: WSResponseFactoryDep,
 ) -> None:
     user = auth[0]
+    log_ctx = {"chat_id": str(chat_id), "user_id": str(user.id)}
+
+    logger.info("WS connect attempt", extra=log_ctx)
+
     chat = await service.get_by_id(chat_id)
 
     if chat is None:
+        logger.warning("WS denied: chat does not exist", extra=log_ctx)
         await ws.send_denial_response(
             JSONResponse(
                 status_code=403,
@@ -80,6 +85,7 @@ async def connect_to_conversation(
         return
 
     if not chat.is_opened():
+        logger.warning("WS denied: chat already closed", extra=log_ctx)
         await ws.send_denial_response(
             JSONResponse(
                 status_code=403,
@@ -89,6 +95,7 @@ async def connect_to_conversation(
         return
 
     if not can_user_join_conversation(user, chat):
+        logger.warning("WS denied: user not allowed in chat", extra=log_ctx)
         await ws.send_denial_response(
             JSONResponse(
                 status_code=403,
@@ -97,7 +104,13 @@ async def connect_to_conversation(
         )
         return
 
-    await ws.accept(subprotocol=get_accepted_subprotocol(ws))
+    subprotocol = get_accepted_subprotocol(ws)
+    logger.debug(
+        "WS accepting handshake",
+        extra={**log_ctx, "subprotocol": subprotocol},
+    )
+    await ws.accept(subprotocol=subprotocol)
+    logger.info("WS handshake accepted", extra=log_ctx)
 
     conn = ChatConnection(ws, response, user)
     joined = False
@@ -105,26 +118,54 @@ async def connect_to_conversation(
     try:
         await chat_manager.join_room(chat_id, conn)
         joined = True
+        logger.info("WS joined room", extra=log_ctx)
 
         while ws.client_state == WebSocketState.CONNECTED:
             try:
                 payload = await conn.receive_payload()
+                logger.debug("WS payload received", extra=log_ctx)
+
                 message = service.handle_message(chat_id, user.id, payload)
 
                 await service.add_message_to_conversation(chat_id, message)
-                await chat_manager.broadcast(chat_id, message)
+                logger.debug(
+                    "WS message persisted",
+                    extra={**log_ctx, "message_id": str(message.id)},
+                )
 
-            except WebSocketDisconnect:
+                await chat_manager.broadcast(chat_id, message)
+                logger.debug(
+                    "WS message broadcast",
+                    extra={**log_ctx, "message_id": str(message.id)},
+                )
+
+            except WebSocketDisconnect as e:
+                logger.info(
+                    "WS client disconnected",
+                    extra={**log_ctx, "code": e.code, "reason": e.reason},
+                )
                 break
             except (InvalidMessageError, ValidationError) as e:
+                logger.warning(
+                    "WS invalid message",
+                    extra={**log_ctx, "error": str(e)},
+                )
                 await conn.send_error(
                     WebSocketException(code=1003, reason=str(e) or "")
                 )
             except ValueError as e:
+                logger.warning(
+                    "WS policy violation",
+                    extra={**log_ctx, "error": str(e)},
+                )
                 await conn.send_error(
                     WebSocketException(code=1008, reason=str(e))
                 )
             except RuntimeError as e:
+                logger.error(
+                    "WS runtime error",
+                    extra={**log_ctx, "error": str(e)},
+                )
                 await conn.send_error(
                     WebSocketException(code=1011, reason=str(e))
                 )
@@ -132,14 +173,21 @@ async def connect_to_conversation(
     except ChatRoomNotFoundError as e:
         logger.warning(
             "Chat room not found during connection",
-            extra={"chat_id": str(chat_id)},
+            extra={**log_ctx, "error": str(e)},
         )
         await conn.send_error(WebSocketException(code=1011, reason=str(e)))
         await conn.close(code=1011, reason="Chat room unavailable")
 
+    except Exception:
+        logger.exception("WS unexpected error", extra=log_ctx)
+        raise
+
     finally:
         if joined:
+            logger.info("WS leaving room", extra=log_ctx)
             await chat_manager.leave_room(chat_id, conn)
+        else:
+            logger.info("WS connection ended without joining", extra=log_ctx)
 
 
 @chat_router.websocket("/test/room/{conversation_id}")

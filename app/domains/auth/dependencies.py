@@ -11,7 +11,9 @@ from app.core.dependencies import (
 )
 from app.core.event_dispatcher import EventDispatcherDep
 from app.core.exceptions import AppHTTPException
-from app.core.logger import user_id_ctx
+from app.core.logger import get_logger, user_id_ctx
+
+_ws_auth_logger = get_logger("app.auth.ws")
 from app.db.postgres.dependencies import PgSessionDep
 from app.domains.auth.repositories.password_reset_token_repository import (
     PasswordResetTokenRepository,
@@ -180,18 +182,33 @@ def _extract_token_from_ws_subprotocols(subprotocols: str | None) -> str | None:
 
 
 def _extract_ws_access_token(ws: WebSocket) -> str:
-    token = _extract_token_from_ws_subprotocols(
-        ws.headers.get("sec-websocket-protocol")
-    )
+    subprotocol_header = ws.headers.get("sec-websocket-protocol")
+    token = _extract_token_from_ws_subprotocols(subprotocol_header)
 
     if token:
+        _ws_auth_logger.debug(
+            "WS token extracted from subprotocol",
+            extra={"path": ws.url.path},
+        )
         return token
 
     token = _extract_bearer_token(ws.headers.get("authorization"))
 
     if token:
+        _ws_auth_logger.debug(
+            "WS token extracted from Authorization header",
+            extra={"path": ws.url.path},
+        )
         return token
 
+    _ws_auth_logger.warning(
+        "WS rejected: missing access token",
+        extra={
+            "path": ws.url.path,
+            "has_subprotocol_header": bool(subprotocol_header),
+            "has_authorization_header": bool(ws.headers.get("authorization")),
+        },
+    )
     raise WebSocketException(
         code=1008,
         reason="Missing WebSocket access token",
@@ -212,9 +229,21 @@ async def get_current_user_session_ws(
         SessionNotFoundError,
         UserNotFoundError,
     ) as e:
+        _ws_auth_logger.warning(
+            "WS rejected: invalid token/session",
+            extra={
+                "path": ws.url.path,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+        )
         raise WebSocketException(code=1008, reason=str(e)) from e
 
     user_id_ctx.set(str(user.id))
+    _ws_auth_logger.debug(
+        "WS session loaded",
+        extra={"path": ws.url.path, "user_id": str(user.id)},
+    )
     return user, session
 
 
@@ -265,6 +294,10 @@ def require_permission_ws(permission_name: str) -> Any:
         names = [p.name for p in permissions]
 
         if permission_name not in names:
+            _ws_auth_logger.warning(
+                "WS rejected: insufficient permissions",
+                extra={"required": permission_name, "user_permissions": names},
+            )
             raise WebSocketException(code=1008, reason="Insufficient permissions")
 
         return True
