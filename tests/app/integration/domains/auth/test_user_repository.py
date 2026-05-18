@@ -40,22 +40,6 @@ class TestUserDTOs:
         assert dto.is_active is True
         assert dto.is_verified is False
 
-    def test_create_user_without_password_and_oauth_should_fail(self) -> None:
-        with pytest.raises(ValidationError) as exc:
-            CreateUserDTO(
-                email="user@example.com",
-                name="Test User",
-            )
-        assert "User must have either password or OAuth provider" in str(exc.value)
-
-    def test_create_user_with_oauth_without_provider_id_should_fail(self) -> None:
-        with pytest.raises(ValidationError):
-            CreateUserDTO(
-                email="user@example.com",
-                oauth_provider=OAuthProvider.GOOGLE,
-                name="OAuth User",
-            )
-
     def test_invalid_update_user_dto_should_fail(self) -> None:
         with pytest.raises(ValidationError):
             UpdateUserDTO(

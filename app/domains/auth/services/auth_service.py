@@ -2,13 +2,11 @@ from typing import Any
 from uuid import UUID
 
 from app.core.config import get_settings
-from app.core.event_dispatcher import AppEvent, EventDispatcher
-from app.core.event_dispatcher.schemas import WelcomeInviteEventSchema
+from app.core.event_dispatcher import EventDispatcher
 from app.core.http.schemas import SessionDeviceInfo
 from app.core.logger import get_logger
 from app.core.security import JWTService, PasswordSecurity
 from app.domains.auth.entities import Session, User, UserWithRoles
-from app.domains.auth.enums import TokenPurpose
 from app.domains.auth.schemas.api_schemas import AdminRegisterUserRequest, LoginResponse
 from app.domains.auth.services.password_service import PasswordService
 
@@ -68,7 +66,7 @@ class AuthService:
             name=dto.name,
             role_ids=default_role_ids,
         )
-        user = await self.user_service.create(create_user_dto)
+        user = await self.user_service.repo.create(create_user_dto)
         role_names = [r.name for r in user.roles] if user.roles is not None else []
         access_token, refresh_token = await self.session_service.init_session(
             user.id, role_names, device_info, user.company_id
@@ -214,35 +212,20 @@ class AuthService:
         await self.session_service.revoke(session.id)
 
     async def admin_register(self, dto: AdminRegisterUserRequest) -> UserWithRoles:
-        password = self.password_service.generate_random_password()
-        password_hash = self.passwordSecurity.generate_password_hash(password)
+        """Backwards-compatible alias for ``POST /users``.
 
+        The welcome-invite flow (OTP generation, must_change_password, email)
+        lives entirely in ``UserService.create``.
+        """
         create_dto = CreateUserDTO(
             email=dto.email,
-            password_hash=password_hash,
             name=dto.name,
             role_ids=dto.role_ids,
-            must_change_password=True,
         )
 
         user = await self.user_service.create(create_dto)
 
         registration_total.labels(method="admin").inc()
         self.logger.info("Admin registered user", extra={"user_id": str(user.id), "email": dto.email})
-
-        raw_token = await self.password_service.create_reset_token(user.id, TokenPurpose.INVITE)
-        settings = get_settings()
-        await self.dispatcher.publish(
-            AppEvent.USER_WELCOME_INVITE,
-            WelcomeInviteEventSchema(
-                user_id=user.id,
-                user_name=user.name or str(user.id),
-                user_email=user.email,
-                roles=user.roles_names(),
-                raw_token=raw_token,
-                one_time_password=password,
-                max_attempts=settings.EMAIL_OUTBOX_MAX_ATTEMPTS,
-            ),
-        )
 
         return user

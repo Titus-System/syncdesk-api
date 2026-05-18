@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
-from app.core.dependencies import PasswordSecurityDep, ResponseFactoryDep
+from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.dependencies import CurrentUserSessionDep, UserServiceDep, require_permission
@@ -36,17 +36,9 @@ async def create_user(
     _auth: CurrentUserSessionDep,
     service: UserServiceDep,
     response: ResponseFactoryDep,
-    password_security: PasswordSecurityDep,
 ) -> JSONResponse:
     try:
-        dto_to_create = dto
-        if dto.password_hash:
-            dto_to_create = dto.model_copy(
-                update={
-                    "password_hash": password_security.generate_password_hash(dto.password_hash)
-                }
-            )
-        user = await service.create(dto_to_create)
+        user = await service.create(dto)
         safe_data = UserResponseDTO.model_validate(user).model_dump(mode="json")
         return response.success(data=safe_data, status_code=status.HTTP_201_CREATED)
     except ResourceAlreadyExistsError as e:
