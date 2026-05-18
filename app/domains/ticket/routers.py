@@ -12,6 +12,7 @@ from app.domains.ticket.dependencies import TicketServiceDep
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
     AssignTicketRequest,
+    CancelTicketRequest,
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
@@ -458,6 +459,49 @@ async def transfer_ticket(
     - ticket.assignee_updated
     """
     result = await service.transfer_ticket(ticket_id, dto)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.post(
+    "/{ticket_id}/cancel",
+    tags=["Tickets"],
+    response_model=GenericSuccessContent[TicketResponse],
+    dependencies=[require_permission("ticket:cancel")],
+    summary="Cancel a ticket",
+    description=(
+        "Cancels a ticket and closes any active assignment. "
+        "Emits 'ticket.cancelled'. Finished or already cancelled tickets are rejected."
+    ),
+)
+async def cancel_ticket(
+    ticket_id: PydanticObjectId,
+    dto: CancelTicketRequest,
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    """
+    HTTP POST /api/tickets/{ticket_id}/cancel
+
+    Purpose:
+    - Cancel a ticket as a terminal lifecycle state.
+
+    Body:
+    - CancelTicketRequest
+
+    Response:
+    - GenericSuccessContent[TicketResponse]
+
+    Permissions:
+    - ticket:cancel
+
+    Events:
+    - ticket.cancelled
+    """
+    result = await service.cancel_ticket(ticket_id, dto)
     return response.success(
         data=result.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,

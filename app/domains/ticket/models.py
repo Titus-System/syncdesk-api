@@ -25,6 +25,13 @@ class TicketStatus(Enum):
     WAITING_FOR_PROVIDER = "waiting_for_provider"
     WAITING_FOR_VALIDATION = "waiting_for_validation"
     FINISHED = "finished"
+    CANCELLED = "cancelled"
+
+
+class TicketLevel(Enum):
+    N1 = "N1"
+    N2 = "N2"
+    N3 = "N3"
 
 
 class TicketComment(BaseModel):
@@ -62,6 +69,7 @@ class Ticket(Document):
     criticality: TicketCriticality
     product: str
     status: TicketStatus
+    level: TicketLevel = TicketLevel.N1
     creation_date: datetime
     description: str
     chat_ids: list[PydanticObjectId] = Field(default_factory=list)

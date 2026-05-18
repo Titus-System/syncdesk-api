@@ -8,6 +8,7 @@ from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
 from app.core.event_dispatcher.schemas import (
     TicketAssigneeUpdatedEventSchema,
+    TicketCancelledEventSchema,
     TicketClosedEventSchema,
     TicketCreatedEventSchema,
     TicketEscalatedEventSchema,
@@ -30,6 +31,7 @@ from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
     AssignTicketRequest,
+    CancelTicketRequest,
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
@@ -53,20 +55,33 @@ from app.domains.ticket.schemas import (
 
 class TicketService:
     allowed_transitions: dict[TicketStatus, set[TicketStatus]] = {
-        TicketStatus.OPEN: {TicketStatus.AWAITING_ASSIGNMENT, TicketStatus.IN_PROGRESS},
-        TicketStatus.AWAITING_ASSIGNMENT: {TicketStatus.IN_PROGRESS},
+        TicketStatus.OPEN: {
+            TicketStatus.AWAITING_ASSIGNMENT,
+            TicketStatus.IN_PROGRESS,
+            TicketStatus.CANCELLED,
+        },
+        TicketStatus.AWAITING_ASSIGNMENT: {
+            TicketStatus.IN_PROGRESS,
+            TicketStatus.CANCELLED,
+        },
         TicketStatus.IN_PROGRESS: {
             TicketStatus.AWAITING_ASSIGNMENT,
             TicketStatus.WAITING_FOR_PROVIDER,
             TicketStatus.WAITING_FOR_VALIDATION,
             TicketStatus.FINISHED,
+            TicketStatus.CANCELLED,
         },
-        TicketStatus.WAITING_FOR_PROVIDER: {TicketStatus.IN_PROGRESS},
+        TicketStatus.WAITING_FOR_PROVIDER: {
+            TicketStatus.IN_PROGRESS,
+            TicketStatus.CANCELLED,
+        },
         TicketStatus.WAITING_FOR_VALIDATION: {
             TicketStatus.IN_PROGRESS,
             TicketStatus.FINISHED,
+            TicketStatus.CANCELLED,
         },
         TicketStatus.FINISHED: set(),
+        TicketStatus.CANCELLED: set(),
     }
 
     def __init__(self, repository: TicketRepository, user_service: UserService, event_dispatcher: EventDispatcher):
@@ -87,6 +102,7 @@ class TicketService:
             criticality=dto.criticality,
             product=dto.product,
             status=TicketStatus.AWAITING_ASSIGNMENT,
+            level=dto.level,
             creation_date=datetime.now(UTC),
             description=dto.description,
             chat_ids=dto.chat_ids,
@@ -443,6 +459,49 @@ class TicketService:
                 "new_agent_id": str(target_agent.id),
                 "level": source_level,
             },
+        )
+
+        return self._to_ticket_response(updated_ticket)
+
+    async def cancel_ticket(
+        self,
+        ticket_id: PydanticObjectId,
+        dto: CancelTicketRequest,
+    ) -> TicketResponse:
+        ticket = await self._get_ticket_or_404(ticket_id)
+
+        if ticket.status in {TicketStatus.FINISHED, TicketStatus.CANCELLED}:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Tickets finalizados ou já cancelados não podem ser cancelados novamente.",
+            )
+
+        previous_status = ticket.status
+        self._validate_status_change(previous_status, TicketStatus.CANCELLED)
+
+        now = datetime.now(UTC)
+        active_assignment = self._get_active_assignment(ticket)
+        if active_assignment is not None:
+            active_assignment.exit_date = now
+            active_assignment.transfer_reason = dto.reason
+
+        ticket.status = TicketStatus.CANCELLED
+        updated_ticket = await self.repo.save(ticket)
+
+        self._record_status_transition(
+            ticket_id, previous_status, TicketStatus.CANCELLED, actor=None
+        )
+
+        assert updated_ticket.id is not None
+        await self.dispatcher.publish(
+            AppEvent.TICKET_CANCELLED,
+            TicketCancelledEventSchema(
+                ticket_id=updated_ticket.id,
+                triage_id=updated_ticket.triage_id,
+                client_id=updated_ticket.client.id,
+                reason=dto.reason,
+                previous_status=previous_status,
+            ),
         )
 
         return self._to_ticket_response(updated_ticket)
@@ -834,6 +893,7 @@ class TicketService:
             criticality=ticket.criticality,
             product=ticket.product,
             status=ticket.status,
+            level=ticket.level,
             creation_date=ticket.creation_date,
             description=ticket.description,
             chat_ids=[str(chat_id) for chat_id in ticket.chat_ids],
