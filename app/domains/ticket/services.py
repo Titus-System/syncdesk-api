@@ -28,6 +28,7 @@ from app.domains.ticket.models import (
     TicketComment,
 )
 from app.domains.ticket.repositories import TicketRepository
+from app.domains.ticket.sla import compute_due_date
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
     AssignTicketRequest,
@@ -895,6 +896,7 @@ class TicketService:
             status=ticket.status,
             level=ticket.level,
             creation_date=ticket.creation_date,
+            due_date=compute_due_date(ticket.creation_date, ticket.criticality),
             description=ticket.description,
             chat_ids=[str(chat_id) for chat_id in ticket.chat_ids],
             agent_history=[

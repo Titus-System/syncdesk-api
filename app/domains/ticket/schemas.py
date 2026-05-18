@@ -143,6 +143,7 @@ class TicketResponse(BaseModel):
     status: TicketStatus
     level: TicketLevel = TicketLevel.N1
     creation_date: datetime
+    due_date: datetime | None = None
     description: str
     chat_ids: list[str]
     agent_history: list[TicketHistoryResponse]
