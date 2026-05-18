@@ -1,9 +1,21 @@
+import secrets
+import string
+from datetime import UTC, datetime
 from uuid import UUID
 
+from app.core.config import get_settings
+from app.core.event_dispatcher import AppEvent, EventDispatcher
+from app.core.event_dispatcher.schemas import WelcomeInviteEventSchema
 from app.core.logger import get_logger
+from app.core.security import PasswordSecurity, ResetTokenSecurity
 from app.db.exceptions import ResourceNotFoundError
+from app.domains.auth.enums import TokenPurpose
 from app.domains.auth.exceptions import UserCannotLoseLoginMethodError
+from app.domains.auth.repositories.password_reset_token_repository import (
+    PasswordResetTokenRepository,
+)
 from app.domains.auth.repositories.user_repository import UserRepository
+from app.domains.auth.schemas.reset_password_token_schemas import CreatePasswordResetTokenDTO
 from app.domains.auth.schemas.user_schemas import UpdateUserRolesDTO
 
 from ..entities import Permission, Role, User, UserWithRoles
@@ -11,12 +23,88 @@ from ..schemas import CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
 
 
 class UserService:
-    def __init__(self, repo: UserRepository):
+    def __init__(
+        self,
+        repo: UserRepository,
+        dispatcher: EventDispatcher,
+        token_repo: PasswordResetTokenRepository,
+        reset_token_security: ResetTokenSecurity,
+        password_security: PasswordSecurity,
+    ):
         self.repo: UserRepository = repo
+        self.dispatcher = dispatcher
+        self.token_repo = token_repo
+        self.reset_token_security = reset_token_security
+        self.password_security = password_security
         self.logger = get_logger("app.auth.user_service")
 
     async def create(self, dto: CreateUserDTO) -> UserWithRoles:
-        return await self.repo.create(dto)
+        """Create a user via the admin-invite flow.
+
+        Always generates a one-time password (unless the user authenticates via
+        OAuth), overrides any provided password_hash, marks the user as needing
+        to change password on first login, and publishes USER_WELCOME_INVITE so
+        the welcome email is enqueued.
+        """
+        plain_password: str | None = None
+        if not dto.oauth_provider:
+            plain_password = self._generate_random_password()
+            dto = dto.model_copy(
+                update={
+                    "password_hash": self.password_security.generate_password_hash(plain_password),
+                    "must_change_password": True,
+                }
+            )
+
+        user = await self.repo.create(dto)
+
+        if plain_password:
+            await self._publish_welcome_invite(user, plain_password)
+        return user
+
+    @staticmethod
+    def _generate_random_password(length: int = 16) -> str:
+        alphabet = string.ascii_letters + string.digits + string.punctuation
+        while True:
+            password = "".join(secrets.choice(alphabet) for _ in range(length))
+            if (
+                any(c.islower() for c in password)
+                and any(c.isupper() for c in password)
+                and any(c.isdigit() for c in password)
+                and any(c in string.punctuation for c in password)
+            ):
+                return password
+
+    async def _publish_welcome_invite(
+        self, user: UserWithRoles, plain_password: str
+    ) -> None:
+        settings = get_settings()
+        raw_token = self.reset_token_security.generate_token()
+        token_hash = self.reset_token_security.hash_token(raw_token)
+        expires_at = datetime.now(UTC).replace(tzinfo=None) + settings.invite_token_timedelta
+
+        await self.token_repo.invalidate_user_tokens(user.id, TokenPurpose.INVITE)
+        await self.token_repo.create(
+            CreatePasswordResetTokenDTO(
+                user_id=user.id,
+                token_hash=token_hash,
+                purpose=TokenPurpose.INVITE,
+                expires_at=expires_at,
+            )
+        )
+
+        await self.dispatcher.publish(
+            AppEvent.USER_WELCOME_INVITE,
+            WelcomeInviteEventSchema(
+                user_id=user.id,
+                user_name=user.name or str(user.id),
+                user_email=user.email,
+                roles=user.roles_names(),
+                raw_token=raw_token,
+                one_time_password=plain_password,
+                max_attempts=settings.EMAIL_OUTBOX_MAX_ATTEMPTS,
+            ),
+        )
 
     async def get_all(self) -> list[User]:
         return await self.repo.get_all()

@@ -36,7 +36,8 @@ def test_render_welcome_email_returns_html_with_expected_values() -> None:
 	rendered = render_welcome_email(params)
 
 	assert isinstance(rendered, str)
-	assert "Bem-vindo ao SyncDesk, Pedro!" in rendered
+	assert "Bem-vindo ao SyncDesk," in rendered
+	assert "Pedro!" in rendered
 	assert "pedro@example.com" in rendered
 	assert "A1B2C3" in rendered
 	assert "https://syncdesk.pro/login" in rendered

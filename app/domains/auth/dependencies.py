@@ -75,8 +75,20 @@ def get_permission_service(
 
 def get_user_service(
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+    token_repo: Annotated[
+        PasswordResetTokenRepository, Depends(get_password_reset_token_repository)
+    ],
+    reset_token_security: ResetTokenSecurityDep,
+    password_security: PasswordSecurityDep,
+    dispatcher: EventDispatcherDep,
 ) -> UserService:
-    return UserService(user_repo)
+    return UserService(
+        repo=user_repo,
+        dispatcher=dispatcher,
+        token_repo=token_repo,
+        reset_token_security=reset_token_security,
+        password_security=password_security,
+    )
 
 
 def get_session_service(

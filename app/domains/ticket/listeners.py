@@ -7,8 +7,12 @@ from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
 from app.core.event_dispatcher.schemas import TriageFinishedEventSchema
 from app.core.logger import get_logger
+from app.core.security import PasswordSecurity, ResetTokenSecurity
 from app.db.mongo.db import mongo_db
 from app.db.postgres.engine import async_session
+from app.domains.auth.repositories.password_reset_token_repository import (
+    PasswordResetTokenRepository,
+)
 from app.domains.auth.repositories.user_repository import UserRepository
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.repositories import TicketRepository
@@ -48,7 +52,14 @@ def register_ticket_listener(dispatcher: EventDispatcher) -> None:
     ticket_repo = TicketRepository(mongo_db.get_db())
 
     def build_service(db: AsyncSession) -> TicketService:
-        return TicketService(ticket_repo, UserService(UserRepository(db)), dispatcher)
+        user_service = UserService(
+            repo=UserRepository(db),
+            dispatcher=dispatcher,
+            token_repo=PasswordResetTokenRepository(db),
+            reset_token_security=ResetTokenSecurity(),
+            password_security=PasswordSecurity(),
+        )
+        return TicketService(ticket_repo, user_service, dispatcher)
 
     listener = TicketListener(build_service)
 
