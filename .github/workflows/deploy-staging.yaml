@@ -52,6 +52,9 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           target: /opt/syncdesk
           source: docker-compose.yaml,deploy/docker-compose.staging.yaml,deploy/prometheus,deploy/alertmanager,deploy/loki,deploy/promtail,deploy/grafana
+          debug: true
+          timeout: 15s
+          command_timeout: 2m
 
       - name: Deploy to Droplet
         uses: appleboy/ssh-action@v1.0.3
