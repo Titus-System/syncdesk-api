@@ -3,6 +3,57 @@ services:
     image: ghcr.io/titus-system/syncdesk-api:staging
     volumes:
       - app_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+
+  db:
+    deploy:
+      resources:
+        limits:
+          memory: 250M
+
+  mongo:
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+  prometheus:
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=3d'
+      - '--storage.tsdb.retention.size=500MB'
+      - '--storage.tsdb.wal-compression'
+    deploy:
+      resources:
+        limits:
+          memory: 350M
+
+  alertmanager:
+    deploy:
+      resources:
+        limits:
+          memory: 50M
+
+  loki:
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+
+  promtail:
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+
+  grafana:
+    deploy:
+      resources:
+        limits:
+          memory: 200M
 
 volumes:
   app_logs:
