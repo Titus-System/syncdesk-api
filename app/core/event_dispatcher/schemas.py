@@ -98,6 +98,21 @@ class TicketClosedEventSchema(DispatcherSchema):
     client_id: UUID
 
 
+class TicketCancelledEventSchema(DispatcherSchema):
+    """Emitted by ``TicketService`` when a ticket transitions to ``cancelled``.
+
+    Listeners:
+        - ``ConversationListener`` - closes the active conversation.
+        - ``ChatbotListener`` - closes the attendance without requesting evaluation.
+    """
+
+    ticket_id: PydanticObjectId
+    triage_id: PydanticObjectId
+    client_id: UUID
+    reason: str
+    previous_status: TicketStatus
+
+
 class WelcomeInviteEventSchema(DispatcherSchema):
     """Emitted by AuthService when an admin registers a new user.
 
@@ -133,6 +148,7 @@ EVENT_PAYLOAD_MAP: dict[AppEvent, type[DispatcherSchema]] = {
     AppEvent.TICKET_ASSIGNEE_UPDATED: TicketAssigneeUpdatedEventSchema,
     AppEvent.TICKET_ESCALATED: TicketEscalatedEventSchema,
     AppEvent.TICKET_CLOSED: TicketClosedEventSchema,
+    AppEvent.TICKET_CANCELLED: TicketCancelledEventSchema,
     AppEvent.TICKET_CREATED: TicketCreatedEventSchema,
     AppEvent.TICKET_STATUS_UPDATED: TicketStatusUpdatedEventSchema,
     AppEvent.USER_WELCOME_INVITE: WelcomeInviteEventSchema,

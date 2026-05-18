@@ -6,7 +6,7 @@ from beanie import PydanticObjectId
 from pydantic import BaseModel, Field
 
 from app.core.schemas import BaseDTO
-from app.domains.ticket.models import TicketCriticality, TicketStatus, TicketType
+from app.domains.ticket.models import TicketCriticality, TicketLevel, TicketStatus, TicketType
 
 
 class PaginationDTO(BaseDTO):
@@ -52,6 +52,10 @@ class CreateTicketDTO(BaseDTO):
     company_name: str | None = Field(
         default=None,
         description="Company name snapshot for the ticket. Falls back to a client-derived label when omitted.",
+    )
+    level: TicketLevel = Field(
+        default=TicketLevel.N1,
+        description="Support queue level assigned to the ticket. Defaults to N1.",
     )
 
 
@@ -137,6 +141,7 @@ class TicketResponse(BaseModel):
     criticality: TicketCriticality
     product: str
     status: TicketStatus
+    level: TicketLevel = TicketLevel.N1
     creation_date: datetime
     description: str
     chat_ids: list[str]
@@ -295,6 +300,22 @@ class EscalateTicketRequest(BaseDTO):
 
     target_agent_id: UUID
     reason: str = Field(..., description="Business reason for the escalation.")
+
+
+class CancelTicketRequest(BaseDTO):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "reason": "Solicitante desistiu da abertura do chamado.",
+            }
+        }
+    }
+
+    reason: str = Field(
+        ...,
+        min_length=3,
+        description="Motivo do cancelamento. Obrigatório e registrado no histórico do ticket.",
+    )
 
 
 class TransferTicketRequest(BaseDTO):
