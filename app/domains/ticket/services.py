@@ -29,6 +29,23 @@ from app.domains.ticket.models import (
 )
 from app.domains.ticket.repositories import TicketRepository
 from app.domains.ticket.sla import compute_due_date
+
+
+_OPEN_BUCKET_LABELS: dict[str, str] = {
+    "pendente": "Pendente",
+    "em_atendimento": "Em atendimento",
+    "nao_atribuidos": "Não atribuídos",
+}
+
+_STATUS_TO_OPEN_BUCKET: dict[str, str] = {
+    "waiting_for_provider": "pendente",
+    "waiting_for_validation": "pendente",
+    "in_progress": "em_atendimento",
+    "awaiting_assignment": "nao_atribuidos",
+    "open": "nao_atribuidos",
+}
+
+_TOP_ASSIGNEES_LIMIT = 10
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
     AssignTicketRequest,
@@ -36,6 +53,11 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    TicketAssigneeBucketDTO,
+    TicketDashboardFiltersDTO,
+    TicketDashboardKPIsDTO,
+    TicketDashboardResponseDTO,
+    TicketStatusBucketDTO,
     TicketClientResponse,
     TicketCommentResponse,
     TicketCompanyResponse,
@@ -164,6 +186,20 @@ class TicketService:
             page=filters.page,
             page_size=filters.page_size,
             total=len(sorted_tickets),
+        )
+
+    async def get_dashboard(
+        self, filters: TicketDashboardFiltersDTO
+    ) -> TicketDashboardResponseDTO:
+        raw = await self.repo.aggregate_dashboard(filters.type)
+        return TicketDashboardResponseDTO(
+            type=filters.type,
+            generated_at=datetime.now(UTC),
+            kpis=self._build_dashboard_kpis(raw.get("kpis", [])),
+            open_breakdown=self._build_open_breakdown(raw.get("open_breakdown", [])),
+            assigned_breakdown=self._build_assigned_breakdown(
+                raw.get("assigned_breakdown_raw", [])
+            ),
         )
 
     async def take_ticket(
@@ -852,6 +888,75 @@ class TicketService:
         if creation_date.tzinfo is None:
             creation_date = creation_date.replace(tzinfo=UTC)
         return criticality_priority[ticket.criticality], creation_date
+
+    def _build_dashboard_kpis(
+        self, rows: list[dict[str, int]]
+    ) -> TicketDashboardKPIsDTO:
+        if not rows:
+            return TicketDashboardKPIsDTO(
+                open_count=0,
+                cancelled_count=0,
+                unassigned_count=0,
+                overdue_count=0,
+            )
+        row = rows[0]
+        return TicketDashboardKPIsDTO(
+            open_count=row.get("open_count", 0),
+            cancelled_count=row.get("cancelled_count", 0),
+            unassigned_count=row.get("unassigned_count", 0),
+            overdue_count=row.get("overdue_count", 0),
+        )
+
+    def _build_open_breakdown(
+        self, rows: list[dict[str, object]]
+    ) -> list[TicketStatusBucketDTO]:
+        counts: dict[str, int] = {bucket: 0 for bucket in _OPEN_BUCKET_LABELS}
+        for row in rows:
+            bucket = _STATUS_TO_OPEN_BUCKET.get(str(row["_id"]))
+            if bucket is not None:
+                counts[bucket] += int(row["count"])  # type: ignore[arg-type]
+        return [
+            TicketStatusBucketDTO(
+                bucket=bucket,  # type: ignore[arg-type]
+                label=_OPEN_BUCKET_LABELS[bucket],
+                count=count,
+            )
+            for bucket, count in counts.items()
+        ]
+
+    def _build_assigned_breakdown(
+        self, rows: list[dict[str, object]]
+    ) -> list[TicketAssigneeBucketDTO]:
+        top = rows[:_TOP_ASSIGNEES_LIMIT]
+        rest = rows[_TOP_ASSIGNEES_LIMIT:]
+        buckets: list[TicketAssigneeBucketDTO] = [
+            TicketAssigneeBucketDTO(
+                agent_id=self._coerce_uuid(row.get("_id")),
+                agent_name=str(row.get("agent_name") or "Desconhecido"),
+                count=int(row["count"]),  # type: ignore[arg-type]
+            )
+            for row in top
+        ]
+        if rest:
+            buckets.append(
+                TicketAssigneeBucketDTO(
+                    agent_id=None,
+                    agent_name="Outros",
+                    count=sum(int(r["count"]) for r in rest),  # type: ignore[arg-type]
+                    is_aggregate=True,
+                )
+            )
+        return buckets
+
+    @staticmethod
+    def _coerce_uuid(value: object) -> UUID | None:
+        if value is None:
+            return None
+        if isinstance(value, UUID):
+            return value
+        if isinstance(value, bytes):
+            return UUID(bytes=value)
+        return UUID(str(value))
 
     def _to_ticket_queue_item_response(self, ticket: Ticket) -> TicketQueueItemResponse:
         current_assignment = self._get_active_assignment(ticket)

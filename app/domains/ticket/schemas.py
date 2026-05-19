@@ -333,6 +333,66 @@ class TransferTicketRequest(BaseDTO):
     reason: str = Field(..., description="Business reason for the transfer.")
 
 
+class TicketDashboardFiltersDTO(BaseDTO):
+    type: TicketType = Field(..., description="Ticket type filter for the dashboard.")
+
+
+class TicketDashboardKPIsDTO(BaseModel):
+    open_count: int = Field(..., ge=0, description="Tickets not in finished/cancelled.")
+    cancelled_count: int = Field(..., ge=0, description="Tickets in cancelled.")
+    unassigned_count: int = Field(..., ge=0, description="Open tickets without an active assignee.")
+    overdue_count: int = Field(..., ge=0, description="Open tickets past their SLA window.")
+
+
+class TicketStatusBucketDTO(BaseModel):
+    bucket: Literal["pendente", "em_atendimento", "nao_atribuidos"]
+    label: str
+    count: int = Field(..., ge=0)
+
+
+class TicketAssigneeBucketDTO(BaseModel):
+    agent_id: UUID | None = Field(
+        default=None,
+        description="Assignee UUID. None when the bucket aggregates the long tail (is_aggregate=True).",
+    )
+    agent_name: str
+    count: int = Field(..., ge=0)
+    is_aggregate: bool = False
+
+
+class TicketDashboardResponseDTO(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "type": "issue",
+                "generated_at": "2026-05-18T12:00:00Z",
+                "kpis": {
+                    "open_count": 190,
+                    "cancelled_count": 80,
+                    "unassigned_count": 110,
+                    "overdue_count": 5,
+                },
+                "open_breakdown": [
+                    {"bucket": "pendente", "label": "Pendente", "count": 30},
+                    {"bucket": "em_atendimento", "label": "Em atendimento", "count": 50},
+                    {"bucket": "nao_atribuidos", "label": "Não atribuídos", "count": 110},
+                ],
+                "assigned_breakdown": [
+                    {"agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8", "agent_name": "Julia", "count": 20, "is_aggregate": False},
+                    {"agent_id": "97f0c9b8-e4b0-41a2-83d4-e5f600000001", "agent_name": "Mafe", "count": 30, "is_aggregate": False},
+                    {"agent_id": "0f7d7c4f-7b5b-45cb-9d85-6f3c69f0b5d2", "agent_name": "Angelina", "count": 30, "is_aggregate": False},
+                ],
+            }
+        }
+    }
+
+    type: TicketType
+    generated_at: datetime
+    kpis: TicketDashboardKPIsDTO
+    open_breakdown: list[TicketStatusBucketDTO]
+    assigned_breakdown: list[TicketAssigneeBucketDTO]
+
+
 class TicketEventPayload(BaseModel):
     ticket_id: str
     triage_id: str

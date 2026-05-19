@@ -16,6 +16,8 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    TicketDashboardFiltersDTO,
+    TicketDashboardResponseDTO,
     TicketPaginatedList,
     TicketQueueFiltersDTO,
     TicketQueueListResponse,
@@ -81,6 +83,47 @@ async def get_tickets(
     - ticket:read
     """
     result = await service.list_tickets(filters)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.get(
+    "/dashboard",
+    tags=["Tickets", "Dashboard"],
+    response_model=GenericSuccessContent[TicketDashboardResponseDTO],
+    dependencies=[require_permission("ticket:read")],
+    summary="Ticket dashboard metrics",
+    description=(
+        "Returns KPIs and donut breakdowns for the ticket dashboard, scoped by "
+        "ticket type. KPIs cover open/cancelled/unassigned/overdue counts; the "
+        "two donuts expose status buckets (pendente/em_atendimento/nao_atribuidos) "
+        "and assignee distribution (top 10 + Outros)."
+    ),
+)
+async def get_ticket_dashboard(
+    filters: Annotated[TicketDashboardFiltersDTO, Depends()],
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    """
+    HTTP GET /api/tickets/dashboard
+
+    Purpose:
+    - Single-call aggregation for the dashboard screen (one per ticket type).
+
+    Query params:
+    - type
+
+    Response:
+    - GenericSuccessContent[TicketDashboardResponseDTO]
+
+    Permissions:
+    - ticket:read
+    """
+    result = await service.get_dashboard(filters)
     return response.success(
         data=result.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,

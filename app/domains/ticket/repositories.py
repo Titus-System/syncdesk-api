@@ -5,7 +5,7 @@ from uuid import UUID
 from beanie import PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.domains.ticket.models import Ticket, TicketComment, TicketHistory
+from app.domains.ticket.models import Ticket, TicketComment, TicketHistory, TicketType
 from app.domains.ticket.schemas import TicketQueueFiltersDTO, TicketSearchFiltersDTO
 from app.domains.ticket.schemas import TicketSearchFiltersDTO, UpdateTicketCommentDTO
 
@@ -123,6 +123,141 @@ class TicketRepository:
         except Exception:
             return None
 
+
+    async def aggregate_dashboard(self, ticket_type: TicketType) -> dict[str, Any]:
+        """Single-roundtrip aggregation for the dashboard.
+
+        Returns a dict with keys: ``kpis``, ``open_breakdown``, ``assigned_breakdown_raw``.
+        Top-10/Outros bucketing is intentionally left to the service layer.
+        """
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"type": ticket_type.value}},
+            {
+                "$addFields": {
+                    "sla_days": {
+                        "$switch": {
+                            "branches": [
+                                {"case": {"$eq": ["$criticality", "high"]}, "then": 1},
+                                {"case": {"$eq": ["$criticality", "medium"]}, "then": 3},
+                                {"case": {"$eq": ["$criticality", "low"]}, "then": 5},
+                            ],
+                            "default": 5,
+                        }
+                    },
+                    "active_assignments": {
+                        "$filter": {
+                            "input": {"$ifNull": ["$agent_history", []]},
+                            "as": "h",
+                            "cond": {"$eq": ["$$h.exit_date", None]},
+                        }
+                    },
+                }
+            },
+            {
+                "$addFields": {
+                    "due_date": {
+                        "$dateAdd": {
+                            "startDate": "$creation_date",
+                            "unit": "day",
+                            "amount": "$sla_days",
+                        }
+                    },
+                    "is_open": {
+                        "$not": {"$in": ["$status", ["finished", "cancelled"]]}
+                    },
+                    "has_active_assignment": {
+                        "$gt": [{"$size": "$active_assignments"}, 0]
+                    },
+                    "active_assignment": {"$first": "$active_assignments"},
+                }
+            },
+            {
+                "$facet": {
+                    "kpis": [
+                        {
+                            "$group": {
+                                "_id": None,
+                                "open_count": {
+                                    "$sum": {"$cond": ["$is_open", 1, 0]}
+                                },
+                                "cancelled_count": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {"$eq": ["$status", "cancelled"]},
+                                            1,
+                                            0,
+                                        ]
+                                    }
+                                },
+                                "unassigned_count": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {
+                                                "$and": [
+                                                    "$is_open",
+                                                    {"$not": "$has_active_assignment"},
+                                                ]
+                                            },
+                                            1,
+                                            0,
+                                        ]
+                                    }
+                                },
+                                "overdue_count": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {
+                                                "$and": [
+                                                    "$is_open",
+                                                    {
+                                                        "$lt": [
+                                                            "$due_date",
+                                                            "$$NOW",
+                                                        ]
+                                                    },
+                                                ]
+                                            },
+                                            1,
+                                            0,
+                                        ]
+                                    }
+                                },
+                            }
+                        }
+                    ],
+                    "open_breakdown": [
+                        {"$match": {"is_open": True}},
+                        {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+                    ],
+                    "assigned_breakdown_raw": [
+                        {
+                            "$match": {
+                                "is_open": True,
+                                "has_active_assignment": True,
+                            }
+                        },
+                        {
+                            "$group": {
+                                "_id": "$active_assignment.agent_id",
+                                "agent_name": {"$first": "$active_assignment.name"},
+                                "count": {"$sum": 1},
+                            }
+                        },
+                        {"$sort": {"count": -1}},
+                    ],
+                }
+            },
+        ]
+
+        cursor = Ticket.get_motor_collection().aggregate(pipeline)
+        results: list[dict[str, Any]] = await cursor.to_list(length=1)
+        if not results:
+            return {
+                "kpis": [],
+                "open_breakdown": [],
+                "assigned_breakdown_raw": [],
+            }
+        return results[0]
 
     @staticmethod
     def _build_query(filters: TicketSearchFiltersDTO) -> dict[str, Any]:
