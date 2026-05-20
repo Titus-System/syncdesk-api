@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from calendar import monthrange
+from datetime import UTC, date, datetime, time
 from uuid import UUID, uuid4
 
 from beanie import PydanticObjectId
@@ -46,6 +47,9 @@ _STATUS_TO_OPEN_BUCKET: dict[str, str] = {
 }
 
 _TOP_ASSIGNEES_LIMIT = 10
+
+_ISSUES_CHART_DEFAULT_MONTHS = 6
+_ISSUES_CHART_MAX_MONTHS = 12
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
     AssignTicketRequest,
@@ -53,6 +57,10 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    IssuesByProductChartFiltersDTO,
+    IssuesByProductChartResponseDTO,
+    ProductSeriesDTO,
+    ProductSeriesPointDTO,
     TicketAssigneeBucketDTO,
     TicketDashboardFiltersDTO,
     TicketDashboardKPIsDTO,
@@ -200,6 +208,30 @@ class TicketService:
             assigned_breakdown=self._build_assigned_breakdown(
                 raw.get("assigned_breakdown_raw", [])
             ),
+        )
+
+    async def get_issues_by_product_chart(
+        self, filters: IssuesByProductChartFiltersDTO
+    ) -> IssuesByProductChartResponseDTO:
+        period_start, period_end, months = self._resolve_chart_period(
+            filters.date_from, filters.date_to
+        )
+        date_to_exclusive = self._first_day_of_next_month(period_end)
+        raw = await self.repo.aggregate_issues_by_product(
+            date_from=datetime.combine(period_start, time.min, tzinfo=UTC),
+            date_to_exclusive=datetime.combine(
+                date_to_exclusive, time.min, tzinfo=UTC
+            ),
+            company_id=filters.company_id,
+        )
+        series = self._build_product_series(raw, months)
+        return IssuesByProductChartResponseDTO(
+            period_start=period_start,
+            period_end=period_end,
+            company_id=filters.company_id,
+            months=months,
+            series=series,
+            generated_at=datetime.now(UTC),
         )
 
     async def take_ticket(
@@ -957,6 +989,101 @@ class TicketService:
         if isinstance(value, bytes):
             return UUID(bytes=value)
         return UUID(str(value))
+
+    def _resolve_chart_period(
+        self, date_from: date | None, date_to: date | None
+    ) -> tuple[date, date, list[str]]:
+        today = datetime.now(UTC).date()
+        end = date_to or today
+        end = self._last_day_of_month(end)
+        if date_from is not None:
+            start = self._first_day_of_month(date_from)
+        else:
+            # default: últimos N meses, incluindo o mês de `end`
+            start = self._first_day_of_month(
+                self._shift_months(end, -(_ISSUES_CHART_DEFAULT_MONTHS - 1))
+            )
+
+        if start > end:
+            raise AppHTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="date_from must be on or before date_to.",
+                title="Validation Error",
+            )
+
+        months = self._month_keys_between(start, end)
+        if len(months) > _ISSUES_CHART_MAX_MONTHS:
+            raise AppHTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"The requested period spans {len(months)} months, "
+                    f"but the maximum is {_ISSUES_CHART_MAX_MONTHS}."
+                ),
+                title="Validation Error",
+            )
+        return start, end, months
+
+    @staticmethod
+    def _first_day_of_month(value: date) -> date:
+        return value.replace(day=1)
+
+    @staticmethod
+    def _last_day_of_month(value: date) -> date:
+        last_day = monthrange(value.year, value.month)[1]
+        return value.replace(day=last_day)
+
+    @staticmethod
+    def _first_day_of_next_month(value: date) -> date:
+        year, month = (value.year + 1, 1) if value.month == 12 else (value.year, value.month + 1)
+        return date(year, month, 1)
+
+    @staticmethod
+    def _shift_months(anchor: date, delta: int) -> date:
+        zero_indexed = anchor.month - 1 + delta
+        year = anchor.year + zero_indexed // 12
+        month = zero_indexed % 12 + 1
+        return date(year, month, 1)
+
+    def _month_keys_between(self, start: date, end: date) -> list[str]:
+        keys: list[str] = []
+        cursor = self._first_day_of_month(start)
+        end_anchor = self._first_day_of_month(end)
+        while cursor <= end_anchor:
+            keys.append(f"{cursor.year:04d}-{cursor.month:02d}")
+            cursor = self._first_day_of_next_month(cursor)
+        return keys
+
+    def _build_product_series(
+        self, rows: list[dict[str, object]], months: list[str]
+    ) -> list[ProductSeriesDTO]:
+        # mapa: product -> {month_key: count}
+        by_product: dict[str, dict[str, int]] = {}
+        for row in rows:
+            row_id = row.get("_id")
+            if not isinstance(row_id, dict):
+                continue
+            product = str(row_id.get("product") or "")
+            year = int(row_id["year"])  # type: ignore[arg-type]
+            month = int(row_id["month"])  # type: ignore[arg-type]
+            count = int(row.get("count", 0))  # type: ignore[arg-type]
+            month_key = f"{year:04d}-{month:02d}"
+            by_product.setdefault(product, {})[month_key] = count
+
+        series: list[ProductSeriesDTO] = []
+        for product, month_counts in by_product.items():
+            points = [
+                ProductSeriesPointDTO(month=m, count=month_counts.get(m, 0))
+                for m in months
+            ]
+            series.append(
+                ProductSeriesDTO(
+                    product=product,
+                    total=sum(p.count for p in points),
+                    points=points,
+                )
+            )
+        series.sort(key=lambda s: (-s.total, s.product))
+        return series
 
     def _to_ticket_queue_item_response(self, ticket: Ticket) -> TicketQueueItemResponse:
         current_assignment = self._get_active_assignment(ticket)

@@ -1,8 +1,10 @@
 import re
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from beanie import PydanticObjectId
+from bson.binary import Binary
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.domains.ticket.models import Ticket, TicketComment, TicketHistory, TicketType
@@ -258,6 +260,43 @@ class TicketRepository:
                 "assigned_breakdown_raw": [],
             }
         return results[0]
+
+    async def aggregate_issues_by_product(
+        self,
+        *,
+        date_from: datetime,
+        date_to_exclusive: datetime,
+        company_id: UUID | None,
+    ) -> list[dict[str, Any]]:
+        """Returns raw monthly counts of ``type == issue`` tickets grouped by product.
+
+        Each row has shape ``{"_id": {"year": int, "month": int, "product": str}, "count": int}``.
+        The service is responsible for materialising every (product, month) cell,
+        including zeros.
+        """
+        match_stage: dict[str, Any] = {
+            "type": TicketType.ISSUE.value,
+            "creation_date": {"$gte": date_from, "$lt": date_to_exclusive},
+        }
+        if company_id is not None:
+            match_stage["client.company.id"] = Binary(company_id.bytes, subtype=4)
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match_stage},
+            {
+                "$group": {
+                    "_id": {
+                        "year": {"$year": "$creation_date"},
+                        "month": {"$month": "$creation_date"},
+                        "product": "$product",
+                    },
+                    "count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"_id.product": 1, "_id.year": 1, "_id.month": 1}},
+        ]
+        cursor = Ticket.get_motor_collection().aggregate(pipeline)
+        return await cursor.to_list(length=None)
 
     @staticmethod
     def _build_query(filters: TicketSearchFiltersDTO) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -391,6 +391,90 @@ class TicketDashboardResponseDTO(BaseModel):
     kpis: TicketDashboardKPIsDTO
     open_breakdown: list[TicketStatusBucketDTO]
     assigned_breakdown: list[TicketAssigneeBucketDTO]
+
+
+class IssuesByProductChartFiltersDTO(BaseDTO):
+    company_id: UUID | None = Field(
+        default=None,
+        description="Optional company UUID; when set, restricts to tickets whose client.company.id matches.",
+    )
+    date_from: date | None = Field(
+        default=None,
+        description="Inclusive start date (ISO 8601). Truncated to the first day of the month.",
+    )
+    date_to: date | None = Field(
+        default=None,
+        description="Inclusive end date (ISO 8601). Truncated to the last day of the month.",
+    )
+
+
+class ProductSeriesPointDTO(BaseModel):
+    month: str = Field(..., description="Identificador do mês no formato YYYY-MM.")
+    count: int = Field(..., ge=0)
+
+
+class ProductSeriesDTO(BaseModel):
+    product: str = Field(..., description="Nome do produto (snapshot guardado no ticket).")
+    total: int = Field(..., ge=0, description="Soma de tickets do produto no período.")
+    points: list[ProductSeriesPointDTO] = Field(
+        ..., description="Um ponto por mês do eixo X, mesma ordem de months[]."
+    )
+
+
+class IssuesByProductChartResponseDTO(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "period_start": "2026-01-01",
+                "period_end": "2026-05-31",
+                "company_id": None,
+                "months": ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"],
+                "generated_at": "2026-05-19T12:00:00Z",
+                "series": [
+                    {
+                        "product": "Produto 1",
+                        "total": 61,
+                        "points": [
+                            {"month": "2026-01", "count": 12},
+                            {"month": "2026-02", "count": 14},
+                            {"month": "2026-03", "count": 7},
+                            {"month": "2026-04", "count": 18},
+                            {"month": "2026-05", "count": 10},
+                        ],
+                    },
+                    {
+                        "product": "Produto 2",
+                        "total": 75,
+                        "points": [
+                            {"month": "2026-01", "count": 10},
+                            {"month": "2026-02", "count": 12},
+                            {"month": "2026-03", "count": 16},
+                            {"month": "2026-04", "count": 17},
+                            {"month": "2026-05", "count": 20},
+                        ],
+                    },
+                    {
+                        "product": "Produto 3",
+                        "total": 44,
+                        "points": [
+                            {"month": "2026-01", "count": 8},
+                            {"month": "2026-02", "count": 8},
+                            {"month": "2026-03", "count": 5},
+                            {"month": "2026-04", "count": 10},
+                            {"month": "2026-05", "count": 13},
+                        ],
+                    },
+                ],
+            }
+        }
+    }
+
+    period_start: date
+    period_end: date
+    company_id: UUID | None = None
+    months: list[str]
+    series: list[ProductSeriesDTO]
+    generated_at: datetime
 
 
 class TicketEventPayload(BaseModel):

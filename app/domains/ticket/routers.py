@@ -16,6 +16,8 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    IssuesByProductChartFiltersDTO,
+    IssuesByProductChartResponseDTO,
     TicketDashboardFiltersDTO,
     TicketDashboardResponseDTO,
     TicketPaginatedList,
@@ -124,6 +126,47 @@ async def get_ticket_dashboard(
     - ticket:read
     """
     result = await service.get_dashboard(filters)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.get(
+    "/dashboard/issues-by-product",
+    tags=["Tickets", "Dashboard"],
+    response_model=GenericSuccessContent[IssuesByProductChartResponseDTO],
+    dependencies=[require_permission("ticket:read")],
+    summary="Issues per product over time",
+    description=(
+        "Monthly time series of `type=issue` tickets grouped by product. "
+        "Optional filters: `company_id` (restricts to one client) and "
+        "`date_from`/`date_to` (range, max 12 months; defaults to last "
+        "6 calendar months including the current one)."
+    ),
+)
+async def get_issues_by_product_chart(
+    filters: Annotated[IssuesByProductChartFiltersDTO, Depends()],
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    """
+    HTTP GET /api/tickets/dashboard/issues-by-product
+
+    Purpose:
+    - Feed the product time series chart with monthly issue counts.
+
+    Query params:
+    - company_id, date_from, date_to
+
+    Response:
+    - GenericSuccessContent[IssuesByProductChartResponseDTO]
+
+    Permissions:
+    - ticket:read
+    """
+    result = await service.get_issues_by_product_chart(filters)
     return response.success(
         data=result.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
