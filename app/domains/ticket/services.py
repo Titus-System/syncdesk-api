@@ -57,6 +57,9 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    AgentClosingsBucketDTO,
+    AgentClosingsChartFiltersDTO,
+    AgentClosingsChartResponseDTO,
     IssuesByProductChartFiltersDTO,
     IssuesByProductChartResponseDTO,
     ProductSeriesDTO,
@@ -208,6 +211,25 @@ class TicketService:
             assigned_breakdown=self._build_assigned_breakdown(
                 raw.get("assigned_breakdown_raw", [])
             ),
+        )
+
+    async def get_agent_closings_chart(
+        self, filters: AgentClosingsChartFiltersDTO
+    ) -> AgentClosingsChartResponseDTO:
+        month, year = self._resolve_closings_period(filters.month, filters.year)
+        period_start, period_end_exclusive = self._month_window_utc(year, month)
+        raw = await self.repo.aggregate_agent_closings(
+            period_start=period_start,
+            period_end_exclusive=period_end_exclusive,
+            level=filters.level,
+        )
+        agents = self._build_agent_closings(raw)
+        return AgentClosingsChartResponseDTO(
+            month=month,
+            year=year,
+            level=filters.level,
+            agents=agents,
+            generated_at=datetime.now(UTC),
         )
 
     async def get_issues_by_product_chart(
@@ -587,6 +609,8 @@ class TicketService:
             previous_status = ticket.status
             self._validate_status_change(previous_status, status_update)
             ticket.status = status_update
+            if status_update == TicketStatus.FINISHED:
+                self._apply_finished_metadata(ticket)
         elif status_update is not None and not updates:
             return self._to_ticket_response(ticket)
 
@@ -669,6 +693,8 @@ class TicketService:
 
         self._validate_status_change(previous_status, dto.status)
         ticket.status = dto.status
+        if dto.status == TicketStatus.FINISHED:
+            self._apply_finished_metadata(ticket)
 
         updated_ticket = await self.repo.save(ticket)
         self._record_status_transition(ticket_id, previous_status, dto.status, actor=actor)
@@ -793,6 +819,17 @@ class TicketService:
         if actor is not None:
             extra["actor_user_id"] = str(actor.id)
         self.logger.info("Ticket status updated", extra=extra)
+
+    def _apply_finished_metadata(self, ticket: Ticket) -> None:
+        """Snapshot do agente ativo + timestamp no momento do fechamento.
+
+        Aplicado quando o ticket transita para ``FINISHED``. Se não houver
+        agente ativo (ticket finalizado direto sem assignment), ``closed_by_agent``
+        fica ``None`` — esses tickets ficam fora do dashboard de encerramentos.
+        """
+        ticket.closed_at = datetime.now(UTC)
+        active = self._get_active_assignment(ticket)
+        ticket.closed_by_agent = active.model_copy() if active is not None else None
 
     async def _publish_ticket_closed(self, ticket: Ticket) -> None:
         assert ticket.id is not None
@@ -1052,6 +1089,90 @@ class TicketService:
             keys.append(f"{cursor.year:04d}-{cursor.month:02d}")
             cursor = self._first_day_of_next_month(cursor)
         return keys
+
+    def _resolve_closings_period(
+        self, month: int | None, year: int | None
+    ) -> tuple[int, int]:
+        today = datetime.now(UTC).date()
+        return (month or today.month, year or today.year)
+
+    def _month_window_utc(self, year: int, month: int) -> tuple[datetime, datetime]:
+        start = datetime(year, month, 1, tzinfo=UTC)
+        if month == 12:
+            end = datetime(year + 1, 1, 1, tzinfo=UTC)
+        else:
+            end = datetime(year, month + 1, 1, tzinfo=UTC)
+        return start, end
+
+    def _build_agent_closings(
+        self, rows: list[dict[str, object]]
+    ) -> list[AgentClosingsBucketDTO]:
+        # Pivot: agent_id -> { name, counts por tipo }
+        per_agent: dict[Any, dict[str, Any]] = {}
+        for row in rows:
+            row_id = row.get("_id")
+            if not isinstance(row_id, dict):
+                continue
+            agent_raw = row_id.get("agent_id")
+            agent_uuid = self._coerce_uuid(agent_raw)
+            if agent_uuid is None:
+                continue  # closed_by_agent.agent_id ausente é defensivo
+            ticket_type = str(row_id.get("type") or "")
+            count = int(row.get("count", 0))  # type: ignore[arg-type]
+            name = str(row.get("agent_name") or "Desconhecido")
+            bucket = per_agent.setdefault(
+                agent_uuid,
+                {
+                    "agent_name": name,
+                    "issue_count": 0,
+                    "access_count": 0,
+                    "new_feature_count": 0,
+                },
+            )
+            # Preserva o nome mais recente caso varie no $first
+            bucket["agent_name"] = bucket["agent_name"] or name
+            if ticket_type == "issue":
+                bucket["issue_count"] += count
+            elif ticket_type == "access":
+                bucket["access_count"] += count
+            elif ticket_type == "new_feature":
+                bucket["new_feature_count"] += count
+            # Tipos desconhecidos são ignorados defensivamente
+
+        buckets: list[AgentClosingsBucketDTO] = []
+        for agent_uuid, info in per_agent.items():
+            total = (
+                info["issue_count"]
+                + info["access_count"]
+                + info["new_feature_count"]
+            )
+            buckets.append(
+                AgentClosingsBucketDTO(
+                    agent_id=agent_uuid,
+                    agent_name=info["agent_name"],
+                    issue_count=info["issue_count"],
+                    access_count=info["access_count"],
+                    new_feature_count=info["new_feature_count"],
+                    total=total,
+                )
+            )
+        buckets.sort(key=lambda b: (-b.total, b.agent_name))
+
+        top = buckets[:_TOP_ASSIGNEES_LIMIT]
+        rest = buckets[_TOP_ASSIGNEES_LIMIT:]
+        if rest:
+            top.append(
+                AgentClosingsBucketDTO(
+                    agent_id=None,
+                    agent_name="Outros",
+                    issue_count=sum(b.issue_count for b in rest),
+                    access_count=sum(b.access_count for b in rest),
+                    new_feature_count=sum(b.new_feature_count for b in rest),
+                    total=sum(b.total for b in rest),
+                    is_aggregate=True,
+                )
+            )
+        return top
 
     def _build_product_series(
         self, rows: list[dict[str, object]], months: list[str]

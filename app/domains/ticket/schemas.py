@@ -393,6 +393,86 @@ class TicketDashboardResponseDTO(BaseModel):
     assigned_breakdown: list[TicketAssigneeBucketDTO]
 
 
+class AgentClosingsChartFiltersDTO(BaseDTO):
+    month: int | None = Field(
+        default=None,
+        ge=1,
+        le=12,
+        description="Mês (1-12) do encerramento. Default: mês corrente UTC.",
+    )
+    year: int | None = Field(
+        default=None,
+        ge=2000,
+        le=2100,
+        description="Ano do encerramento. Default: ano corrente UTC.",
+    )
+    level: TicketLevel | None = Field(
+        default=None,
+        description="Filtra por nível do agente que encerrou (snapshot).",
+    )
+
+
+class AgentClosingsBucketDTO(BaseModel):
+    agent_id: UUID | None = Field(
+        default=None,
+        description="UUID do agente. None apenas no bucket 'Outros' (is_aggregate=True).",
+    )
+    agent_name: str
+    issue_count: int = Field(..., ge=0, description='Equivalente ao rótulo "Ticket" no front.')
+    access_count: int = Field(..., ge=0, description='Equivalente ao rótulo "Liberação de acesso".')
+    new_feature_count: int = Field(..., ge=0, description='Equivalente ao rótulo "Features".')
+    total: int = Field(..., ge=0)
+    is_aggregate: bool = False
+
+
+class AgentClosingsChartResponseDTO(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "month": 5,
+                "year": 2026,
+                "level": None,
+                "generated_at": "2026-05-19T12:00:00Z",
+                "agents": [
+                    {
+                        "agent_id": "0f7d7c4f-7b5b-45cb-9d85-6f3c69f0b5d2",
+                        "agent_name": "Angelina",
+                        "issue_count": 4000,
+                        "access_count": 7000,
+                        "new_feature_count": 2500,
+                        "total": 13500,
+                        "is_aggregate": False,
+                    },
+                    {
+                        "agent_id": "97f0c9b8-e4b0-41a2-83d4-e5f600000001",
+                        "agent_name": "Mafe",
+                        "issue_count": 3200,
+                        "access_count": 2000,
+                        "new_feature_count": 1700,
+                        "total": 6900,
+                        "is_aggregate": False,
+                    },
+                    {
+                        "agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8",
+                        "agent_name": "Julia",
+                        "issue_count": 2200,
+                        "access_count": 5000,
+                        "new_feature_count": 1200,
+                        "total": 8400,
+                        "is_aggregate": False,
+                    },
+                ],
+            }
+        }
+    }
+
+    month: int
+    year: int
+    level: TicketLevel | None = None
+    agents: list[AgentClosingsBucketDTO]
+    generated_at: datetime
+
+
 class IssuesByProductChartFiltersDTO(BaseDTO):
     company_id: UUID | None = Field(
         default=None,

@@ -7,7 +7,7 @@ from beanie import PydanticObjectId
 from bson.binary import Binary
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.domains.ticket.models import Ticket, TicketComment, TicketHistory, TicketType
+from app.domains.ticket.models import Ticket, TicketComment, TicketHistory, TicketLevel, TicketType
 from app.domains.ticket.schemas import TicketQueueFiltersDTO, TicketSearchFiltersDTO
 from app.domains.ticket.schemas import TicketSearchFiltersDTO, UpdateTicketCommentDTO
 
@@ -260,6 +260,46 @@ class TicketRepository:
                 "assigned_breakdown_raw": [],
             }
         return results[0]
+
+    async def aggregate_agent_closings(
+        self,
+        *,
+        period_start: datetime,
+        period_end_exclusive: datetime,
+        level: TicketLevel | None,
+    ) -> list[dict[str, Any]]:
+        """Tickets ``status == finished`` agrupados por (agente que encerrou, tipo).
+
+        Cada linha: ``{"_id": {"agent_id": <bson Binary UUID>, "type": <str>},
+        "agent_name": <str>, "count": <int>}``.
+        O pivot para 3 contadores por agente fica no service.
+        """
+        match_stage: dict[str, Any] = {
+            "status": "finished",
+            "closed_at": {
+                "$gte": period_start,
+                "$lt": period_end_exclusive,
+            },
+            "closed_by_agent": {"$ne": None},
+        }
+        if level is not None:
+            match_stage["closed_by_agent.level"] = level.value
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match_stage},
+            {
+                "$group": {
+                    "_id": {
+                        "agent_id": "$closed_by_agent.agent_id",
+                        "type": "$type",
+                    },
+                    "agent_name": {"$first": "$closed_by_agent.name"},
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+        cursor = Ticket.get_motor_collection().aggregate(pipeline)
+        return await cursor.to_list(length=None)
 
     async def aggregate_issues_by_product(
         self,

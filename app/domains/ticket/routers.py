@@ -16,6 +16,8 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    AgentClosingsChartFiltersDTO,
+    AgentClosingsChartResponseDTO,
     IssuesByProductChartFiltersDTO,
     IssuesByProductChartResponseDTO,
     TicketDashboardFiltersDTO,
@@ -126,6 +128,46 @@ async def get_ticket_dashboard(
     - ticket:read
     """
     result = await service.get_dashboard(filters)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.get(
+    "/dashboard/agent-closings",
+    tags=["Tickets", "Dashboard"],
+    response_model=GenericSuccessContent[AgentClosingsChartResponseDTO],
+    dependencies=[require_permission("ticket:read")],
+    summary="Tickets closed per agent",
+    description=(
+        "Tickets finished per agent, split by ticket type (issue / access / "
+        "new_feature). Filters: `month` (1-12), `year` (≥2000), `level` "
+        "(N1/N2/N3). Defaults: current month/year. Top 10 agents + Outros."
+    ),
+)
+async def get_agent_closings_chart(
+    filters: Annotated[AgentClosingsChartFiltersDTO, Depends()],
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    """
+    HTTP GET /api/tickets/dashboard/agent-closings
+
+    Purpose:
+    - Feed the per-agent closings bar chart.
+
+    Query params:
+    - month, year, level
+
+    Response:
+    - GenericSuccessContent[AgentClosingsChartResponseDTO]
+
+    Permissions:
+    - ticket:read
+    """
+    result = await service.get_agent_closings_chart(filters)
     return response.success(
         data=result.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
