@@ -4,18 +4,23 @@ Backend and API Gateway built with **FastAPI**, **SQLAlchemy 2** (async), **Post
 
 ## Tech Stack
 
-| Layer        | Technology                            |
-| ------------ | ------------------------------------- |
-| Framework    | FastAPI 0.121+                        |
-| Language     | Python 3.12+                          |
-| Database     | PostgreSQL + asyncpg, MongoDB + Motor |
-| ORM          | SQLAlchemy 2 (async)                  |
-| Migrations   | Alembic                               |
-| Auth         | JWT (PyJWT) + Argon2 password hashing |
-| Metrics      | prometheus-client + psutil            |
-| Package mgmt | Poetry                                |
-| Linting      | Ruff, Bandit, mypy                    |
-| Testing      | pytest + pytest-asyncio + httpx       |
+| Layer         | Technology                                              |
+| ------------- | ------------------------------------------------------- |
+| Framework     | FastAPI 0.121+ (Uvicorn / Gunicorn)                     |
+| Language      | Python 3.12+                                            |
+| Databases     | PostgreSQL + asyncpg, MongoDB + Motor / Beanie          |
+| ORM           | SQLAlchemy 2 (async)                                    |
+| Migrations    | Alembic                                                 |
+| Auth          | JWT (PyJWT) + Argon2 password hashing (passlib)         |
+| Realtime      | WebSockets (FastAPI) + in-process event bus             |
+| Email         | Resend (async) + Jinja2 templates + outbox worker       |
+| Observability | Prometheus + Grafana + Loki + Promtail + Alertmanager   |
+| Metrics       | prometheus-client + psutil                              |
+| Package mgmt  | Poetry                                                  |
+| Linting       | Ruff, Bandit, mypy                                      |
+| Testing       | pytest + pytest-asyncio + pytest-cov + httpx            |
+| Deployment    | Docker + Docker Compose                                 |
+| CI/CD         | GitHub Actions + Digital Ocean Droplet                  |
 
 ## Project Structure
 
