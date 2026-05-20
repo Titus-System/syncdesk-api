@@ -76,6 +76,8 @@ class Ticket(Document):
     agent_history: list[TicketHistory] = Field(default_factory=list)
     client: TicketClient
     comments: list[TicketComment] = Field(default_factory=list)
+    closed_at: datetime | None = None
+    closed_by_agent: TicketHistory | None = None
 
     class Settings:
         name = "tickets"

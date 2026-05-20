@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from calendar import monthrange
+from datetime import UTC, date, datetime, time
 from uuid import UUID, uuid4
 
 from beanie import PydanticObjectId
@@ -28,6 +29,27 @@ from app.domains.ticket.models import (
     TicketComment,
 )
 from app.domains.ticket.repositories import TicketRepository
+from app.domains.ticket.sla import compute_due_date
+
+
+_OPEN_BUCKET_LABELS: dict[str, str] = {
+    "pendente": "Pendente",
+    "em_atendimento": "Em atendimento",
+    "nao_atribuidos": "Não atribuídos",
+}
+
+_STATUS_TO_OPEN_BUCKET: dict[str, str] = {
+    "waiting_for_provider": "pendente",
+    "waiting_for_validation": "pendente",
+    "in_progress": "em_atendimento",
+    "awaiting_assignment": "nao_atribuidos",
+    "open": "nao_atribuidos",
+}
+
+_TOP_ASSIGNEES_LIMIT = 10
+
+_ISSUES_CHART_DEFAULT_MONTHS = 6
+_ISSUES_CHART_MAX_MONTHS = 12
 from app.domains.ticket.schemas import (
     AddTicketCommentDTO,
     AssignTicketRequest,
@@ -35,6 +57,18 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    AgentClosingsBucketDTO,
+    AgentClosingsChartFiltersDTO,
+    AgentClosingsChartResponseDTO,
+    IssuesByProductChartFiltersDTO,
+    IssuesByProductChartResponseDTO,
+    ProductSeriesDTO,
+    ProductSeriesPointDTO,
+    TicketAssigneeBucketDTO,
+    TicketDashboardFiltersDTO,
+    TicketDashboardKPIsDTO,
+    TicketDashboardResponseDTO,
+    TicketStatusBucketDTO,
     TicketClientResponse,
     TicketCommentResponse,
     TicketCompanyResponse,
@@ -163,6 +197,63 @@ class TicketService:
             page=filters.page,
             page_size=filters.page_size,
             total=len(sorted_tickets),
+        )
+
+    async def get_dashboard(
+        self, filters: TicketDashboardFiltersDTO
+    ) -> TicketDashboardResponseDTO:
+        raw = await self.repo.aggregate_dashboard(filters.type)
+        return TicketDashboardResponseDTO(
+            type=filters.type,
+            generated_at=datetime.now(UTC),
+            kpis=self._build_dashboard_kpis(raw.get("kpis", [])),
+            open_breakdown=self._build_open_breakdown(raw.get("open_breakdown", [])),
+            assigned_breakdown=self._build_assigned_breakdown(
+                raw.get("assigned_breakdown_raw", [])
+            ),
+        )
+
+    async def get_agent_closings_chart(
+        self, filters: AgentClosingsChartFiltersDTO
+    ) -> AgentClosingsChartResponseDTO:
+        month, year = self._resolve_closings_period(filters.month, filters.year)
+        period_start, period_end_exclusive = self._month_window_utc(year, month)
+        raw = await self.repo.aggregate_agent_closings(
+            period_start=period_start,
+            period_end_exclusive=period_end_exclusive,
+            level=filters.level,
+        )
+        agents = self._build_agent_closings(raw)
+        return AgentClosingsChartResponseDTO(
+            month=month,
+            year=year,
+            level=filters.level,
+            agents=agents,
+            generated_at=datetime.now(UTC),
+        )
+
+    async def get_issues_by_product_chart(
+        self, filters: IssuesByProductChartFiltersDTO
+    ) -> IssuesByProductChartResponseDTO:
+        period_start, period_end, months = self._resolve_chart_period(
+            filters.date_from, filters.date_to
+        )
+        date_to_exclusive = self._first_day_of_next_month(period_end)
+        raw = await self.repo.aggregate_issues_by_product(
+            date_from=datetime.combine(period_start, time.min, tzinfo=UTC),
+            date_to_exclusive=datetime.combine(
+                date_to_exclusive, time.min, tzinfo=UTC
+            ),
+            company_id=filters.company_id,
+        )
+        series = self._build_product_series(raw, months)
+        return IssuesByProductChartResponseDTO(
+            period_start=period_start,
+            period_end=period_end,
+            company_id=filters.company_id,
+            months=months,
+            series=series,
+            generated_at=datetime.now(UTC),
         )
 
     async def take_ticket(
@@ -518,6 +609,8 @@ class TicketService:
             previous_status = ticket.status
             self._validate_status_change(previous_status, status_update)
             ticket.status = status_update
+            if status_update == TicketStatus.FINISHED:
+                self._apply_finished_metadata(ticket)
         elif status_update is not None and not updates:
             return self._to_ticket_response(ticket)
 
@@ -600,6 +693,8 @@ class TicketService:
 
         self._validate_status_change(previous_status, dto.status)
         ticket.status = dto.status
+        if dto.status == TicketStatus.FINISHED:
+            self._apply_finished_metadata(ticket)
 
         updated_ticket = await self.repo.save(ticket)
         self._record_status_transition(ticket_id, previous_status, dto.status, actor=actor)
@@ -724,6 +819,17 @@ class TicketService:
         if actor is not None:
             extra["actor_user_id"] = str(actor.id)
         self.logger.info("Ticket status updated", extra=extra)
+
+    def _apply_finished_metadata(self, ticket: Ticket) -> None:
+        """Snapshot do agente ativo + timestamp no momento do fechamento.
+
+        Aplicado quando o ticket transita para ``FINISHED``. Se não houver
+        agente ativo (ticket finalizado direto sem assignment), ``closed_by_agent``
+        fica ``None`` — esses tickets ficam fora do dashboard de encerramentos.
+        """
+        ticket.closed_at = datetime.now(UTC)
+        active = self._get_active_assignment(ticket)
+        ticket.closed_by_agent = active.model_copy() if active is not None else None
 
     async def _publish_ticket_closed(self, ticket: Ticket) -> None:
         assert ticket.id is not None
@@ -852,6 +958,254 @@ class TicketService:
             creation_date = creation_date.replace(tzinfo=UTC)
         return criticality_priority[ticket.criticality], creation_date
 
+    def _build_dashboard_kpis(
+        self, rows: list[dict[str, int]]
+    ) -> TicketDashboardKPIsDTO:
+        if not rows:
+            return TicketDashboardKPIsDTO(
+                open_count=0,
+                cancelled_count=0,
+                unassigned_count=0,
+                overdue_count=0,
+            )
+        row = rows[0]
+        return TicketDashboardKPIsDTO(
+            open_count=row.get("open_count", 0),
+            cancelled_count=row.get("cancelled_count", 0),
+            unassigned_count=row.get("unassigned_count", 0),
+            overdue_count=row.get("overdue_count", 0),
+        )
+
+    def _build_open_breakdown(
+        self, rows: list[dict[str, object]]
+    ) -> list[TicketStatusBucketDTO]:
+        counts: dict[str, int] = {bucket: 0 for bucket in _OPEN_BUCKET_LABELS}
+        for row in rows:
+            bucket = _STATUS_TO_OPEN_BUCKET.get(str(row["_id"]))
+            if bucket is not None:
+                counts[bucket] += int(row["count"])  # type: ignore[arg-type]
+        return [
+            TicketStatusBucketDTO(
+                bucket=bucket,  # type: ignore[arg-type]
+                label=_OPEN_BUCKET_LABELS[bucket],
+                count=count,
+            )
+            for bucket, count in counts.items()
+        ]
+
+    def _build_assigned_breakdown(
+        self, rows: list[dict[str, object]]
+    ) -> list[TicketAssigneeBucketDTO]:
+        top = rows[:_TOP_ASSIGNEES_LIMIT]
+        rest = rows[_TOP_ASSIGNEES_LIMIT:]
+        buckets: list[TicketAssigneeBucketDTO] = [
+            TicketAssigneeBucketDTO(
+                agent_id=self._coerce_uuid(row.get("_id")),
+                agent_name=str(row.get("agent_name") or "Desconhecido"),
+                count=int(row["count"]),  # type: ignore[arg-type]
+            )
+            for row in top
+        ]
+        if rest:
+            buckets.append(
+                TicketAssigneeBucketDTO(
+                    agent_id=None,
+                    agent_name="Outros",
+                    count=sum(int(r["count"]) for r in rest),  # type: ignore[arg-type]
+                    is_aggregate=True,
+                )
+            )
+        return buckets
+
+    @staticmethod
+    def _coerce_uuid(value: object) -> UUID | None:
+        if value is None:
+            return None
+        if isinstance(value, UUID):
+            return value
+        if isinstance(value, bytes):
+            return UUID(bytes=value)
+        return UUID(str(value))
+
+    def _resolve_chart_period(
+        self, date_from: date | None, date_to: date | None
+    ) -> tuple[date, date, list[str]]:
+        today = datetime.now(UTC).date()
+        end = date_to or today
+        end = self._last_day_of_month(end)
+        if date_from is not None:
+            start = self._first_day_of_month(date_from)
+        else:
+            # default: últimos N meses, incluindo o mês de `end`
+            start = self._first_day_of_month(
+                self._shift_months(end, -(_ISSUES_CHART_DEFAULT_MONTHS - 1))
+            )
+
+        if start > end:
+            raise AppHTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="date_from must be on or before date_to.",
+                title="Validation Error",
+            )
+
+        months = self._month_keys_between(start, end)
+        if len(months) > _ISSUES_CHART_MAX_MONTHS:
+            raise AppHTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"The requested period spans {len(months)} months, "
+                    f"but the maximum is {_ISSUES_CHART_MAX_MONTHS}."
+                ),
+                title="Validation Error",
+            )
+        return start, end, months
+
+    @staticmethod
+    def _first_day_of_month(value: date) -> date:
+        return value.replace(day=1)
+
+    @staticmethod
+    def _last_day_of_month(value: date) -> date:
+        last_day = monthrange(value.year, value.month)[1]
+        return value.replace(day=last_day)
+
+    @staticmethod
+    def _first_day_of_next_month(value: date) -> date:
+        year, month = (value.year + 1, 1) if value.month == 12 else (value.year, value.month + 1)
+        return date(year, month, 1)
+
+    @staticmethod
+    def _shift_months(anchor: date, delta: int) -> date:
+        zero_indexed = anchor.month - 1 + delta
+        year = anchor.year + zero_indexed // 12
+        month = zero_indexed % 12 + 1
+        return date(year, month, 1)
+
+    def _month_keys_between(self, start: date, end: date) -> list[str]:
+        keys: list[str] = []
+        cursor = self._first_day_of_month(start)
+        end_anchor = self._first_day_of_month(end)
+        while cursor <= end_anchor:
+            keys.append(f"{cursor.year:04d}-{cursor.month:02d}")
+            cursor = self._first_day_of_next_month(cursor)
+        return keys
+
+    def _resolve_closings_period(
+        self, month: int | None, year: int | None
+    ) -> tuple[int, int]:
+        today = datetime.now(UTC).date()
+        return (month or today.month, year or today.year)
+
+    def _month_window_utc(self, year: int, month: int) -> tuple[datetime, datetime]:
+        start = datetime(year, month, 1, tzinfo=UTC)
+        if month == 12:
+            end = datetime(year + 1, 1, 1, tzinfo=UTC)
+        else:
+            end = datetime(year, month + 1, 1, tzinfo=UTC)
+        return start, end
+
+    def _build_agent_closings(
+        self, rows: list[dict[str, object]]
+    ) -> list[AgentClosingsBucketDTO]:
+        # Pivot: agent_id -> { name, counts por tipo }
+        per_agent: dict[Any, dict[str, Any]] = {}
+        for row in rows:
+            row_id = row.get("_id")
+            if not isinstance(row_id, dict):
+                continue
+            agent_raw = row_id.get("agent_id")
+            agent_uuid = self._coerce_uuid(agent_raw)
+            if agent_uuid is None:
+                continue  # closed_by_agent.agent_id ausente é defensivo
+            ticket_type = str(row_id.get("type") or "")
+            count = int(row.get("count", 0))  # type: ignore[arg-type]
+            name = str(row.get("agent_name") or "Desconhecido")
+            bucket = per_agent.setdefault(
+                agent_uuid,
+                {
+                    "agent_name": name,
+                    "issue_count": 0,
+                    "access_count": 0,
+                    "new_feature_count": 0,
+                },
+            )
+            # Preserva o nome mais recente caso varie no $first
+            bucket["agent_name"] = bucket["agent_name"] or name
+            if ticket_type == "issue":
+                bucket["issue_count"] += count
+            elif ticket_type == "access":
+                bucket["access_count"] += count
+            elif ticket_type == "new_feature":
+                bucket["new_feature_count"] += count
+            # Tipos desconhecidos são ignorados defensivamente
+
+        buckets: list[AgentClosingsBucketDTO] = []
+        for agent_uuid, info in per_agent.items():
+            total = (
+                info["issue_count"]
+                + info["access_count"]
+                + info["new_feature_count"]
+            )
+            buckets.append(
+                AgentClosingsBucketDTO(
+                    agent_id=agent_uuid,
+                    agent_name=info["agent_name"],
+                    issue_count=info["issue_count"],
+                    access_count=info["access_count"],
+                    new_feature_count=info["new_feature_count"],
+                    total=total,
+                )
+            )
+        buckets.sort(key=lambda b: (-b.total, b.agent_name))
+
+        top = buckets[:_TOP_ASSIGNEES_LIMIT]
+        rest = buckets[_TOP_ASSIGNEES_LIMIT:]
+        if rest:
+            top.append(
+                AgentClosingsBucketDTO(
+                    agent_id=None,
+                    agent_name="Outros",
+                    issue_count=sum(b.issue_count for b in rest),
+                    access_count=sum(b.access_count for b in rest),
+                    new_feature_count=sum(b.new_feature_count for b in rest),
+                    total=sum(b.total for b in rest),
+                    is_aggregate=True,
+                )
+            )
+        return top
+
+    def _build_product_series(
+        self, rows: list[dict[str, object]], months: list[str]
+    ) -> list[ProductSeriesDTO]:
+        # mapa: product -> {month_key: count}
+        by_product: dict[str, dict[str, int]] = {}
+        for row in rows:
+            row_id = row.get("_id")
+            if not isinstance(row_id, dict):
+                continue
+            product = str(row_id.get("product") or "")
+            year = int(row_id["year"])  # type: ignore[arg-type]
+            month = int(row_id["month"])  # type: ignore[arg-type]
+            count = int(row.get("count", 0))  # type: ignore[arg-type]
+            month_key = f"{year:04d}-{month:02d}"
+            by_product.setdefault(product, {})[month_key] = count
+
+        series: list[ProductSeriesDTO] = []
+        for product, month_counts in by_product.items():
+            points = [
+                ProductSeriesPointDTO(month=m, count=month_counts.get(m, 0))
+                for m in months
+            ]
+            series.append(
+                ProductSeriesDTO(
+                    product=product,
+                    total=sum(p.count for p in points),
+                    points=points,
+                )
+            )
+        series.sort(key=lambda s: (-s.total, s.product))
+        return series
+
     def _to_ticket_queue_item_response(self, ticket: Ticket) -> TicketQueueItemResponse:
         current_assignment = self._get_active_assignment(ticket)
         assignee_id, assignee_name = self._resolve_assigned_agent(ticket)
@@ -895,6 +1249,7 @@ class TicketService:
             status=ticket.status,
             level=ticket.level,
             creation_date=ticket.creation_date,
+            due_date=compute_due_date(ticket.creation_date, ticket.criticality),
             description=ticket.description,
             chat_ids=[str(chat_id) for chat_id in ticket.chat_ids],
             agent_history=[

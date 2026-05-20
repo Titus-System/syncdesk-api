@@ -16,6 +16,12 @@ from app.domains.ticket.schemas import (
     CreateTicketDTO,
     CreateTicketResponseDTO,
     EscalateTicketRequest,
+    AgentClosingsChartFiltersDTO,
+    AgentClosingsChartResponseDTO,
+    IssuesByProductChartFiltersDTO,
+    IssuesByProductChartResponseDTO,
+    TicketDashboardFiltersDTO,
+    TicketDashboardResponseDTO,
     TicketPaginatedList,
     TicketQueueFiltersDTO,
     TicketQueueListResponse,
@@ -81,6 +87,128 @@ async def get_tickets(
     - ticket:read
     """
     result = await service.list_tickets(filters)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.get(
+    "/dashboard",
+    tags=["Tickets", "Dashboard"],
+    response_model=GenericSuccessContent[TicketDashboardResponseDTO],
+    dependencies=[require_permission("ticket:read")],
+    summary="Ticket dashboard metrics",
+    description=(
+        "Returns KPIs and donut breakdowns for the ticket dashboard, scoped by "
+        "ticket type. KPIs cover open/cancelled/unassigned/overdue counts; the "
+        "two donuts expose status buckets (pendente/em_atendimento/nao_atribuidos) "
+        "and assignee distribution (top 10 + Outros)."
+    ),
+)
+async def get_ticket_dashboard(
+    filters: Annotated[TicketDashboardFiltersDTO, Depends()],
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    """
+    HTTP GET /api/tickets/dashboard
+
+    Purpose:
+    - Single-call aggregation for the dashboard screen (one per ticket type).
+
+    Query params:
+    - type
+
+    Response:
+    - GenericSuccessContent[TicketDashboardResponseDTO]
+
+    Permissions:
+    - ticket:read
+    """
+    result = await service.get_dashboard(filters)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.get(
+    "/dashboard/agent-closings",
+    tags=["Tickets", "Dashboard"],
+    response_model=GenericSuccessContent[AgentClosingsChartResponseDTO],
+    dependencies=[require_permission("ticket:read")],
+    summary="Tickets closed per agent",
+    description=(
+        "Tickets finished per agent, split by ticket type (issue / access / "
+        "new_feature). Filters: `month` (1-12), `year` (≥2000), `level` "
+        "(N1/N2/N3). Defaults: current month/year. Top 10 agents + Outros."
+    ),
+)
+async def get_agent_closings_chart(
+    filters: Annotated[AgentClosingsChartFiltersDTO, Depends()],
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    """
+    HTTP GET /api/tickets/dashboard/agent-closings
+
+    Purpose:
+    - Feed the per-agent closings bar chart.
+
+    Query params:
+    - month, year, level
+
+    Response:
+    - GenericSuccessContent[AgentClosingsChartResponseDTO]
+
+    Permissions:
+    - ticket:read
+    """
+    result = await service.get_agent_closings_chart(filters)
+    return response.success(
+        data=result.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@ticket_router.get(
+    "/dashboard/issues-by-product",
+    tags=["Tickets", "Dashboard"],
+    response_model=GenericSuccessContent[IssuesByProductChartResponseDTO],
+    dependencies=[require_permission("ticket:read")],
+    summary="Issues per product over time",
+    description=(
+        "Monthly time series of `type=issue` tickets grouped by product. "
+        "Optional filters: `company_id` (restricts to one client) and "
+        "`date_from`/`date_to` (range, max 12 months; defaults to last "
+        "6 calendar months including the current one)."
+    ),
+)
+async def get_issues_by_product_chart(
+    filters: Annotated[IssuesByProductChartFiltersDTO, Depends()],
+    _auth: CurrentUserSessionDep,
+    service: TicketServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    """
+    HTTP GET /api/tickets/dashboard/issues-by-product
+
+    Purpose:
+    - Feed the product time series chart with monthly issue counts.
+
+    Query params:
+    - company_id, date_from, date_to
+
+    Response:
+    - GenericSuccessContent[IssuesByProductChartResponseDTO]
+
+    Permissions:
+    - ticket:read
+    """
+    result = await service.get_issues_by_product_chart(filters)
     return response.success(
         data=result.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
