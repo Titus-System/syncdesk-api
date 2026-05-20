@@ -141,7 +141,10 @@ class TestUpdateTicketFinishedMetadata:
         closed_at = reloaded.closed_at
         if closed_at.tzinfo is None:
             closed_at = closed_at.replace(tzinfo=UTC)
-        assert before <= closed_at <= after
+        # MongoDB trunca datetime para precisão de milissegundo, então closed_at
+        # pode ficar até ~1ms abaixo de `before`. Tolerância de 1s cobre folgado.
+        tolerance = timedelta(seconds=1)
+        assert before - tolerance <= closed_at <= after + tolerance
         assert reloaded.closed_by_agent is not None
         assert reloaded.closed_by_agent.agent_id == agent_id
         assert reloaded.closed_by_agent.name == "Julia"
