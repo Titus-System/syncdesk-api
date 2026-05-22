@@ -153,16 +153,36 @@ class TicketRepository:
                             "cond": {"$eq": ["$$h.exit_date", None]},
                         }
                     },
+                    # creation_date pode estar corrompido em documentos legados
+                    # (string, ausente, null). $convert recupera o que for
+                    # convertível para Date e degrada o resto para null, em vez
+                    # de abortar toda a agregação no $dateAdd.
+                    "creation_date_safe": {
+                        "$convert": {
+                            "input": "$creation_date",
+                            "to": "date",
+                            "onError": None,
+                            "onNull": None,
+                        }
+                    },
                 }
             },
             {
                 "$addFields": {
+                    # due_date só existe quando há data de criação válida.
+                    # Sem data não há SLA calculável → due_date = null.
                     "due_date": {
-                        "$dateAdd": {
-                            "startDate": "$creation_date",
-                            "unit": "day",
-                            "amount": "$sla_days",
-                        }
+                        "$cond": [
+                            {"$ne": ["$creation_date_safe", None]},
+                            {
+                                "$dateAdd": {
+                                    "startDate": "$creation_date_safe",
+                                    "unit": "day",
+                                    "amount": "$sla_days",
+                                }
+                            },
+                            None,
+                        ]
                     },
                     "is_open": {
                         "$not": {"$in": ["$status", ["finished", "cancelled"]]}
@@ -205,12 +225,16 @@ class TicketRepository:
                                         ]
                                     }
                                 },
+                                # due_date null deve ser ignorado: no MongoDB
+                                # null < $$NOW é true, então sem o $ne explícito
+                                # documentos sem data contariam como vencidos.
                                 "overdue_count": {
                                     "$sum": {
                                         "$cond": [
                                             {
                                                 "$and": [
                                                     "$is_open",
+                                                    {"$ne": ["$due_date", None]},
                                                     {
                                                         "$lt": [
                                                             "$due_date",
