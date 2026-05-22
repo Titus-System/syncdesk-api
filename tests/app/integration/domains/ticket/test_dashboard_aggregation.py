@@ -343,3 +343,150 @@ class TestTypeFilter:
             assert result["kpis"][0]["open_count"] == 1, (
                 f"Esperava 1 aberto para {ticket_type.value}"
             )
+
+
+async def _insert_raw_ticket(
+    mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+    *,
+    creation_date: Any,
+    status: str = "in_progress",
+    criticality: str = "high",
+    include_creation_date: bool = True,
+) -> None:
+    """Insere um ticket direto no Mongo, contornando a validação do Beanie.
+
+    Permite ``creation_date`` como string, null ou ausente — situações
+    impossíveis via o modelo Pydantic mas presentes em dados legados.
+    """
+    from bson.binary import Binary
+
+    doc: dict[str, Any] = {
+        "_id": PydanticObjectId(),
+        "triage_id": PydanticObjectId(),
+        "type": "issue",
+        "criticality": criticality,
+        "product": "Sistema",
+        "status": status,
+        "level": "N1",
+        "description": "ticket legado",
+        "chat_ids": [],
+        "agent_history": [],
+        "client": {
+            "id": Binary(uuid4().bytes, subtype=4),
+            "name": "Cliente",
+            "email": "c@test.com",
+            "company": {
+                "id": Binary(uuid4().bytes, subtype=4),
+                "name": "Empresa",
+            },
+        },
+        "comments": [],
+    }
+    if include_creation_date:
+        doc["creation_date"] = creation_date
+    await Ticket.get_motor_collection().insert_one(doc)
+
+
+class TestMalformedCreationDate:
+    """Regressão do crash de produção:
+    ``$dateAdd requires startDate to be convertible to a date``.
+
+    Documentos com creation_date inválido não devem abortar a agregação.
+    """
+
+    @pytest.mark.asyncio
+    async def test_string_creation_date_does_not_break_aggregation(
+        self,
+        repository: TicketRepository,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+    ) -> None:
+        # creation_date como string lixo (não convertível para date)
+        await _insert_raw_ticket(mongo_db_conn, creation_date="not-a-date")
+
+        # Não deve levantar exceção
+        result = await repository.aggregate_dashboard(TicketType.ISSUE)
+
+        assert result["kpis"][0]["open_count"] == 1
+        # Sem data calculável → não conta como vencido
+        assert result["kpis"][0]["overdue_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_null_creation_date_does_not_break_aggregation(
+        self,
+        repository: TicketRepository,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+    ) -> None:
+        await _insert_raw_ticket(mongo_db_conn, creation_date=None)
+
+        result = await repository.aggregate_dashboard(TicketType.ISSUE)
+
+        assert result["kpis"][0]["open_count"] == 1
+        assert result["kpis"][0]["overdue_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_creation_date_does_not_break_aggregation(
+        self,
+        repository: TicketRepository,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+    ) -> None:
+        await _insert_raw_ticket(
+            mongo_db_conn, creation_date=None, include_creation_date=False
+        )
+
+        result = await repository.aggregate_dashboard(TicketType.ISSUE)
+
+        assert result["kpis"][0]["open_count"] == 1
+        assert result["kpis"][0]["overdue_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_iso_string_creation_date_is_recovered_and_counts_as_overdue(
+        self,
+        repository: TicketRepository,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+    ) -> None:
+        # String ISO válida e antiga: $convert recupera → conta no overdue
+        # (high SLA = 1 dia, criado há 30 dias)
+        old_iso = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        await _insert_raw_ticket(
+            mongo_db_conn, creation_date=old_iso, criticality="high"
+        )
+
+        result = await repository.aggregate_dashboard(TicketType.ISSUE)
+
+        assert result["kpis"][0]["open_count"] == 1
+        assert result["kpis"][0]["overdue_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_mixed_valid_and_invalid_documents(
+        self,
+        repository: TicketRepository,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+    ) -> None:
+        """Cenário realista de produção: documentos bons e ruins juntos.
+
+        - 1 válido vencido (Date, high SLA, 10 dias atrás)
+        - 1 válido não vencido (Date, low SLA, 1h atrás)
+        - 1 corrompido (string lixo)
+        - 1 corrompido (null)
+
+        Resultado esperado: agregação não quebra; open_count conta os 4;
+        overdue_count conta apenas o válido vencido.
+        """
+        await _make_ticket(
+            status=TicketStatus.IN_PROGRESS,
+            criticality=TicketCriticality.HIGH,
+            creation_date=datetime.now(UTC) - timedelta(days=10),
+        ).insert()
+        await _make_ticket(
+            status=TicketStatus.IN_PROGRESS,
+            criticality=TicketCriticality.LOW,
+            creation_date=datetime.now(UTC) - timedelta(hours=1),
+        ).insert()
+        await _insert_raw_ticket(mongo_db_conn, creation_date="garbage")
+        await _insert_raw_ticket(mongo_db_conn, creation_date=None)
+
+        result = await repository.aggregate_dashboard(TicketType.ISSUE)
+
+        kpis = result["kpis"][0]
+        assert kpis["open_count"] == 4
+        assert kpis["overdue_count"] == 1
