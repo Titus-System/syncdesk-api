@@ -129,6 +129,16 @@ class Settings(BaseSettings):
     
     RESET_TOKEN_HMAC_SECRET: str = "your_reset_token_hmac_secret"
 
+    # Object storage (S3/MinIO)
+    S3_ENDPOINT_URL: str = "http://localhost:9000"
+    S3_PUBLIC_ENDPOINT_URL: str = "http://localhost:9000"
+    S3_REGION: str = "us-east-1"
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+    S3_BUCKET_DEFAULT: str = "syncdesk-files"
+    S3_PRESIGNED_UPLOAD_EXPIRES_SECONDS: int = 300
+    S3_PRESIGNED_DOWNLOAD_EXPIRES_SECONDS: int = 300
+
     # Email (Resend)
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "no_reply@syncdesk.pro"
