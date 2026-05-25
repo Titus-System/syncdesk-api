@@ -44,7 +44,7 @@ class S3ObjectStorage(ObjectStorage):
             region_name=self._region,
             aws_access_key_id=self._access_key,
             aws_secret_access_key=self._secret_key,
-            config=Config(signature_version="s3v4"),
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
         )
 
     async def generate_presigned_upload(

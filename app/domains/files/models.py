@@ -16,7 +16,7 @@ class FileObject(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     bucket: Mapped[str] = mapped_column(String(63), nullable=False)
-    object_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    object_key: Mapped[str] = mapped_column(Text, nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(127), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)

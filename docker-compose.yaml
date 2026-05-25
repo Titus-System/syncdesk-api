@@ -49,6 +49,9 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Comma-separated list of frontend origins allowed to upload/download
+      # cross-origin. Read natively by MinIO at startup; empty in dev.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${S3_CORS_ALLOWED_ORIGINS:-}
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"

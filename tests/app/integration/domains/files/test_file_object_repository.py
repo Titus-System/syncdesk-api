@@ -155,16 +155,24 @@ class TestFileObjectRepository:
         assert second is None  # WHERE status != DELETED no longer matches
 
     @pytest.mark.asyncio
-    async def test_object_key_is_unique(
+    async def test_object_key_is_not_unique(
         self,
         repo: FileObjectRepository,
         user_id: UUID,
     ) -> None:
-        shared_key = f"live_chat/test/{uuid4()}-dup.txt"
-        await repo.create(_make_file_object(user_id, object_key=shared_key))
+        """Multiple rows may share the same object_key.
 
-        with pytest.raises(Exception):  # IntegrityError wrapped by SQLAlchemy
-            await repo.create(_make_file_object(user_id, object_key=shared_key))
+        Required by avatar rotation: the user_avatar object_key is
+        deterministic (``avatars/users/{user_id}.{ext}``) so a second upload
+        for the same user must coexist with the previous row. Chat keys
+        embed a UUID so collisions there are impossible by construction.
+        """
+        shared_key = f"avatars/users/{user_id}.png"
+        first = await repo.create(_make_file_object(user_id, object_key=shared_key))
+        second = await repo.create(_make_file_object(user_id, object_key=shared_key))
+
+        assert first.id != second.id
+        assert first.object_key == second.object_key
 
     @pytest.mark.asyncio
     async def test_supports_all_contexts(
