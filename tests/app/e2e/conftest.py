@@ -16,17 +16,23 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from datetime import UTC, datetime, timedelta
+
+from botocore.exceptions import ClientError
+
 from app.core.config import get_settings
-from app.core.dependencies import get_email_service
+from app.core.dependencies import get_email_service, get_object_storage
 from app.core.email.schemas import ResetPasswordEmailParams, WelcomeEmailParams
 from app.core.email.strategy import EmailStrategy
 from app.core.event_dispatcher import AppEvent, event_handler, get_event_dispatcher
 from app.core.event_dispatcher.schemas import PasswordResetEventSchema, WelcomeInviteEventSchema
+from app.core.storage import ObjectStorage, PresignedUpload
 from app.db.mongo.dependencies import get_mongo_session
 from app.db.postgres.base import Base
 
 import app.domains.auth.models  # noqa: F401 — register models with Base.metadata
 import app.domains.companies.models  # noqa: F401 — register models with Base.metadata
+import app.domains.files.models  # noqa: F401 — register models with Base.metadata
 import app.domains.notifications.models  # noqa: F401 — register models with Base.metadata
 import app.domains.products.models  # noqa: F401 — register models with Base.metadata
 from app.db.postgres.dependencies import get_postgres_session
@@ -169,12 +175,108 @@ def fake_email() -> FakeEmailStrategy:
     return FakeEmailStrategy()
 
 
+def _make_client_error(operation: str, code: str = "500") -> ClientError:
+    return ClientError(
+        error_response={"Error": {"Code": code, "Message": f"forced failure ({code})"}},
+        operation_name=operation,
+    )
+
+
+class FakeObjectStorage(ObjectStorage):
+    """In-memory stub of ``ObjectStorage`` for e2e tests.
+
+    Mimics the contract of ``S3ObjectStorage`` without touching the network:
+    presigned URLs are deterministic and ``mark_uploaded`` lets tests simulate
+    a successful client-side upload before calling the confirm endpoint. Each
+    method can be set to fail through ``fail_on`` so tests can exercise error
+    branches in services and routers.
+    """
+
+    def __init__(self) -> None:
+        self.objects: dict[str, int] = {}
+        self.presigned_uploads: list[dict[str, str | int]] = []
+        self.presigned_downloads: list[str] = []
+        self.deleted: list[str] = []
+        self.fail_on: dict[str, ClientError] = {}
+
+    def _maybe_fail(self, operation: str) -> None:
+        if operation in self.fail_on:
+            raise self.fail_on[operation]
+
+    async def generate_presigned_upload(
+        self,
+        object_key: str,
+        content_type: str,
+        max_size_bytes: int,
+        expires_in_seconds: int,
+    ) -> PresignedUpload:
+        self._maybe_fail("generate_presigned_upload")
+        self.presigned_uploads.append(
+            {
+                "object_key": object_key,
+                "content_type": content_type,
+                "max_size_bytes": max_size_bytes,
+            }
+        )
+        return PresignedUpload(
+            url="http://fake-storage/syncdesk-files",
+            method="POST",
+            fields={
+                "key": object_key,
+                "Content-Type": content_type,
+                "policy": "fake-policy",
+            },
+            expires_at=datetime.now(UTC) + timedelta(seconds=expires_in_seconds),
+        )
+
+    async def generate_presigned_download_url(
+        self, object_key: str, expires_in_seconds: int
+    ) -> str:
+        self._maybe_fail("generate_presigned_download_url")
+        self.presigned_downloads.append(object_key)
+        return f"http://fake-storage/syncdesk-files/{object_key}?signed=1"
+
+    async def object_exists(self, object_key: str) -> bool:
+        self._maybe_fail("object_exists")
+        return object_key in self.objects
+
+    async def get_object_size(self, object_key: str) -> int | None:
+        self._maybe_fail("get_object_size")
+        return self.objects.get(object_key)
+
+    async def delete_object(self, object_key: str) -> None:
+        self._maybe_fail("delete_object")
+        self.deleted.append(object_key)
+        self.objects.pop(object_key, None)
+
+    # ── test helpers ─────────────────────────────────────
+
+    def mark_uploaded(self, object_key: str, size: int = 128) -> None:
+        """Simulate that the client finished the PUT against the storage."""
+        self.objects[object_key] = size
+
+    def last_presigned_upload_key(self) -> str:
+        assert self.presigned_uploads, "No presigned upload was generated"
+        return str(self.presigned_uploads[-1]["object_key"])
+
+    def set_failure(self, operation: str, code: str = "500") -> None:
+        """Make subsequent calls to ``operation`` raise a ``ClientError``."""
+        self.fail_on[operation] = _make_client_error(operation, code)
+
+
 @pytest.fixture
-def app(fake_email: FakeEmailStrategy) -> FastAPI:
+def fake_storage() -> FakeObjectStorage:
+    """Fresh FakeObjectStorage per test."""
+    return FakeObjectStorage()
+
+
+@pytest.fixture
+def app(fake_email: FakeEmailStrategy, fake_storage: FakeObjectStorage) -> FastAPI:
     # Fresh dispatcher per test so handlers don't bleed across tests
     get_event_dispatcher.cache_clear()
     application = create_app()
     application.dependency_overrides[get_email_service] = lambda: fake_email
+    application.dependency_overrides[get_object_storage] = lambda: fake_storage
     return application
 
 
@@ -182,6 +284,7 @@ def app(fake_email: FakeEmailStrategy) -> FastAPI:
 async def client(
     app: FastAPI,
     fake_email: FakeEmailStrategy,
+    fake_storage: FakeObjectStorage,
     db_session: AsyncSession,
     mongo_db_conn: AsyncGenerator[AsyncIOMotorDatabase[dict[str,Any]], None]
     ) -> AsyncGenerator[AsyncClient, None]:

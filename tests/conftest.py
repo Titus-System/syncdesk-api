@@ -23,6 +23,7 @@ import app.domains.auth.models  # noqa: F401 — register models with Base.metad
 import app.domains.companies.models  # noqa: F401 — register models with Base.metadata
 import app.domains.products.models  # noqa: F401 — register models with Base.metadata
 import app.domains.notifications.models  # noqa: F401 — register models with Base.metadata
+import app.domains.files.models  # noqa: F401 — register models with Base.metadata
 from app.db.postgres.dependencies import get_postgres_session
 from app.domains.live_chat.entities import Conversation
 from app.domains.ticket.models import Ticket
