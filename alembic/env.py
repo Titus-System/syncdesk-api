@@ -11,6 +11,7 @@ import app.domains.auth.models  # noqa: F401 — register models with Base.metad
 import app.domains.companies.models  # noqa: F401 — register models with Base.metadata
 import app.domains.products.models  # noqa: F401 — register models with Base.metadata
 import app.domains.notifications.models  # noqa: F401 — register models with Base.metadata
+import app.domains.files.models  # noqa: F401 — register models with Base.metadata
 
 config = context.config
 if config.config_file_name is not None:

@@ -3,13 +3,14 @@ from typing import Any
 
 import aioboto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.config import get_settings
 from app.core.logger import get_logger
 from app.core.storage import ObjectStorage, PresignedUpload
 from app.infra.storage.metrics import (
     presigned_urls_generated_total,
+    storage_backend_errors_total,
     storage_object_deletes_total,
 )
 
@@ -53,18 +54,32 @@ class S3ObjectStorage(ObjectStorage):
         max_size_bytes: int,
         expires_in_seconds: int,
     ) -> PresignedUpload:
-        async with self._client(self._public_endpoint) as client:
-            response: dict[str, Any] = await client.generate_presigned_post(
-                Bucket=self._bucket,
-                Key=object_key,
-                Fields={"Content-Type": content_type},
-                Conditions=[
-                    {"Content-Type": content_type},
-                    ["content-length-range", 1, max_size_bytes],
-                ],
-                ExpiresIn=expires_in_seconds,
+        try:
+            async with self._client(self._public_endpoint) as client:
+                response: dict[str, Any] = await client.generate_presigned_post(
+                    Bucket=self._bucket,
+                    Key=object_key,
+                    Fields={"Content-Type": content_type},
+                    Conditions=[
+                        {"Content-Type": content_type},
+                        ["content-length-range", 1, max_size_bytes],
+                    ],
+                    ExpiresIn=expires_in_seconds,
+                )
+        except (ClientError, BotoCoreError) as exc:
+            storage_backend_errors_total.labels(operation="presigned_upload").inc()
+            self._logger.error(
+                "S3 generate_presigned_post failed",
+                extra={"object_key": object_key, "content_type": content_type},
+                exc_info=exc,
             )
+            raise
+
         presigned_urls_generated_total.labels(operation="upload").inc()
+        self._logger.debug(
+            "Presigned upload generated",
+            extra={"object_key": object_key, "expires_in_seconds": expires_in_seconds},
+        )
         return PresignedUpload(
             url=str(response["url"]),
             method="POST",
@@ -75,12 +90,22 @@ class S3ObjectStorage(ObjectStorage):
     async def generate_presigned_download_url(
         self, object_key: str, expires_in_seconds: int
     ) -> str:
-        async with self._client(self._public_endpoint) as client:
-            url: str = await client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self._bucket, "Key": object_key},
-                ExpiresIn=expires_in_seconds,
+        try:
+            async with self._client(self._public_endpoint) as client:
+                url: str = await client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": self._bucket, "Key": object_key},
+                    ExpiresIn=expires_in_seconds,
+                )
+        except (ClientError, BotoCoreError) as exc:
+            storage_backend_errors_total.labels(operation="presigned_download").inc()
+            self._logger.error(
+                "S3 generate_presigned_url failed",
+                extra={"object_key": object_key},
+                exc_info=exc,
             )
+            raise
+
         presigned_urls_generated_total.labels(operation="download").inc()
         return url
 
@@ -91,6 +116,12 @@ class S3ObjectStorage(ObjectStorage):
             except ClientError as exc:
                 if self._is_not_found(exc):
                     return False
+                storage_backend_errors_total.labels(operation="head_object").inc()
+                self._logger.error(
+                    "S3 head_object failed",
+                    extra={"object_key": object_key},
+                    exc_info=exc,
+                )
                 raise
         return True
 
@@ -103,13 +134,29 @@ class S3ObjectStorage(ObjectStorage):
             except ClientError as exc:
                 if self._is_not_found(exc):
                     return None
+                storage_backend_errors_total.labels(operation="head_object").inc()
+                self._logger.error(
+                    "S3 head_object failed",
+                    extra={"object_key": object_key},
+                    exc_info=exc,
+                )
                 raise
         return int(response["ContentLength"])
 
     async def delete_object(self, object_key: str) -> None:
-        async with self._client(self._internal_endpoint) as client:
-            await client.delete_object(Bucket=self._bucket, Key=object_key)
+        try:
+            async with self._client(self._internal_endpoint) as client:
+                await client.delete_object(Bucket=self._bucket, Key=object_key)
+        except (ClientError, BotoCoreError) as exc:
+            storage_backend_errors_total.labels(operation="delete_object").inc()
+            self._logger.error(
+                "S3 delete_object failed",
+                extra={"object_key": object_key},
+                exc_info=exc,
+            )
+            raise
         storage_object_deletes_total.inc()
+        self._logger.debug("Object deleted from storage", extra={"object_key": object_key})
 
     @staticmethod
     def _is_not_found(exc: ClientError) -> bool:

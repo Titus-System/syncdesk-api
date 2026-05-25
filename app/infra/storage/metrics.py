@@ -10,3 +10,9 @@ storage_object_deletes_total = prometheus.register_counter(
     "storage_object_deletes_total",
     "Total object delete operations performed against the object storage backend",
 )
+
+storage_backend_errors_total = prometheus.register_counter(
+    "storage_backend_errors_total",
+    "Errors raised by the object storage backend grouped by operation.",
+    ["operation"],
+)
