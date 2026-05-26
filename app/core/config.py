@@ -139,6 +139,24 @@ class Settings(BaseSettings):
     S3_PRESIGNED_UPLOAD_EXPIRES_SECONDS: int = 300
     S3_PRESIGNED_DOWNLOAD_EXPIRES_SECONDS: int = 300
 
+    # File maintenance workers (PR5)
+    FILE_MAINTENANCE_ENABLED: bool = True
+    # Pending cleanup: how old a ``pending`` row must be before the sweeper
+    # decides the client never confirmed; should comfortably exceed the
+    # presigned upload TTL so we never race a still-valid upload.
+    FILE_CLEANUP_PENDING_MAX_AGE_MINUTES: int = 15
+    FILE_CLEANUP_PENDING_INTERVAL_SECONDS: int = 900
+    FILE_CLEANUP_PENDING_BATCH_SIZE: int = 100
+    # Chat media retention: live_chat_message files older than this are
+    # soft-deleted by the retention worker. Avatars are NEVER touched here.
+    LIVE_CHAT_FILE_RETENTION_DAYS: int = 180
+    FILE_RETENTION_INTERVAL_SECONDS: int = 86400
+    FILE_RETENTION_BATCH_SIZE: int = 200
+    # Grace period between soft delete and physical purge from object storage.
+    FILE_RETENTION_GRACE_DAYS: int = 7
+    FILE_PURGE_INTERVAL_SECONDS: int = 86400
+    FILE_PURGE_BATCH_SIZE: int = 200
+
     # Email (Resend)
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "no_reply@syncdesk.pro"

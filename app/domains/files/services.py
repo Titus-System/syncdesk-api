@@ -1,4 +1,5 @@
 import re
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -18,8 +19,11 @@ from .exceptions import (
 from .metrics import (
     file_confirms_total,
     file_deletes_total,
+    file_pending_swept_total,
     file_upload_size_bytes,
     file_uploads_total,
+    files_expired_by_retention_total,
+    files_physically_deleted_total,
 )
 from .models import FileObject
 from .repositories import FileObjectRepository
@@ -227,6 +231,148 @@ class FileService:
                 extra={"file_id": str(deleted.id), "context": deleted.context.value},
             )
         return deleted
+
+    # ----- maintenance jobs (called by app/domains/files/worker.py) -----
+
+    async def sweep_pending(self, *, max_age_minutes: int, batch_size: int) -> dict[str, int]:
+        """Reconcile ``pending`` rows abandoned by clients.
+
+        For each pending row older than ``max_age_minutes``, ask the storage
+        backend whether the object actually arrived: if yes, promote to
+        ``uploaded`` (the client uploaded but never confirmed); if no, mark
+        ``failed``. Storage errors are logged and counted but the row is
+        left alone so the next tick retries.
+
+        Returns a per-outcome count, useful for log aggregation and tests.
+        """
+        cutoff = datetime.now(UTC) - timedelta(minutes=max_age_minutes)
+        stale = await self._repo.find_stale_pending(cutoff, limit=batch_size)
+        outcomes = {"recovered": 0, "failed": 0, "error": 0}
+
+        for file_obj in stale:
+            try:
+                size = await self._storage.get_object_size(file_obj.object_key)
+            except (ClientError, BotoCoreError) as exc:
+                outcomes["error"] += 1
+                file_pending_swept_total.labels(outcome="error").inc()
+                self._logger.warning(
+                    "Storage probe failed during pending sweep",
+                    extra={
+                        "file_id": str(file_obj.id),
+                        "object_key": file_obj.object_key,
+                    },
+                    exc_info=exc,
+                )
+                continue
+
+            if size is None:
+                marked = await self._repo.mark_failed(file_obj.id)
+                if marked is not None:
+                    outcomes["failed"] += 1
+                    file_pending_swept_total.labels(outcome="failed").inc()
+                    file_uploads_total.labels(
+                        status="failed", context=file_obj.context.value
+                    ).inc()
+                    self._logger.info(
+                        "Pending upload marked failed (no object in storage)",
+                        extra={
+                            "file_id": str(file_obj.id),
+                            "context": file_obj.context.value,
+                        },
+                    )
+            else:
+                promoted = await self._repo.mark_uploaded(file_obj.id)
+                if promoted is not None:
+                    outcomes["recovered"] += 1
+                    file_pending_swept_total.labels(outcome="recovered").inc()
+                    file_uploads_total.labels(
+                        status="uploaded", context=file_obj.context.value
+                    ).inc()
+                    self._logger.info(
+                        "Pending upload recovered from storage probe",
+                        extra={
+                            "file_id": str(file_obj.id),
+                            "context": file_obj.context.value,
+                            "size_bytes": size,
+                        },
+                    )
+        return outcomes
+
+    async def expire_chat_files(
+        self, *, retention_days: int, batch_size: int
+    ) -> int:
+        """Soft-delete chat-message files older than ``retention_days``.
+
+        Avatars are never touched: the repository query filters on
+        ``context == LIVE_CHAT_MESSAGE``. Reuses ``delete()`` so the row
+        moves to ``DELETED`` and increments the same delete counter the
+        user-initiated path uses, plus a dedicated retention counter.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        expiring = await self._repo.find_chat_files_to_expire(cutoff, limit=batch_size)
+        count = 0
+        for file_obj in expiring:
+            deleted = await self._repo.mark_deleted(file_obj.id)
+            if deleted is not None:
+                count += 1
+                files_expired_by_retention_total.labels(
+                    context=file_obj.context.value
+                ).inc()
+                self._logger.info(
+                    "Chat file expired by retention worker",
+                    extra={
+                        "file_id": str(file_obj.id),
+                        "context": file_obj.context.value,
+                        "uploaded_at": (
+                            file_obj.uploaded_at.isoformat()
+                            if file_obj.uploaded_at is not None
+                            else None
+                        ),
+                    },
+                )
+        return count
+
+    async def purge_deleted(self, *, grace_days: int, batch_size: int) -> dict[str, int]:
+        """Physically remove storage objects whose grace window expired.
+
+        Selects ``status=DELETED AND deleted_at < now - grace_days AND
+        purged_at IS NULL``, calls ``delete_object`` (no-op if absent) and
+        stamps ``purged_at`` on success. On storage failure the row is
+        left untouched; the next tick retries.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=grace_days)
+        targets = await self._repo.find_files_to_purge(cutoff, limit=batch_size)
+        outcomes = {"ok": 0, "error": 0}
+
+        for file_obj in targets:
+            try:
+                await self._storage.delete_object(file_obj.object_key)
+            except (ClientError, BotoCoreError) as exc:
+                outcomes["error"] += 1
+                files_physically_deleted_total.labels(outcome="error").inc()
+                self._logger.warning(
+                    "Storage delete failed during purge sweep",
+                    extra={
+                        "file_id": str(file_obj.id),
+                        "object_key": file_obj.object_key,
+                    },
+                    exc_info=exc,
+                )
+                continue
+
+            stamped = await self._repo.mark_purged(file_obj.id, datetime.now(UTC))
+            if stamped is not None:
+                outcomes["ok"] += 1
+                files_physically_deleted_total.labels(outcome="ok").inc()
+                self._logger.info(
+                    "File physically purged from storage",
+                    extra={
+                        "file_id": str(file_obj.id),
+                        "context": file_obj.context.value,
+                        "object_key": file_obj.object_key,
+                    },
+                )
+        return outcomes
 
     # ----- helpers -----
 
