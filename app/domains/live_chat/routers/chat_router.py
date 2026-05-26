@@ -80,38 +80,63 @@ async def _validate_file_attachment(
 
     raw_file_id = payload.get("file_id")
     if raw_file_id is None:
-        # Required-field enforcement lives in IncomingMessage so the user
-        # gets the canonical "mime_type, filename and file_id are required"
-        # message. Bailing here lets the schema validator do its job.
         return
+
+    log_ctx = {
+        "chat_id": str(chat_id),
+        "sender_id": str(sender_id),
+        "raw_file_id": str(raw_file_id),
+    }
 
     try:
         file_id = UUID(str(raw_file_id))
     except (TypeError, ValueError) as e:
+        logger.warning("File attachment rejected: file_id is not a valid UUID", extra=log_ctx)
         raise InvalidMessageError(f"file_id is not a valid UUID: {raw_file_id!r}") from e
+
+    log_ctx["file_id"] = str(file_id)
 
     file_obj = await file_service.get_by_id(file_id)
     if file_obj is None:
+        logger.warning(
+            "File attachment rejected: file_id does not reference a known file",
+            extra=log_ctx,
+        )
         raise InvalidMessageError("file_id does not reference a known file")
     if file_obj.uploaded_by_user_id != sender_id:
+        logger.warning(
+            "File attachment rejected: file_id was uploaded by a different user",
+            extra={**log_ctx, "uploader_id": str(file_obj.uploaded_by_user_id)},
+        )
         raise InvalidMessageError("file_id was not uploaded by the sender")
     if file_obj.context != FileContext.LIVE_CHAT_MESSAGE:
+        logger.warning(
+            "File attachment rejected: wrong file context",
+            extra={**log_ctx, "context": file_obj.context.value},
+        )
         raise InvalidMessageError(
             f"file_id has context {file_obj.context.value!r}, "
             "expected 'live_chat_message'"
         )
     if file_obj.status != FileStatus.UPLOADED:
+        logger.info(
+            "File attachment rejected: file is not in 'uploaded' status",
+            extra={**log_ctx, "status": file_obj.status.value},
+        )
         raise InvalidMessageError(
             f"file_id has status {file_obj.status.value!r}, expected 'uploaded'"
         )
 
-    # Cross-conversation guard: the presign step bakes the conversation id
-    # into the object key. Reusing a file in a different conversation would
-    # broadcast a message recipients can't download (the files router
-    # authorizes downloads against the embedded conversation id, not the
-    # message's conversation).
     file_conv_id = _conversation_id_from_object_key(file_obj.object_key)
     if file_conv_id is None or file_conv_id != chat_id:
+        logger.warning(
+            "File attachment rejected: file belongs to a different conversation",
+            extra={
+                **log_ctx,
+                "file_conversation_id": str(file_conv_id) if file_conv_id else None,
+                "object_key": file_obj.object_key,
+            },
+        )
         raise InvalidMessageError(
             "file_id belongs to a different conversation"
         )

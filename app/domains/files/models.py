@@ -55,6 +55,10 @@ class FileObject(Base):
     )
     uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Stamped by the physical-purge job after the storage object is removed.
+    # The row stays for audit; ``purged_at IS NULL`` distinguishes
+    # soft-deleted rows still eligible for purging from already-purged ones.
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_file_objects_status_created_at", "status", "created_at"),

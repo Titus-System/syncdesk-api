@@ -29,3 +29,22 @@ file_upload_size_bytes = prometheus.register_histogram(
     "Declared size in bytes of file uploads at presign time, grouped by context.",
     ["context"],
 )
+
+file_pending_swept_total = prometheus.register_counter(
+    "domain_files_pending_swept_total",
+    "Pending rows reconciled by the cleanup worker grouped by outcome "
+    "(recovered, failed, error).",
+    ["outcome"],
+)
+
+files_expired_by_retention_total = prometheus.register_counter(
+    "domain_files_expired_by_retention_total",
+    "File objects soft-deleted by the retention worker grouped by context.",
+    ["context"],
+)
+
+files_physically_deleted_total = prometheus.register_counter(
+    "domain_files_physically_deleted_total",
+    "Storage objects physically purged from the backend grouped by outcome.",
+    ["outcome"],
+)
