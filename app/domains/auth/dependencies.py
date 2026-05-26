@@ -31,11 +31,13 @@ from .exceptions import (
 from .repositories.permission_repository import PermissionRepository
 from .repositories.role_repository import RoleRepository
 from .repositories.session_repository import SessionRepository
+from .repositories.user_level_repository import UserLevelRepository
 from .repositories.user_repository import UserRepository
 from .services.auth_service import AuthService
 from .services.permission_service import PermissionService
 from .services.role_service import RoleService
 from .services.session_service import SessionService
+from .services.user_level_service import UserLevelService
 from .services.user_service import UserService
 
 bearer_scheme = HTTPBearer()
@@ -51,6 +53,10 @@ def get_permission_repository(db: PgSessionDep) -> PermissionRepository:
 
 def get_user_repository(db: PgSessionDep) -> UserRepository:
     return UserRepository(db)
+
+
+def get_user_level_repository(db: PgSessionDep) -> UserLevelRepository:
+    return UserLevelRepository(db)
 
 
 def get_session_repository(db: PgSessionDep) -> SessionRepository:
@@ -89,6 +95,12 @@ def get_user_service(
         reset_token_security=reset_token_security,
         password_security=password_security,
     )
+
+
+def get_user_level_service(
+    user_level_repo: Annotated[UserLevelRepository, Depends(get_user_level_repository)],
+) -> UserLevelService:
+    return UserLevelService(user_level_repo)
 
 
 def get_session_service(
@@ -367,6 +379,9 @@ PermissionRepoDep = Annotated[PermissionRepository, Depends(get_permission_repos
 
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
+
+UserLevelServiceDep = Annotated[UserLevelService, Depends(get_user_level_service)]
+UserLevelRepositoryDep = Annotated[UserLevelRepository, Depends(get_user_level_repository)]
 
 SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
 SessionRepoDep = Annotated[SessionRepository, Depends(get_session_repository)]

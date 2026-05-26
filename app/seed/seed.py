@@ -39,6 +39,10 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "user:replace", "description": "Replace users"},
         {"name": "user:add_roles", "description": "Add roles to users"},
         {"name": "user:update_roles", "description": "Add and remove roles from users"},
+        # User levels
+        {"name": "user_level:create", "description": "Assign support levels to users"},
+        {"name": "user_level:read", "description": "Read user support levels"},
+        {"name": "user_level:delete", "description": "Remove support levels from users"},
         # Password
         {"name": "password:change", "description": "Change user password"},
         {"name": "password:reset", "description": "Reset user password"},
@@ -105,7 +109,10 @@ async def seed_permissions(session: AsyncSession) -> None:
         {"name": "product:update", "description": "Update products"},
         {"name": "product:soft_delete", "description": "Soft delete products"},
         {"name": "product:add_companies", "description": "Add product to companies"},
-        {"name": "product:remove_companies", "description": "Remove product from companies in batch"},
+        {
+            "name": "product:remove_companies",
+            "description": "Remove product from companies in batch",
+        },
         {"name": "product:remove_company", "description": "Remove product from single company"},
         {"name": "product:list_companies", "description": "List product companies"},
     ]
@@ -116,19 +123,38 @@ async def seed_permissions(session: AsyncSession) -> None:
 
 async def seed_role_permissions(session: AsyncSession) -> None:
     relations = {
-        "admin": ["user:%", "role:%", "permission:%", "chat:%", "password:%", "ticket:%", "company:%", "product:%"],
+        "admin": [
+            "user:%",
+            "user_level:%",
+            "role:%",
+            "permission:%",
+            "chat:%",
+            "password:%",
+            "ticket:%",
+            "company:%",
+            "product:%",
+        ],
         "user": ["session:%", "chat:%", "password:change"],
         "agent": [
             "session:%",
             "chat:%",
             "password:change",
+            "user_level:read",
             "ticket:%",
             "company:read",
             "company:list",
             "product:read",
             "product:list",
         ],
-        "client": ["session:%", "chat:%", "password:change", "company:read", "product:read", "product:list", "ticket:read"],
+        "client": [
+            "session:%",
+            "chat:%",
+            "password:change",
+            "company:read",
+            "product:read",
+            "product:list",
+            "ticket:read",
+        ],
     }
 
     for role_name, patterns in relations.items():
