@@ -234,8 +234,14 @@ async def set_my_avatar(
     to vet the new file and to soft-delete the previous avatar.
     """
     user, _ = auth
+    log_ctx = {"user_id": str(user.id), "file_id": str(dto.file_id)}
+
     file_obj = await file_service.get_by_id(dto.file_id)
     if file_obj is None:
+        logger.info(
+            "Set avatar rejected: file_id does not reference a known file",
+            extra=log_ctx,
+        )
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="file_id does not reference a known file",
@@ -243,17 +249,17 @@ async def set_my_avatar(
     if file_obj.uploaded_by_user_id != user.id:
         logger.warning(
             "Set avatar rejected: file_id was uploaded by a different user",
-            extra={
-                "user_id": str(user.id),
-                "file_id": str(dto.file_id),
-                "uploader_id": str(file_obj.uploaded_by_user_id),
-            },
+            extra={**log_ctx, "uploader_id": str(file_obj.uploaded_by_user_id)},
         )
         raise AppHTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="file_id was not uploaded by the current user",
         )
     if file_obj.context != FileContext.USER_AVATAR:
+        logger.warning(
+            "Set avatar rejected: wrong file context",
+            extra={**log_ctx, "context": file_obj.context.value},
+        )
         raise AppHTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -262,6 +268,10 @@ async def set_my_avatar(
             ),
         )
     if file_obj.status != FileStatus.UPLOADED:
+        logger.info(
+            "Set avatar rejected: file is not in 'uploaded' status",
+            extra={**log_ctx, "status": file_obj.status.value},
+        )
         raise AppHTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -272,6 +282,10 @@ async def set_my_avatar(
 
     result = await user_service.set_avatar(user.id, dto.file_id)
     if result is None:
+        logger.error(
+            "Set avatar failed: authenticated user vanished from the database",
+            extra=log_ctx,
+        )
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Current user not found",
@@ -286,7 +300,14 @@ async def set_my_avatar(
     # accept that brief inconsistency rather than wrap both writes in a
     # cross-domain transaction.
     if previous_file_id is not None and previous_file_id != dto.file_id:
-        await file_service.delete(previous_file_id)
+        try:
+            await file_service.delete(previous_file_id)
+        except Exception:
+            logger.warning(
+                "Previous avatar cleanup failed; row will be reconciled by retention worker",
+                extra={**log_ctx, "previous_file_id": str(previous_file_id)},
+                exc_info=True,
+            )
 
     safe_data = UserResponseDTO.model_validate(updated_user).model_dump(mode="json")
     return response.success(data=safe_data, status_code=status.HTTP_200_OK)
@@ -308,6 +329,10 @@ async def clear_my_avatar(
     user, _ = auth
     result = await user_service.set_avatar(user.id, None)
     if result is None:
+        logger.error(
+            "Clear avatar failed: authenticated user vanished from the database",
+            extra={"user_id": str(user.id)},
+        )
         raise AppHTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Current user not found",
@@ -315,7 +340,17 @@ async def clear_my_avatar(
     updated_user, previous_file_id = result
 
     if previous_file_id is not None:
-        await file_service.delete(previous_file_id)
+        try:
+            await file_service.delete(previous_file_id)
+        except Exception:
+            logger.warning(
+                "Previous avatar cleanup failed; row will be reconciled by retention worker",
+                extra={
+                    "user_id": str(user.id),
+                    "previous_file_id": str(previous_file_id),
+                },
+                exc_info=True,
+            )
 
     safe_data = UserResponseDTO.model_validate(updated_user).model_dump(mode="json")
     return response.success(data=safe_data, status_code=status.HTTP_200_OK)

@@ -280,6 +280,14 @@ class FileService:
                             "context": file_obj.context.value,
                         },
                     )
+                else:
+                    self._logger.info(
+                        "Pending row concurrently transitioned before mark_failed; skipping",
+                        extra={
+                            "file_id": str(file_obj.id),
+                            "context": file_obj.context.value,
+                        },
+                    )
             else:
                 promoted = await self._repo.mark_uploaded(file_obj.id)
                 if promoted is not None:
@@ -294,6 +302,14 @@ class FileService:
                             "file_id": str(file_obj.id),
                             "context": file_obj.context.value,
                             "size_bytes": size,
+                        },
+                    )
+                else:
+                    self._logger.info(
+                        "Pending row concurrently transitioned before mark_uploaded; skipping",
+                        extra={
+                            "file_id": str(file_obj.id),
+                            "context": file_obj.context.value,
                         },
                     )
         return outcomes
