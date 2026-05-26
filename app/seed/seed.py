@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import PasswordSecurity
 import app.domains.companies.models  # noqa: F401
 import app.domains.products.models  # noqa: F401
-from app.domains.auth.models import Permission, Role, User, role_permissions, user_roles
+from app.domains.auth.models import Level, Permission, Role, User, role_permissions, user_roles
 
 
 async def seed_roles(session: AsyncSession) -> None:
@@ -20,6 +20,12 @@ async def seed_roles(session: AsyncSession) -> None:
         {"id": 4, "name": "client", "description": "end user of the application"},
     ]
     stmt = pg_insert(Role).values(roles).on_conflict_do_nothing()
+    await session.execute(stmt)
+
+
+async def seed_levels(session: AsyncSession) -> None:
+    levels = [{"name": "N1"}, {"name": "N2"}, {"name": "N3"}]
+    stmt = pg_insert(Level).values(levels).on_conflict_do_nothing(index_elements=["name"])
     await session.execute(stmt)
 
 
