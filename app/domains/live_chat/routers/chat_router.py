@@ -80,9 +80,6 @@ async def _validate_file_attachment(
 
     raw_file_id = payload.get("file_id")
     if raw_file_id is None:
-        # Required-field enforcement lives in IncomingMessage so the user
-        # gets the canonical "mime_type, filename and file_id are required"
-        # message. Bailing here lets the schema validator do its job.
         return
 
     log_ctx = {
@@ -130,11 +127,6 @@ async def _validate_file_attachment(
             f"file_id has status {file_obj.status.value!r}, expected 'uploaded'"
         )
 
-    # Cross-conversation guard: the presign step bakes the conversation id
-    # into the object key. Reusing a file in a different conversation would
-    # broadcast a message recipients can't download (the files router
-    # authorizes downloads against the embedded conversation id, not the
-    # message's conversation).
     file_conv_id = _conversation_id_from_object_key(file_obj.object_key)
     if file_conv_id is None or file_conv_id != chat_id:
         logger.warning(

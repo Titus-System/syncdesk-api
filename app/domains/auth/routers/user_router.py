@@ -181,9 +181,6 @@ async def get_my_avatar(
     user has no avatar so the client branches on a single check.
     """
     user, _ = auth
-    # ``user`` here is the authenticated UserWithRoles already carrying
-    # avatar_file_id. Reading it from the session avoids a DB hit for a
-    # field we just loaded.
     file_id = user.avatar_file_id
 
     data: dict[str, str | None] = {
@@ -292,13 +289,6 @@ async def set_my_avatar(
         )
     updated_user, previous_file_id = result
 
-    # Soft-delete the previous avatar so it does not linger as a usable
-    # reference. Idempotent and best-effort: this happens AFTER the
-    # users.avatar_file_id swap has already committed, so if the delete
-    # call fails the new avatar is still set correctly and the old row
-    # stays as 'uploaded' until the retention job (PR5) reconciles. We
-    # accept that brief inconsistency rather than wrap both writes in a
-    # cross-domain transaction.
     if previous_file_id is not None and previous_file_id != dto.file_id:
         try:
             await file_service.delete(previous_file_id)
