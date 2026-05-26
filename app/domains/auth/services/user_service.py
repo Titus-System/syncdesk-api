@@ -204,3 +204,35 @@ class UserService:
 
     async def update_password(self, user_id: UUID, new_password_hash: str) -> User | None:
         return await self.repo.update_password(user_id, new_password_hash)
+
+    async def set_avatar(
+        self, user_id: UUID, avatar_file_id: UUID | None
+    ) -> tuple[UserWithRoles, UUID | None] | None:
+        """Point the user's profile at ``avatar_file_id`` (or clear it).
+
+        Returns ``(user, previous_avatar_file_id)`` so the router can
+        soft-delete the prior FileObject via the files domain. Returns
+        ``None`` if the user does not exist.
+
+        Cross-domain validation (ownership, context, status of the new
+        file) is handled at the router/composition layer — same pattern
+        used by chat_router in PR3 — so this service stays decoupled
+        from the files domain.
+        """
+        result = await self.repo.set_avatar(user_id, avatar_file_id)
+        if result is None:
+            self.logger.warning(
+                "Set avatar failed: user not found",
+                extra={"user_id": str(user_id)},
+            )
+            return None
+        user, previous = result
+        self.logger.info(
+            "User avatar updated",
+            extra={
+                "user_id": str(user_id),
+                "previous_file_id": str(previous) if previous else None,
+                "new_file_id": str(avatar_file_id) if avatar_file_id else None,
+            },
+        )
+        return user, previous

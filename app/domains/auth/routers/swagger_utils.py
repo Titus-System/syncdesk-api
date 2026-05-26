@@ -778,3 +778,84 @@ update_user_roles_swagger: dict[str, Any] = {
     "response_model": GenericSuccessContent[UserWithRoles],
     "responses": update_user_roles_responses,
 }
+
+set_avatar_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Avatar updated successfully. The previous avatar, if any, is soft-deleted.",
+        "model": GenericSuccessContent[UserWithRoles],
+    },
+    400: {
+        "description": (
+            "file_id has the wrong context (not 'user_avatar'). "
+            "Use POST /api/files/presign-upload with context='user_avatar' before this call."
+        ),
+        "model": ErrorContent,
+    },
+    403: {
+        "description": "The file referenced by file_id was not uploaded by the current user.",
+        "model": ErrorContent,
+    },
+    404: {
+        "description": "file_id does not reference a known file.",
+        "model": ErrorContent,
+    },
+    409: {
+        "description": (
+            "file_id has not been confirmed yet (status != 'uploaded'). "
+            "Call POST /api/files/{file_id}/confirm after the upload completes."
+        ),
+        "model": ErrorContent,
+    },
+}
+
+set_avatar_swagger: dict[str, Any] = {
+    "summary": "Set the current user's avatar",
+    "description": (
+        "Associates a previously uploaded FileObject with the current user's profile. "
+        "The file must have been presigned with context='user_avatar', confirmed as "
+        "'uploaded' and uploaded by the same user. The previous avatar (if any) is "
+        "soft-deleted via the files domain."
+    ),
+    "response_model": GenericSuccessContent[UserWithRoles],
+    "responses": set_avatar_responses,
+}
+
+clear_avatar_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Avatar cleared successfully. The previous avatar, if any, is soft-deleted.",
+        "model": GenericSuccessContent[UserWithRoles],
+    },
+}
+
+clear_avatar_swagger: dict[str, Any] = {
+    "summary": "Remove the current user's avatar",
+    "description": (
+        "Sets avatar_file_id to NULL on the current user and soft-deletes the previous "
+        "avatar FileObject if there was one. Idempotent: returns 200 even if the user "
+        "had no avatar."
+    ),
+    "response_model": GenericSuccessContent[UserWithRoles],
+    "responses": clear_avatar_responses,
+}
+
+get_my_avatar_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "Current avatar info. When the user has no avatar all fields are null, "
+            "so the frontend can branch on a single check."
+        ),
+    },
+}
+
+get_my_avatar_swagger: dict[str, Any] = {
+    "summary": "Get the current user's avatar info",
+    "description": (
+        "Returns the current user's avatar_file_id alongside a freshly minted "
+        "presigned download URL (valid for S3_PRESIGNED_DOWNLOAD_EXPIRES_SECONDS). "
+        "Lets the frontend exhibit the avatar with a single round-trip instead of "
+        "combining GET /auth/me with a separate /api/files/<id>/download-url call. "
+        "Returns {file_id: null, download_url: null, expires_at: null} when the user "
+        "has no avatar."
+    ),
+    "responses": get_my_avatar_responses,
+}

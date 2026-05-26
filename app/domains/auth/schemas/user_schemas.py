@@ -59,6 +59,22 @@ class UpdateUserRolesDTO(BaseDTO):
             raise ValueError(f"{' and '.join(errors)} exceed the limit of {limit} roles")
         return self
 
+class SetUserAvatarDTO(BaseDTO):
+    file_id: UUID
+
+
+class CurrentUserAvatarDTO(BaseDTO):
+    """Read model for ``GET /api/users/me/avatar``.
+
+    ``file_id`` and ``download_url`` are both null when the user has no
+    avatar set, so the frontend can detect that with a single check.
+    """
+
+    file_id: UUID | None = None
+    download_url: str | None = None
+    expires_at: str | None = None
+
+
 class UserCompliance(BaseDTO):
     must_change_password: bool
     must_accept_terms: bool
@@ -78,6 +94,7 @@ class UserResponseDTO(BaseDTO):
     oauth_provider: OAuthProvider | None = None
     oauth_provider_id: str | None = None
     company_id: UUID | None = None
+    avatar_file_id: UUID | None = None
     is_active: bool
     is_verified: bool
     must_change_password: bool

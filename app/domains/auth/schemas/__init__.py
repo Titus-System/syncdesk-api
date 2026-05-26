@@ -10,12 +10,14 @@ from .session_schemas import (
     UpdateSessionDTO,
 )
 from .user_schemas import (
-    AddUserRolesDTO, 
-    CreateUserDTO, 
-    ReplaceUserDTO, 
-    UpdateUserDTO, 
-    UserCompliance, 
-    UserResponseDTO, 
+    AddUserRolesDTO,
+    CreateUserDTO,
+    CurrentUserAvatarDTO,
+    ReplaceUserDTO,
+    SetUserAvatarDTO,
+    UpdateUserDTO,
+    UserCompliance,
+    UserResponseDTO,
     RoleResponseDTO
 )
 
@@ -35,6 +37,8 @@ __all__ = [
     "ReplaceUserDTO",
     "UpdateUserDTO",
     "AddUserRolesDTO",
+    "CurrentUserAvatarDTO",
+    "SetUserAvatarDTO",
     "UserCompliance",
     "UserResponseDTO",
     "RoleResponseDTO",

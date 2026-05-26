@@ -56,6 +56,12 @@ class User(Base):
     company_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True
     )
+    # Nullable FK to the FileObject backing the user's avatar. NULL means
+    # "no avatar". Updated via PUT /users/me/avatar; the previous file row
+    # is soft-deleted as part of the swap.
+    avatar_file_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("file_objects.id"), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -115,6 +115,7 @@ class User:
     oauth_provider: OAuthProvider | None = None
     oauth_provider_id: str | None = None
     company_id: UUID | None = None
+    avatar_file_id: UUID | None = None
     is_active: bool = True
     is_verified: bool = False
     must_change_password: bool = False

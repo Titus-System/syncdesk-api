@@ -347,13 +347,84 @@ Validar no frontend antes do presign (para feedback rápido) é boa prática, ma
 
 ## 7. Fluxo de avatar (user_avatar)
 
-Idêntico ao do chat, com 3 diferenças:
+Idêntico ao do chat até o `confirm`, com `context: "user_avatar"` e `context_ref: {}`. Depois, em vez de mandar uma mensagem WS, o frontend chama os endpoints dedicados de avatar.
 
-1. `context: "user_avatar"`, `context_ref: {}` no presign.
-2. Não há mensagem de chat — depois do confirm, o frontend simplesmente atualiza o perfil do usuário (a integração com `users.avatar_file_id` é a próxima PR; até lá, o `file_id` precisa ser guardado no client).
-3. Qualquer usuário autenticado pode pedir download de qualquer avatar (não há restrição de participação).
+### 7.1 `PUT /api/users/me/avatar`
 
-**Object key determinístico**: cada usuário tem um único avatar persistente em `avatars/users/{user_id}.{ext}`. Trocar de avatar simplesmente sobrescreve o blob anterior no MinIO (o registro antigo no DB fica como `deleted`, o novo como `uploaded`). Não é preciso deletar manualmente o avatar antigo antes de subir um novo.
+Associa um `file_id` já confirmado ao perfil do usuário autenticado e soft-deleta o avatar anterior, se houver.
+
+**Request**:
+
+```json
+{ "file_id": "<UUID do file confirmado>" }
+```
+
+**Response 200**: `UserResponseDTO` atualizado, com `avatar_file_id` apontando para o novo file.
+
+**Erros**:
+
+- `400`: o `file_id` foi criado com contexto diferente de `user_avatar`.
+- `403`: o `file_id` foi enviado por outro usuário (apenas o uploader pode usá-lo).
+- `404`: `file_id` desconhecido.
+- `409`: `file_id` ainda em `pending`, `failed` ou já `deleted`. Confirme o upload antes desta chamada.
+
+### 7.2 `DELETE /api/users/me/avatar`
+
+Remove o avatar atual do usuário. Soft-deleta o `FileObject` correspondente e zera `users.avatar_file_id`. Idempotente — retorna 200 mesmo se o usuário não tinha avatar.
+
+**Response 200**: `UserResponseDTO` com `avatar_file_id: null`.
+
+### 7.3 Leitura
+
+Duas opções, dependendo de quão "atualizado" o frontend já está em relação ao backend:
+
+#### Opção A (recomendada) — `GET /api/users/me/avatar`
+
+Endpoint dedicado que devolve `file_id` + URL presigned já pronta em **uma chamada**:
+
+```json
+{
+  "data": {
+    "file_id": "8a4b...-uuid" | null,
+    "download_url": "https://files.syncdesk.pro/.../<key>?X-Amz-..." | null,
+    "expires_at": "2026-05-25T10:35:00+00:00" | null
+  }
+}
+```
+
+Os três campos vêm como `null` quando o usuário não tem avatar, então o frontend faz um único `if (body.file_id)` pra decidir o que renderizar.
+
+```ts
+const r = await fetch(`${API_BASE}/api/users/me/avatar`, {
+  headers: { Authorization: `Bearer ${token}` },
+}).then(r => r.json());
+
+return r.data.file_id
+  ? <img src={r.data.download_url!} alt="avatar" />
+  : <PlaceholderAvatar />;
+```
+
+#### Opção B — composição com `GET /auth/me`
+
+`GET /api/auth/me` continua retornando `UserResponseDTO`, agora com `avatar_file_id: UUID | null`. Para exibir, o frontend pega o `file_id` e chama `GET /api/files/{file_id}/download-url` separadamente (mesmo endpoint da seção 2.4). Útil se o frontend já está carregando o perfil completo por outras razões.
+
+```ts
+const me = await fetch(`${API_BASE}/api/auth/me`, {
+  headers: { Authorization: `Bearer ${token}` },
+}).then(r => r.json());
+
+if (me.data.avatar_file_id) {
+  const dl = await fetch(
+    `${API_BASE}/api/files/${me.data.avatar_file_id}/download-url`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  ).then(r => r.json());
+  return <img src={dl.data.url} alt="avatar" />;
+}
+```
+
+### 7.4 Object key e rotação
+
+O `object_key` do avatar é determinístico: `avatars/users/{user_id}.{ext}`. Trocar de avatar com a mesma extensão **sobrescreve o blob** no MinIO; o registro antigo no DB fica como `deleted` e o novo como `uploaded` (a constraint UNIQUE no `object_key` foi removida na PR2 exatamente para permitir isso). Não é preciso deletar manualmente o avatar antigo antes de subir um novo — `PUT /users/me/avatar` cuida do soft-delete.
 
 ---
 
