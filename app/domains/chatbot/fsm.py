@@ -30,7 +30,7 @@ MENU_MAP: Dict[TriageState, MenuConfig] = {
         ]
     },
     TriageState.CHOOSING_PRODUCT_PROBLEM: {
-        "message": "Entendi. Como posso te ajudar hoje em relação ao Produto escolhido?",
+        "message": "Entendi. Como posso te ajudar hoje em relação ao Produto >produto escolhido< ?",
         "input_type": "quick_replies",
         "options": [
             {"label": "O sistema apresenta falhas.", "value": "1", "next_state": TriageState.WAITING_FAILURE_TEXT},
@@ -47,7 +47,7 @@ MENU_MAP: Dict[TriageState, MenuConfig] = {
         ]
     },
     TriageState.REQUESTING_ACCESS: {
-        "message": "Entendi. Por favor, envie uma mensagem respondendo as seguintes perguntas: 1-Essa liberação se refere a um novo perfil ou à edição de um perfil já existente? 2-Qual o email e empresa da pessoa que deve ser cadastrada? 3-Qual o motivo da solicitação? 4-Quais produtos essa pessoa deve ter vinculados à sua conta?",
+        "message": "Entendi. Por favor, envie uma mensagem respondendo as seguintes perguntas: 1-Essa liberação se refere à um novo perfil ou à edição de um perfil já existente? 2-Qual o email e empresa da pessoa que deve ser cadastrada? 3-Qual o motivo da solicitação? 4-Quais produtos essa pessoa deve ter vinculados à sua conta?",
         "input_type": "free_text",
         "next_state": None
     },
@@ -62,27 +62,24 @@ MENU_MAP: Dict[TriageState, MenuConfig] = {
         "next_state": None
     },
     TriageState.SHOWING_DEADLINES: {
-        "message": "Verifiquei e esses são os seguintes prazos:\n Produto A - Até dd/mm/aaaa\n Produto B - Até dd/mm/aaa\n Produto C - Até dd/mm/aaaa\n\nAjudo em algo mais?",
+        "message": "Verifiquei e esses são os seguintes prazos:\n Produto A - Até dd/mm/aaaa\n Produto B - Até dd/mm/aaa\n Produto C - Até dd/mm/aaaa",
         "input_type": "quick_replies",
         "options": [
-            {"label": "Sim", "value": "1", "next_state": TriageState.MAIN_MENU},
-            {"label": "Não", "value": "2", "next_state": TriageState.SERVICE_FINISHED}
+            {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
         ]
     },
     TriageState.SHOWING_MANUAL: {
-        "message": "Todos os nossos produtos possuem manual do usuário, onde você pode logar e acessar todas as informações necessárias para a navegação. Verifique no sistema e tire todas as suas dúvidas por lá.\n\nAjudo em algo mais?",
+        "message": "Todos os nossos produtos possuem manual do usuário, onde você pode logar e acessar todas as informações necessárias para a navegação. Verifique no sistema e tire todas as suas dúvidas por lá.",
         "input_type": "quick_replies",
         "options": [
-            {"label": "Sim", "value": "1", "next_state": TriageState.MAIN_MENU},
-            {"label": "Não", "value": "2", "next_state": TriageState.SERVICE_FINISHED}
+            {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
         ]
     },
     TriageState.SHOWING_EMAIL: {
-        "message": "Você pode enviar um pedido através do nosso email suporte@empresa.com\n\nAjudo em algo mais?",
+        "message": "Você pode enviar um pedido através do nosso email xxxxx.com",
         "input_type": "quick_replies",
         "options": [
-            {"label": "Sim", "value": "1", "next_state": TriageState.MAIN_MENU},
-            {"label": "Não", "value": "2", "next_state": TriageState.SERVICE_FINISHED}
+            {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
         ]
     },
     TriageState.ANYTHING_ELSE: {
