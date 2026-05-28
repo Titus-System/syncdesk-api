@@ -96,6 +96,8 @@ Support level rules:
 - clients cannot receive support levels
 - common users without role `agent` cannot receive support levels
 - a user can have multiple support levels
+- administrative user creation can create initial support level links with `level_ids`
+- `level_ids` must reference existing rows in `levels`
 - roles remain authorization profiles such as `admin`, `agent`, `client`, and `user`
 - support levels remain operational classifications such as `N1`, `N2`, and `N3`
 
@@ -286,9 +288,21 @@ Required permission:
 ```json
 {
   "email": "new.user@example.com",
-  "username": "newuser",
-  "password": "SecureP@ss1",
-  "name": "New User"
+  "name": "New User",
+  "role_ids": [3],
+  "level_ids": [1, 2]
+}
+```
+
+`level_ids` is optional. It can be sent only when the created user has role `agent` in `role_ids`. The referenced level IDs must already exist in `levels`, whose expected seeded values are `N1`, `N2`, and `N3`.
+
+For non-agent users, omit `level_ids`:
+
+```json
+{
+  "email": "client@example.com",
+  "name": "Client User",
+  "role_ids": [4]
 }
 ```
 
@@ -307,8 +321,12 @@ Required permission:
 }
 ```
 
+The creation response returns the user and roles. It does not embed support levels; created links can be read with `GET /api/users/{user_id}/levels`.
+
 **Error responses:**
 - `400 Bad Request` - invalid registration data (for example duplicate email).
+- `400 Bad Request` - `level_ids` was provided for a user without role `agent`.
+- `404 Not Found` - one or more `level_ids` do not exist.
 - `403 Forbidden` - missing `user:create` permission.
 
 ### Change Password
@@ -434,9 +452,41 @@ If any step fails, a `401 Unauthorized` response is returned.
 | `PATCH`  | `/{id}`           | Partial update              |
 | `POST`   | `/{id}/roles`     | Assign roles to a user      |
 
+#### Creating Agent Users With Initial Levels
+
+Administrative user creation endpoints can assign initial support levels while creating an agent.
+
+Supported endpoints:
+- `POST /api/v1/users/`
+- `POST /api/v1/auth/admin/register`
+
+Example payload:
+
+```json
+{
+  "email": "agent@example.com",
+  "username": "agent_user",
+  "name": "Agent User",
+  "role_ids": [3],
+  "level_ids": [1, 2]
+}
+```
+
+Rules:
+- the caller must be an admin with `user:create`
+- `level_ids` is optional
+- `level_ids` is valid only when the user has role `agent`
+- users with role `client`, role `user`, or no `agent` role cannot receive `level_ids`
+- every `level_ids` item must reference an existing row in `levels`
+- expected seeded levels are `N1`, `N2`, and `N3`
+- duplicate user-level links are prevented by the `user_levels` composite key
+- the creation response does not include support levels; use `GET /api/users/{user_id}/levels` to read them after creation
+
 ### Agent Support Levels
 
 Support level management uses the `levels` and `user_levels` tables. Level is not role: roles control access, while levels define which operational ticket levels an agent can handle.
+
+Initial support level links can be created during administrative user creation with `level_ids`. The routes below remain available for later maintenance of those links after the user already exists.
 
 Permissions:
 - `user_level:create`
