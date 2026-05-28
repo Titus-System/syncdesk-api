@@ -17,7 +17,8 @@ from app.core.event_dispatcher.schemas import (
     TicketCreatedEventSchema,
 )
 from app.core.logger import get_logger
-from app.domains.auth.entities import Role, User, UserWithRoles
+from app.domains.auth.entities import Level, Role, User, UserWithRoles
+from app.domains.auth.repositories.user_level_repository import UserLevelRepository
 from app.domains.auth.services.user_service import UserService
 from app.domains.live_chat.entities import Conversation
 from app.domains.live_chat.listeners import ConversationListener
@@ -84,7 +85,9 @@ def ticket_service(
     user_service: UserService,
     dispatcher: EventDispatcher,
 ) -> TicketService:
-    return TicketService(TicketRepository(mongo_db_conn), user_service, dispatcher)
+    user_level_repo = AsyncMock(spec=UserLevelRepository)
+    user_level_repo.get_levels_by_user.return_value = [Level(id=1, name="N1")]
+    return TicketService(TicketRepository(mongo_db_conn), user_service, user_level_repo, dispatcher)
 
 
 def _make_dto(client_id: UUID | None = None) -> CreateTicketDTO:

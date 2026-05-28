@@ -221,6 +221,7 @@ class AuthService:
             email=dto.email,
             name=dto.name,
             role_ids=dto.role_ids,
+            level_ids=dto.level_ids,
         )
 
         user = await self.user_service.create(create_dto)

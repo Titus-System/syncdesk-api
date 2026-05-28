@@ -21,13 +21,14 @@ async def run() -> None:
     # --- Postgres ---
     async with async_session() as db, db.begin():
         await seed.seed_roles(db)
+        await seed.seed_levels(db)
         await seed.seed_permissions(db)
         await seed.seed_role_permissions(db)
-        
+
         # Agora as empresas/produtos são inseridas ANTES dos usuários (foreign key constraint)
         await seed_example_companies_and_products(db)
         await seed.seed_users(db)
-        
+
         # Descomentado:
         await seed_example_users(db)
         await seed_example_user_roles(db)

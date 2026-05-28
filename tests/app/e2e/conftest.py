@@ -38,7 +38,7 @@ import app.domains.products.models  # noqa: F401 — register models with Base.m
 from app.db.postgres.dependencies import get_postgres_session
 from app.domains.auth.entities import UserWithRoles
 from app.main import create_app
-from app.seed.seed import seed_permissions, seed_role_permissions, seed_roles
+from app.seed.seed import seed_levels, seed_permissions, seed_role_permissions, seed_roles
 
 settings = get_settings()
 
@@ -354,6 +354,7 @@ def _register_email_capture(dispatcher: Any, fake_email: FakeEmailStrategy) -> N
 async def _seed_auth_data(db_session: AsyncSession) -> None:
     """Seed roles, permissions, and role-permission associations."""
     await seed_roles(db_session)
+    await seed_levels(db_session)
     await seed_permissions(db_session)
     await seed_role_permissions(db_session)
     # Advance sequences past the explicitly-inserted IDs to avoid conflicts
@@ -448,6 +449,7 @@ class AuthActions:
         email: str = "agent@test.com",
         username: str = "agentuser",
         password: str = "Secure123!",
+        level: str | None = "N1",
     ) -> dict[str, Any]:
         data = await self.register(email, username, password)
         user_id = data["id"]
@@ -458,6 +460,15 @@ class AuthActions:
             ),
             {"uid": user_id, "rid": AGENT_ROLE_ID},
         )
+        if level is not None:
+            await self.db_session.execute(
+                text(
+                    "INSERT INTO user_levels (user_id, level_id)"
+                    " SELECT :uid, id FROM levels WHERE name = :level"
+                    " ON CONFLICT DO NOTHING"
+                ),
+                {"uid": user_id, "level": level},
+            )
         await self.db_session.flush()
         return data
 

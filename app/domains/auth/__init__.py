@@ -8,6 +8,7 @@ from .dependencies import (
 from .routers.auth_router import auth_router
 from .routers.permission_router import permission_router
 from .routers.role_router import role_router
+from .routers.user_level_router import user_level_router
 from .routers.user_router import user_router
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "role_router",
     "permission_router",
     "user_router",
+    "user_level_router",
     "CurrentUserSessionDep",
     "CurrentUserSessionWsDep",
     "UserServiceDep",

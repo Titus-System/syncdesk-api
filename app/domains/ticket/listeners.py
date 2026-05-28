@@ -13,6 +13,7 @@ from app.db.postgres.engine import async_session
 from app.domains.auth.repositories.password_reset_token_repository import (
     PasswordResetTokenRepository,
 )
+from app.domains.auth.repositories.user_level_repository import UserLevelRepository
 from app.domains.auth.repositories.user_repository import UserRepository
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.repositories import TicketRepository
@@ -59,7 +60,7 @@ def register_ticket_listener(dispatcher: EventDispatcher) -> None:
             reset_token_security=ResetTokenSecurity(),
             password_security=PasswordSecurity(),
         )
-        return TicketService(ticket_repo, user_service, dispatcher)
+        return TicketService(ticket_repo, user_service, UserLevelRepository(db), dispatcher)
 
     listener = TicketListener(build_service)
 
