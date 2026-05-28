@@ -17,6 +17,7 @@ from app.core.event_dispatcher.schemas import (
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.domains.auth.entities import UserWithRoles
+from app.domains.auth.repositories.user_level_repository import UserLevelRepository
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.metrics import tickets_created_total, tickets_status_changed_total
 from app.domains.ticket.models import (
@@ -25,6 +26,7 @@ from app.domains.ticket.models import (
     TicketCompany,
     TicketCriticality,
     TicketHistory,
+    TicketLevel,
     TicketStatus,
     TicketComment,
 )
@@ -118,9 +120,16 @@ class TicketService:
         TicketStatus.CANCELLED: set(),
     }
 
-    def __init__(self, repository: TicketRepository, user_service: UserService, event_dispatcher: EventDispatcher):
+    def __init__(
+        self,
+        repository: TicketRepository,
+        user_service: UserService,
+        user_level_repo: UserLevelRepository,
+        event_dispatcher: EventDispatcher,
+    ):
         self.repo = repository
         self.user_service = user_service
+        self.user_level_repo = user_level_repo
         self.dispatcher = event_dispatcher
         self.logger = get_logger("app.ticket.service")
 
@@ -263,12 +272,13 @@ class TicketService:
     ) -> TicketResponse:
         ticket = await self._get_ticket_or_404(ticket_id)
 
-        actor_roles = actor.roles_names()
-        if "admin" not in actor_roles and "agent" not in actor_roles:
-            raise AppHTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only agents or admins can take tickets.",
-            )
+        self._ensure_user_has_agent_role(actor)
+        ticket_level = self._ticket_level_value(ticket)
+        await self._ensure_agent_has_ticket_level(
+            actor.id,
+            ticket_level,
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
 
         current_agent_id = self._get_current_assigned_agent_id(ticket)
 
@@ -282,14 +292,13 @@ class TicketService:
             )
 
         actor_name = actor.name or actor.username or actor.email
-        actor_level = "admin" if "admin" in actor_roles else "agent"
         now = datetime.now(UTC)
 
         ticket.agent_history.append(
             TicketHistory(
                 agent_id=actor.id,
                 name=actor_name,
-                level=actor_level,
+                level=ticket_level,
                 assignment_date=now,
                 exit_date=None,
                 transfer_reason="Assumido via fila",
@@ -321,12 +330,9 @@ class TicketService:
                 detail=f"Agent {dto.agent_id} does not exist.",
             )
 
-        agent_roles = agent.roles_names()
-        if not self._can_be_ticket_agent(agent_roles):
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The provided user cannot be assigned as a ticket agent.",
-            )
+        self._ensure_user_has_agent_role(agent)
+        ticket_level = self._ticket_level_value(ticket)
+        await self._ensure_agent_has_ticket_level(agent.id, ticket_level)
 
         if ticket.status == TicketStatus.FINISHED:
             raise AppHTTPException(
@@ -345,7 +351,7 @@ class TicketService:
             TicketHistory(
                 agent_id=agent.id,
                 name=self._resolve_user_display_name(agent),
-                level=self._resolve_agent_level(agent_roles),
+                level=ticket_level,
                 assignment_date=now,
                 exit_date=None,
                 transfer_reason=dto.reason,
@@ -408,23 +414,19 @@ class TicketService:
                 detail=f"Agent {dto.target_agent_id} does not exist.",
             )
 
-        target_agent_roles = target_agent.roles_names()
-        if not self._can_be_ticket_agent(target_agent_roles):
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The provided user cannot be assigned as a ticket agent.",
-            )
+        self._ensure_user_has_agent_role(target_agent)
 
         previous_agent_id = current_assignment.agent_id
-        source_level = self._normalize_support_level(current_assignment.level)
-        target_level = self._normalize_support_level(
-            self._resolve_agent_level(target_agent_roles)
+        source_level = self._ticket_level_value(ticket)
+        target_level = await self._resolve_escalation_target_level(
+            target_agent.id,
+            source_level,
         )
-        self._validate_escalation_level(source_level, target_level)
 
         now = datetime.now(UTC)
         current_assignment.exit_date = now
         current_assignment.transfer_reason = dto.reason
+        ticket.level = TicketLevel(target_level)
 
         ticket.agent_history.append(
             TicketHistory(
@@ -498,22 +500,10 @@ class TicketService:
                 detail=f"Agent {dto.target_agent_id} does not exist.",
             )
 
-        target_agent_roles = target_agent.roles_names()
-        if not self._can_be_ticket_agent(target_agent_roles):
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The provided user cannot be assigned as a ticket agent.",
-            )
+        self._ensure_user_has_agent_role(target_agent)
 
-        source_level = self._normalize_support_level(current_assignment.level)
-        target_level = self._normalize_support_level(
-            self._resolve_agent_level(target_agent_roles)
-        )
-        if target_level != source_level:
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Direct ticket transfer must keep the same support level.",
-            )
+        ticket_level = self._ticket_level_value(ticket)
+        await self._ensure_agent_has_ticket_level(target_agent.id, ticket_level)
 
         now = datetime.now(UTC)
         current_assignment.exit_date = now
@@ -523,7 +513,7 @@ class TicketService:
             TicketHistory(
                 agent_id=target_agent.id,
                 name=self._resolve_user_display_name(target_agent),
-                level=source_level,
+                level=ticket_level,
                 assignment_date=now,
                 exit_date=None,
                 transfer_reason=dto.reason,
@@ -548,7 +538,7 @@ class TicketService:
                 "ticket_id": str(ticket_id),
                 "previous_agent_id": str(current_assignment.agent_id),
                 "new_agent_id": str(target_agent.id),
-                "level": source_level,
+                "level": ticket_level,
             },
         )
 
@@ -719,9 +709,7 @@ class TicketService:
 
         roles = user.roles_names()
         is_admin = "admin" in roles
-        is_agent = any(
-            role.strip().upper() in {"AGENT", "N1", "N2", "N3"} for role in roles
-        )
+        is_agent = "agent" in roles
 
         if (is_admin or is_agent) and user.company_id is None:
             return await self.repo.search_ticket(search_query, global_scope=True)
@@ -861,8 +849,6 @@ class TicketService:
 
     def _normalize_support_level(self, level: str) -> str:
         normalized = level.strip().upper()
-        if normalized == "AGENT":
-            return "N1"
         return normalized
 
     def _support_level_rank(self, level: str) -> int | None:
@@ -876,40 +862,67 @@ class TicketService:
 
         return int(numeric_level)
 
-    def _validate_escalation_level(self, source_level: str, target_level: str) -> None:
-        source_rank = self._support_level_rank(source_level)
-        target_rank = self._support_level_rank(target_level)
+    async def _resolve_escalation_target_level(
+        self,
+        agent_id: UUID,
+        source_level: str,
+    ) -> str:
+        source_rank = self._require_support_level_rank(source_level)
+        agent_levels = await self._get_agent_level_names(agent_id)
+        higher_levels = [
+            level
+            for level in agent_levels
+            if self._require_support_level_rank(level) > source_rank
+        ]
 
-        if source_rank is None or target_rank is None:
+        if not higher_levels:
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket escalation must target an agent with a higher support level.",
+            )
+
+        return min(higher_levels, key=self._require_support_level_rank)
+
+    def _require_support_level_rank(self, level: str) -> int:
+        rank = self._support_level_rank(level)
+        if rank is None:
             raise AppHTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Support levels must use the N<number> format.",
             )
-
-        if target_rank <= source_rank:
-            raise AppHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ticket escalation must target a higher support level.",
-            )
+        return rank
 
     def _resolve_user_display_name(self, user: UserWithRoles) -> str:
         return user.name or user.username or user.email
 
-    def _can_be_ticket_agent(self, roles_names: list[str]) -> bool:
-        for role_name in roles_names:
-            normalized = role_name.strip().upper()
-            if normalized in {"AGENT", "ADMIN", "N1", "N2", "N3"}:
-                return True
-        return False
+    def _ensure_user_has_agent_role(self, user: UserWithRoles) -> None:
+        if "agent" not in user.roles_names():
+            raise AppHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The provided user cannot be assigned as a ticket agent.",
+            )
 
-    def _resolve_agent_level(self, roles_names: list[str]) -> str:
-        for role_name in roles_names:
-            normalized = role_name.strip().upper()
-            if normalized in {"N1", "N2", "N3"}:
-                return normalized
-        if "admin" in roles_names:
-            return "admin"
-        return "N1"
+    async def _ensure_agent_has_ticket_level(
+        self,
+        agent_id: UUID,
+        ticket_level: str,
+        status_code: int = status.HTTP_400_BAD_REQUEST,
+    ) -> None:
+        agent_levels = await self._get_agent_level_names(agent_id)
+        if ticket_level not in agent_levels:
+            raise AppHTTPException(
+                status_code=status_code,
+                detail="Agent does not have the required support level for this ticket.",
+            )
+
+    async def _get_agent_level_names(self, agent_id: UUID) -> set[str]:
+        levels = await self.user_level_repo.get_levels_by_user(agent_id)
+        return {self._normalize_support_level(level.name) for level in levels}
+
+    def _ticket_level_value(self, ticket: Ticket) -> str:
+        if isinstance(ticket.level, TicketLevel):
+            return ticket.level.value
+        return self._normalize_support_level(str(ticket.level))
 
     def _derive_status_after_assignment(self, current_status: TicketStatus) -> TicketStatus:
         if current_status in {TicketStatus.OPEN, TicketStatus.AWAITING_ASSIGNMENT}:
@@ -927,7 +940,7 @@ class TicketService:
 
     def _matches_queue_filters(self, ticket: Ticket, filters: TicketQueueFiltersDTO) -> bool:
         current_assignment = self._get_active_assignment(ticket)
-        current_level = current_assignment.level if current_assignment is not None else None
+        ticket_level = self._ticket_level_value(ticket)
         current_assignee_id = current_assignment.agent_id if current_assignment is not None else None
         unassigned = current_assignee_id is None
 
@@ -939,7 +952,7 @@ class TicketService:
         if filters.unassigned_only is True and not unassigned:
             return False
 
-        if filters.level is not None and filters.level != current_level:
+        if filters.level is not None and self._normalize_support_level(filters.level) != ticket_level:
             return False
 
         if filters.assignee_id is not None and filters.assignee_id != current_assignee_id:
@@ -1207,9 +1220,7 @@ class TicketService:
         return series
 
     def _to_ticket_queue_item_response(self, ticket: Ticket) -> TicketQueueItemResponse:
-        current_assignment = self._get_active_assignment(ticket)
         assignee_id, assignee_name = self._resolve_assigned_agent(ticket)
-        level = current_assignment.level if current_assignment is not None else None
 
         return TicketQueueItemResponse(
             id=str(ticket.id),
@@ -1231,7 +1242,7 @@ class TicketService:
             ),
             department_id=None,
             department_name=None,
-            level=level,
+            level=self._ticket_level_value(ticket),
             assignee_id=assignee_id,
             assignee_name=assignee_name,
             unassigned=assignee_id is None,

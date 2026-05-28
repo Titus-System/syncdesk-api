@@ -92,7 +92,7 @@ class TicketHistoryResponse(BaseModel):
     name: str
     level: str = Field(
         ...,
-        description="Support level snapshot. Provisional string contract; examples: N1, N2, N3.",
+        description="Support level snapshot from the assigned user's operational levels.",
     )
     assignment_date: datetime
     exit_date: datetime | None = None
@@ -166,7 +166,7 @@ class TicketQueueFiltersDTO(PaginationDTO):
     )
     level: str | None = Field(
         default=None,
-        description="Provisional support level filter. Example values: N1, N2, N3.",
+        description="Support level filter. Example values: N1, N2, N3.",
     )
     assignee_id: UUID | None = Field(
         default=None,
@@ -221,7 +221,7 @@ class TicketQueueItemResponse(BaseModel):
     department_name: str | None = None
     level: str | None = Field(
         default=None,
-        description="Provisional support level. Example values: N1, N2, N3.",
+        description="Current ticket support level. Example values: N1, N2, N3.",
     )
     assignee_id: UUID | None = None
     assignee_name: str | None = None

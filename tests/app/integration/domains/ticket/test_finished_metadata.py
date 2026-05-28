@@ -23,6 +23,7 @@ from app.domains.auth.entities import Role, User, UserWithRoles
 from app.domains.auth.repositories.password_reset_token_repository import (
     PasswordResetTokenRepository,
 )
+from app.domains.auth.repositories.user_level_repository import UserLevelRepository
 from app.domains.auth.repositories.user_repository import UserRepository
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.models import (
@@ -73,9 +74,15 @@ def user_service(
 def service(
     mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
     user_service: UserService,
+    db_session: AsyncSession,
     dispatcher: EventDispatcher,
 ) -> TicketService:
-    return TicketService(TicketRepository(mongo_db_conn), user_service, dispatcher)
+    return TicketService(
+        TicketRepository(mongo_db_conn),
+        user_service,
+        UserLevelRepository(db_session),
+        dispatcher,
+    )
 
 
 def _make_ticket(

@@ -16,6 +16,7 @@ from app.core.security import PasswordSecurity, ResetTokenSecurity
 from app.domains.auth.repositories.password_reset_token_repository import (
     PasswordResetTokenRepository,
 )
+from app.domains.auth.repositories.user_level_repository import UserLevelRepository
 from app.domains.auth.repositories.user_repository import UserRepository
 from app.domains.auth.services.user_service import UserService
 from app.domains.ticket.models import (
@@ -69,9 +70,10 @@ def user_service(
 def service(
     repository: TicketRepository,
     user_service: UserService,
+    db_session: AsyncSession,
     dispatcher: EventDispatcher,
 ) -> TicketService:
-    return TicketService(repository, user_service, dispatcher)
+    return TicketService(repository, user_service, UserLevelRepository(db_session), dispatcher)
 
 
 def _make_ticket(

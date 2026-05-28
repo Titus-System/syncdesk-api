@@ -24,7 +24,7 @@ from app.domains.live_chat.entities import Conversation
 from app.domains.live_chat.listeners import ConversationListener
 from app.domains.live_chat.repositories.conversation_repository import ConversationRepository
 from app.domains.live_chat.services.conversation_service import ConversationService
-from app.domains.ticket.models import Ticket
+from app.domains.ticket.models import Ticket, TicketLevel
 from tests.app.e2e.conftest import AuthActions
 
 
@@ -154,29 +154,38 @@ async def _register_agent_with_support_level(
     username: str,
     level: str,
 ) -> dict[str, Any]:
-    agent_data = await auth.register_agent(email=email, username=username)
-    role_result = await auth.db_session.execute(
+    agent_data = await auth.register_agent(email=email, username=username, level=None)
+    level_result = await auth.db_session.execute(
         text(
-            "INSERT INTO roles (name, description)"
-            " VALUES (:name, :description)"
-            " ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description"
+            "INSERT INTO levels (name)"
+            " VALUES (:name)"
+            " ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name"
             " RETURNING id"
         ),
-        {
-            "name": level,
-            "description": f"Support level {level}",
-        },
+        {"name": level},
     )
-    role_id = role_result.scalar_one()
+    level_id = level_result.scalar_one()
     await auth.db_session.execute(
         text(
-            "INSERT INTO user_roles (user_id, role_id)"
-            " VALUES (:uid, :rid) ON CONFLICT DO NOTHING"
+            "INSERT INTO user_levels (user_id, level_id)"
+            " VALUES (:uid, :lid) ON CONFLICT DO NOTHING"
         ),
-        {"uid": agent_data["id"], "rid": role_id},
+        {"uid": agent_data["id"], "lid": level_id},
     )
     await auth.db_session.flush()
     return agent_data
+
+
+async def _add_support_level(auth: AuthActions, user_id: str, level: str) -> None:
+    await auth.db_session.execute(
+        text(
+            "INSERT INTO user_levels (user_id, level_id)"
+            " SELECT :uid, id FROM levels WHERE name = :level"
+            " ON CONFLICT DO NOTHING"
+        ),
+        {"uid": user_id, "level": level},
+    )
+    await auth.db_session.flush()
 
 
 class TestTicketRoutes:
@@ -526,6 +535,7 @@ class TestTicketRoutes:
         assert assign_data["assigned_agent_name"] == "ticketagentassign"
         assert len(assign_data["agent_history"]) == 1
         assert assign_data["agent_history"][0]["agent_id"] == agent_data["id"]
+        assert assign_data["agent_history"][0]["level"] == "N1"
         assert assign_data["agent_history"][0]["transfer_reason"] == "Primeira atribuicao"
         assert assign_data["agent_history"][0]["exit_date"] is None
 
@@ -582,6 +592,135 @@ class TestTicketRoutes:
             headers=headers,
         )
         assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_assign_ticket_rejects_agent_without_ticket_level(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-assign-level@test.com",
+            admin_username="ticketadminassignlevel",
+            client_email="ticket-client-assign-level@test.com",
+            client_username="ticketclientassignlevel",
+            product="Produto Assign Level",
+        )
+        items = await _list_tickets_for_client(client, headers, created_user["id"])
+        ticket_id = items[0]["id"]
+        agent_data = await _register_agent_with_support_level(
+            auth,
+            email="ticket-agent-assign-level-n2@test.com",
+            username="ticketagentassignleveln2",
+            level="N2",
+        )
+
+        response = await client.post(
+            f"/api/tickets/{ticket_id}/assign",
+            json={"agent_id": agent_data["id"], "reason": "Nivel incompativel"},
+            headers=headers,
+        )
+        assert response.status_code == 400, response.text
+
+    @pytest.mark.asyncio
+    async def test_assign_ticket_allows_multi_level_agent(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="ticket-admin-assign-multilevel@test.com",
+            username="ticketadminassignmultilevel",
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+        created_user = await auth.register(
+            email="ticket-client-assign-multilevel@test.com",
+            username="ticketclientassignmultilevel",
+        )
+        created = await _create_ticket_with_payload(
+            client,
+            headers,
+            {
+                "triage_id": "67f0c9b8e4b0b1a2c3d4e5f6",
+                "type": "issue",
+                "criticality": "high",
+                "product": "Produto Assign Multilevel",
+                "description": "Ticket N2 para agente multi-level",
+                "chat_ids": ["67f0c9b8e4b0b1a2c3d4e5f7"],
+                "client_id": created_user["id"],
+                "level": "N2",
+            },
+        )
+        agent_data = await auth.register_agent(
+            email="ticket-agent-assign-multilevel@test.com",
+            username="ticketagentassignmultilevel",
+        )
+        await _add_support_level(auth, agent_data["id"], "N2")
+
+        response = await client.post(
+            f"/api/tickets/{created['id']}/assign",
+            json={"agent_id": agent_data["id"], "reason": "Agente multi-level"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        history = response.json()["data"]["agent_history"]
+        assert history[0]["level"] == "N2"
+
+    @pytest.mark.asyncio
+    async def test_take_ticket_respects_agent_level(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-take-level@test.com",
+            admin_username="ticketadmintakelevel",
+            client_email="ticket-client-take-level@test.com",
+            client_username="ticketclienttakelevel",
+            product="Produto Take Level",
+        )
+        items = await _list_tickets_for_client(client, headers, created_user["id"])
+        ticket_id = items[0]["id"]
+        await auth.register_agent(
+            email="ticket-agent-take-level@test.com",
+            username="ticketagenttakelevel",
+        )
+        agent_tokens = await auth.login(email="ticket-agent-take-level@test.com")
+
+        response = await client.post(
+            f"/api/tickets/{ticket_id}/take",
+            headers=auth.auth_headers(agent_tokens["access_token"]),
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["agent_history"][0]["level"] == "N1"
+
+    @pytest.mark.asyncio
+    async def test_take_ticket_rejects_agent_without_ticket_level(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        created_user, headers = await _create_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-take-level-bad@test.com",
+            admin_username="ticketadmintakelevelbad",
+            client_email="ticket-client-take-level-bad@test.com",
+            client_username="ticketclienttakelevelbad",
+            product="Produto Take Level Bad",
+        )
+        items = await _list_tickets_for_client(client, headers, created_user["id"])
+        ticket_id = items[0]["id"]
+        await _register_agent_with_support_level(
+            auth,
+            email="ticket-agent-take-level-n2@test.com",
+            username="ticketagenttakeleveln2",
+            level="N2",
+        )
+        agent_tokens = await auth.login(email="ticket-agent-take-level-n2@test.com")
+
+        response = await client.post(
+            f"/api/tickets/{ticket_id}/take",
+            headers=auth.auth_headers(agent_tokens["access_token"]),
+        )
+        assert response.status_code == 403, response.text
 
     @pytest.mark.asyncio
     async def test_assign_ticket_requires_permission(
@@ -648,6 +787,7 @@ class TestTicketRoutes:
         assert escalate_response.status_code == 200, escalate_response.text
         escalate_data = escalate_response.json()["data"]
         assert escalate_data["status"] == "in_progress"
+        assert escalate_data["level"] == "N2"
         assert escalate_data["assigned_agent_id"] == target_agent["id"]
         assert escalate_data["assigned_agent_name"] == "ticketagentescalaten2"
         assert len(escalate_data["agent_history"]) == 2
@@ -680,6 +820,7 @@ class TestTicketRoutes:
 
         ticket = await Ticket.get(PydanticObjectId(ticket_id))
         assert ticket is not None
+        ticket.level = TicketLevel.N2
         ticket.agent_history[-1].level = "N2"
         await ticket.save()
         target_agent = await auth.register_agent(
@@ -696,6 +837,43 @@ class TestTicketRoutes:
             headers=headers,
         )
         assert response.status_code == 400, response.text
+
+    @pytest.mark.asyncio
+    async def test_escalate_ticket_returns_200_from_n2_to_n3(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        ticket_id, _created_user, headers, _agent_data = await _create_assigned_ticket(
+            client=client,
+            auth=auth,
+            admin_email="ticket-admin-escalate-n2-n3@test.com",
+            admin_username="ticketadminescalaten2n3",
+            client_email="ticket-client-escalate-n2-n3@test.com",
+            client_username="ticketclientescalaten2n3",
+            agent_email="ticket-agent-escalate-n2@test.com",
+            agent_username="ticketagentescalaten2source",
+            product="Produto Escalate N2 N3",
+        )
+        ticket = await Ticket.get(PydanticObjectId(ticket_id))
+        assert ticket is not None
+        ticket.level = TicketLevel.N2
+        ticket.agent_history[-1].level = "N2"
+        await ticket.save()
+        target_agent = await _register_agent_with_support_level(
+            auth,
+            email="ticket-agent-escalate-n3@test.com",
+            username="ticketagentescalaten3",
+            level="N3",
+        )
+
+        response = await client.post(
+            f"/api/tickets/{ticket_id}/escalate",
+            json={"target_agent_id": target_agent["id"], "reason": "Escalar para N3"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["level"] == "N3"
+        assert data["agent_history"][-1]["level"] == "N3"
 
     @pytest.mark.asyncio
     async def test_transfer_ticket_returns_200_and_moves_active_assignment(
@@ -935,7 +1113,10 @@ class TestTicketRoutes:
             username="ticketadminqueue",
         )
         headers = auth.auth_headers(tokens["access_token"])
-        admin_user = await auth.me(tokens["access_token"])
+        queue_agent = await auth.register_agent(
+            email="ticket-agent-queue@test.com",
+            username="ticketagentqueue",
+        )
 
         created_user = await auth.register(
             email="ticket-client-queue@test.com",
@@ -999,7 +1180,7 @@ class TestTicketRoutes:
         assign_high_response = await client.post(
             f"/api/tickets/{ticket_ids_by_product['Fila Assigned High']}/assign",
             json={
-                "agent_id": str(admin_user.id),
+                "agent_id": queue_agent["id"],
                 "reason": "Atribuição para teste de fila",
             },
             headers=headers,
@@ -1009,7 +1190,7 @@ class TestTicketRoutes:
         assign_low_response = await client.post(
             f"/api/tickets/{ticket_ids_by_product['Fila Assigned Low']}/assign",
             json={
-                "agent_id": str(admin_user.id),
+                "agent_id": queue_agent["id"],
                 "reason": "Atribuição para teste de fila",
             },
             headers=headers,
@@ -1068,9 +1249,20 @@ class TestTicketRoutes:
         assert any(item["product"] == "Fila Unassigned Medium" for item in unassigned_items)
         assert all(item["unassigned"] is True for item in unassigned_items)
 
+        level_response = await client.get(
+            "/api/tickets/queue",
+            params={"level": "N1", "page": 1, "page_size": 20},
+            headers=headers,
+        )
+        assert level_response.status_code == 200, level_response.text
+        level_items = level_response.json()["data"]["items"]
+        assert len(level_items) == 4
+        assert any(item["product"] == "Fila Unassigned Medium" for item in level_items)
+        assert all(item["level"] == "N1" for item in level_items)
+
         assignee_response = await client.get(
             "/api/tickets/queue",
-            params={"assignee_id": str(admin_user.id), "page": 1, "page_size": 20},
+            params={"assignee_id": queue_agent["id"], "page": 1, "page_size": 20},
             headers=headers,
         )
         assert assignee_response.status_code == 200, assignee_response.text
@@ -1080,7 +1272,7 @@ class TestTicketRoutes:
         assert assignee_items[0]["criticality"] == "high"
         assert assignee_items[1]["product"] == "Fila Assigned Low"
         assert assignee_items[1]["criticality"] == "low"
-        assert all(item["assignee_id"] == str(admin_user.id) for item in assignee_items)
+        assert all(item["assignee_id"] == queue_agent["id"] for item in assignee_items)
 
     @pytest.mark.asyncio
     async def test_assign_ticket_publishes_ticket_assignee_updated_event_in_http_flow(
