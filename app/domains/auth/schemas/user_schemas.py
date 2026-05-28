@@ -15,7 +15,8 @@ class CreateUserDTO(BaseDTO):
     is_verified: bool = False
     must_change_password: bool = False
     must_accept_terms: bool = True
-    role_ids: list[int] = []
+    role_ids: list[int] = Field(default_factory=list)
+    level_ids: list[int] = Field(default_factory=list)
 
 class UpdateUserDTO(BaseDTO):
     email: str | None = None

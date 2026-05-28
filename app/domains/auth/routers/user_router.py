@@ -64,6 +64,10 @@ async def create_user(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"User with email {dto.email} already exists.",
         ) from e
+    except ResourceNotFoundError as e:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise AppHTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
 @user_router.get(

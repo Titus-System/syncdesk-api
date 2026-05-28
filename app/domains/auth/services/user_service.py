@@ -46,6 +46,8 @@ class UserService:
         to change password on first login, and publishes USER_WELCOME_INVITE so
         the welcome email is enqueued.
         """
+        await self._validate_create_support_levels(dto)
+
         plain_password: str | None = None
         if not dto.oauth_provider:
             plain_password = self._generate_random_password()
@@ -61,6 +63,20 @@ class UserService:
         if plain_password:
             await self._publish_welcome_invite(user, plain_password)
         return user
+
+    async def _validate_create_support_levels(self, dto: CreateUserDTO) -> None:
+        level_ids = list(dict.fromkeys(dto.level_ids))
+        if not level_ids:
+            return
+
+        role_names = await self.repo.get_role_names_by_ids(dto.role_ids)
+        if "agent" not in role_names:
+            raise ValueError("Only users with agent role can receive support levels.")
+
+        existing_level_ids = await self.repo.get_existing_level_ids(level_ids)
+        missing_level_ids = set(level_ids) - existing_level_ids
+        if missing_level_ids:
+            raise ResourceNotFoundError("Level", ", ".join(str(id) for id in sorted(missing_level_ids)))
 
     @staticmethod
     def _generate_random_password(length: int = 16) -> str:
@@ -129,7 +145,7 @@ class UserService:
         if user is None:
             return None
 
-        update_values = dto.model_dump(exclude_none=True)
+        update_values = dto.model_dump(exclude={"role_ids", "level_ids"}, exclude_none=True)
         temp_user = User(**{**user.__dict__, **update_values})
 
         if not temp_user.can_login():

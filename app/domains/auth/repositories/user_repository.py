@@ -12,10 +12,11 @@ from ..entities import Permission as PermissionEntity
 from ..entities import Role as RoleEntity
 from ..entities import User as UserEntity
 from ..entities import UserRole, UserWithRoles
+from ..models import Level as LevelModel
 from ..models import Permission as PermissionModel
 from ..models import Role as RoleModel
 from ..models import User as UserModel
-from ..models import role_permissions, user_roles
+from ..models import role_permissions, user_levels, user_roles
 from ..schemas import CreateUserDTO, ReplaceUserDTO, UpdateUserDTO
 
 
@@ -25,15 +26,24 @@ class UserRepository:
 
     @require_dto(CreateUserDTO)
     async def create(self, dto: CreateUserDTO) -> UserWithRoles:
-        insert_values = dto.model_dump(exclude={"role_ids"}, exclude_none=True)
+        insert_values = dto.model_dump(exclude={"role_ids", "level_ids"}, exclude_none=True)
         stmt = insert(UserModel).values(**insert_values).returning(UserModel)
         try:
             res = await self.db.execute(stmt)
             user = res.scalar_one()
-            if dto.role_ids:
-                role_rows = [{"user_id": user.id, "role_id": role_id} for role_id in dto.role_ids]
+            role_ids = list(dict.fromkeys(dto.role_ids))
+            level_ids = list(dict.fromkeys(dto.level_ids))
+
+            if role_ids:
+                role_rows = [{"user_id": user.id, "role_id": role_id} for role_id in role_ids]
 
                 await self.db.execute(insert(user_roles).values(role_rows))
+
+            if level_ids:
+                level_rows = [
+                    {"user_id": user.id, "level_id": level_id} for level_id in level_ids
+                ]
+                await self.db.execute(insert(user_levels).values(level_rows))
 
             await self.db.commit()
             await self.db.refresh(user, attribute_names=["roles"])
@@ -79,11 +89,27 @@ class UserRepository:
         rows = res.scalars().all()
         return [self._to_entity(row) for row in rows]
 
+    async def get_role_names_by_ids(self, role_ids: list[int]) -> set[str]:
+        if not role_ids:
+            return set()
+        stmt = select(RoleModel.name).where(RoleModel.id.in_(set(role_ids)))
+        result = await self.db.execute(stmt)
+        return set(result.scalars().all())
+
+    async def get_existing_level_ids(self, level_ids: list[int]) -> set[int]:
+        if not level_ids:
+            return set()
+        stmt = select(LevelModel.id).where(LevelModel.id.in_(set(level_ids)))
+        result = await self.db.execute(stmt)
+        return set(result.scalars().all())
+
     @require_dto(UpdateUserDTO, ReplaceUserDTO)
     async def update(self, id: UUID, dto: UpdateUserDTO | ReplaceUserDTO) -> UserEntity | None:
         update_values = None
         if isinstance(dto, ReplaceUserDTO):
-            update_values = dto.model_dump(exclude={"role_ids"}, exclude_none=False)
+            update_values = dto.model_dump(
+                exclude={"role_ids", "level_ids"}, exclude_none=False
+            )
         else:
             update_values = dto.model_dump(exclude_none=True)
 

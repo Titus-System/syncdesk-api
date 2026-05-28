@@ -2,8 +2,15 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 
-from tests.app.e2e.conftest import AuthActions
+from tests.app.e2e.conftest import AGENT_ROLE_ID, AuthActions
+
+
+async def _level_ids_by_name(auth: AuthActions, *names: str) -> list[int]:
+    result = await auth.db_session.execute(text("SELECT id, name FROM levels"))
+    by_name = {row.name: row.id for row in result}
+    return [by_name[name] for name in names]
 
 
 class TestUsersCRUD:
@@ -50,6 +57,80 @@ class TestUsersCRUD:
             headers=headers,
         )
         assert r.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_create_agent_user_with_support_levels(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="leveladm@test.com", username="leveladm"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+        level_ids = await _level_ids_by_name(auth, "N1", "N2")
+
+        r = await client.post(
+            "/api/users/",
+            json={
+                "email": "agentlevels@test.com",
+                "password_hash": "somehashedvalue",
+                "username": "agentlevels",
+                "role_ids": [AGENT_ROLE_ID],
+                "level_ids": level_ids,
+            },
+            headers=headers,
+        )
+        assert r.status_code == 201
+
+        user_id = r.json()["data"]["id"]
+        levels_r = await client.get(f"/api/users/{user_id}/levels", headers=headers)
+        assert levels_r.status_code == 200
+        level_names = {level["name"] for level in levels_r.json()["data"]["levels"]}
+        assert level_names == {"N1", "N2"}
+
+    @pytest.mark.asyncio
+    async def test_create_user_with_support_level_requires_agent_role(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="levelnonagentadm@test.com", username="levelnonagentadm"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+        level_ids = await _level_ids_by_name(auth, "N1")
+
+        r = await client.post(
+            "/api/users/",
+            json={
+                "email": "nonagentlevel@test.com",
+                "password_hash": "somehashedvalue",
+                "username": "nonagentlevel",
+                "level_ids": level_ids,
+            },
+            headers=headers,
+        )
+        assert r.status_code == 400
+        assert "Only users with agent role can receive support levels." in r.text
+
+    @pytest.mark.asyncio
+    async def test_create_agent_user_with_unknown_support_level_fails(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="missingleveladm@test.com", username="missingleveladm"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.post(
+            "/api/users/",
+            json={
+                "email": "missinglevel@test.com",
+                "password_hash": "somehashedvalue",
+                "username": "missinglevel",
+                "role_ids": [AGENT_ROLE_ID],
+                "level_ids": [999],
+            },
+            headers=headers,
+        )
+        assert r.status_code == 404
 
     # ── Read ────────────────────────────────────────────
 
