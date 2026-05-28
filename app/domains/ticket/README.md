@@ -2,7 +2,7 @@
 
 Official API contract for the SyncDesk ticket domain.
 
-This module defines the public HTTP contracts, Pydantic schemas, pagination rules, event payloads, and the minimum implemented behavior required for the current sprint. The focus is contract definition, not full operational business implementation.
+This module defines the public HTTP contracts, Pydantic schemas, pagination rules, event payloads, and the implemented ticket business rules.
 
 ## Scope
 
@@ -11,10 +11,9 @@ Implemented routes:
 - `GET /api/tickets/`
 - `GET /api/tickets/{ticket_id}`
 - `PATCH /api/tickets/{ticket_id}`
-
-Contract stubs in this sprint:
 - `GET /api/tickets/queue`
 - `POST /api/tickets/{ticket_id}/assign`
+- `POST /api/tickets/{ticket_id}/take`
 - `POST /api/tickets/{ticket_id}/escalate`
 - `POST /api/tickets/{ticket_id}/transfer`
 
@@ -23,7 +22,7 @@ Out of scope:
 - listeners for `chatbot`
 - event dispatcher wiring
 - delete endpoint
-- full queue, assignment, escalation, and transfer business logic
+- department routing
 
 ## Architecture
 
@@ -85,19 +84,25 @@ Persisted fields:
 - `criticality`
 - `product`
 - `status`
+- `level`
 - `creation_date`
 - `description`
 - `chat_ids`
 - `agent_history`
 - `client`
 - `comments`
+- `closed_at`
+- `closed_by_agent`
 
 Not added in this sprint:
 - `department`
-- `current_assignee`
 - dedicated department or assignee embedded references
 
-Queue and routing concerns are represented in API DTOs where needed, without inflating the persisted MongoDB document. Department routing is intentionally not implemented in the current ticket model.
+`ticket.level` is the official current operational support level of the ticket. New tickets are created with the default level, normally `N1`, and queue, assign, take, transfer, and escalate rules must respect this value.
+
+`agent_history.level` is a historical snapshot for each assignment. It is not the source of truth for the current ticket level.
+
+Department routing is intentionally not implemented in the current ticket model.
 
 ## Schemas
 
@@ -128,9 +133,44 @@ Queue and routing concerns are represented in API DTOs where needed, without inf
 
 The following field is intentionally typed as `str` in this sprint:
 - `department_id`
-- `level`
 
-`department_id` remains available only as a queue filter/response contract field. Transfer and escalation rules do not implement department behavior; they use the support level stored in assignment history.
+`department_id` remains available only as a queue filter/response contract field. Transfer and escalation rules do not implement department behavior.
+
+### Operational support levels
+
+Support levels are not roles.
+
+Official sources:
+- PostgreSQL `levels`: valid operational levels such as `N1`, `N2`, and `N3`
+- PostgreSQL `user_levels`: relationship between agents and the levels they can handle
+- MongoDB `ticket.level`: current operational level of the ticket
+- MongoDB `agent_history.level`: historical snapshot of the level used during an assignment
+
+Roles continue to represent authorization profiles only, such as `admin`, `agent`, `client`, and `user`. The ticket domain must not infer support level from roles.
+
+Assign and take rules:
+- the user must have role `agent`
+- the user must have the ticket's current `ticket.level` in `user_levels`
+- a user may have multiple levels
+- an agent with `N1` and `N2` can handle tickets at either level
+- an agent without the ticket level cannot assume the ticket
+
+Transfer rules:
+- direct transfer keeps the current `ticket.level`
+- the target agent must have the same current ticket level in `user_levels`
+- transfer does not change ticket criticality or support level
+
+Escalation rules:
+- escalation moves the ticket only to a higher support level
+- valid examples: `N1 -> N2`, `N2 -> N3`
+- invalid examples: `N2 -> N1`, `N3 -> N2`, `N3 -> N1`, `N1 -> N1`
+- escalation updates `ticket.level`
+- escalation closes the previous assignment entry, records a new assignment entry in `agent_history`, and emits `ticket.escalated`
+
+Queue rules:
+- queue filters use `ticket.level`
+- tickets without an assignee still have an operational level
+- filtering by `level` must consider the ticket's current level, not assignment history
 
 ## Routes
 
@@ -289,6 +329,8 @@ Ordering contract:
 
 Current behavior:
 - lists queue candidates with filters and criticality/date ordering
+- applies the `level` filter against the current `ticket.level`
+- includes unassigned tickets, which still carry an operational level
 
 ### `POST /api/tickets/{ticket_id}/assign`
 
@@ -308,7 +350,28 @@ Event contract:
 - emits `ticket.assignee_updated`
 
 Current behavior:
-- assigns the ticket to the requested agent and emits `ticket.assignee_updated`
+- assigns the ticket to the requested agent when the agent has role `agent` and the ticket's current `ticket.level` in `user_levels`
+- records the assignment in `agent_history` with a level snapshot from `ticket.level`
+- emits `ticket.assignee_updated`
+
+### `POST /api/tickets/{ticket_id}/take`
+
+Status:
+- implemented
+
+Permission:
+- `ticket:assign`
+
+Response:
+- `GenericSuccessContent[TicketResponse]`
+
+Event contract:
+- emits `ticket.assignee_updated`
+
+Current behavior:
+- assigns the ticket to the authenticated agent when the agent has the ticket's current `ticket.level` in `user_levels`
+- records the assignment in `agent_history` with a level snapshot from `ticket.level`
+- emits `ticket.assignee_updated`
 
 ### `POST /api/tickets/{ticket_id}/escalate`
 
@@ -331,7 +394,9 @@ Event contract:
 - emits `ticket.escalated`
 
 Current behavior:
-- closes the previous assignment, assigns the target higher-level agent, keeps the ticket `in_progress`, and emits `ticket.escalated`
+- validates that the target level is higher than the current `ticket.level`
+- validates that the target agent has the target level in `user_levels`
+- closes the previous assignment, updates `ticket.level`, assigns the target higher-level agent, keeps the ticket `in_progress`, and emits `ticket.escalated`
 
 ### `POST /api/tickets/{ticket_id}/transfer`
 
@@ -354,7 +419,9 @@ Event contract:
 - emits `ticket.assignee_updated`
 
 Current behavior:
+- validates that the target agent has the current `ticket.level` in `user_levels`
 - closes the previous assignment, assigns the target same-level agent, keeps the ticket `in_progress`, and emits `ticket.assignee_updated`
+- does not alter `ticket.level`
 
 ### Delete policy
 
@@ -383,6 +450,7 @@ Operational note:
 ## Events
 
 The ticket domain is the producer of:
+- `ticket.created`
 - `ticket.closed`
 - `ticket.assignee_updated`
 - `ticket.escalated`
@@ -401,6 +469,14 @@ Payload:
 Expected external consumers:
 - `live_chat`
 - `chatbot`
+
+### `ticket.created`
+
+Purpose:
+- notify downstream domains that a ticket was created
+
+Payload:
+- `TicketEventPayload`
 
 ### `ticket.assignee_updated`
 
@@ -449,10 +525,9 @@ Implemented now:
 - paginated ticket listing
 - ticket retrieval by id
 - partial ticket update
-
-Prepared as contract stubs:
 - queue
 - assignment
+- take
 - escalation
 - transfer
 - event payload contracts for internal and external integrations
