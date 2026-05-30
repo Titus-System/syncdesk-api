@@ -221,6 +221,8 @@ class UserService:
     async def update_password(self, user_id: UUID, new_password_hash: str) -> User | None:
         return await self.repo.update_password(user_id, new_password_hash)
 
+    async def accept_terms(self, user_id: UUID) -> User | None:
+        return await self.repo.accept_terms(user_id)
     async def set_avatar(
         self, user_id: UUID, avatar_file_id: UUID | None
     ) -> tuple[UserWithRoles, UUID | None] | None:

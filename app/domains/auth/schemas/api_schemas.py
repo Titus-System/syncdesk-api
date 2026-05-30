@@ -70,6 +70,9 @@ class ChangePasswordRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
+class AcceptTermsRequest(BaseModel):
+    accepted: bool = True
+
 
 class ResetPasswordRequest(BaseModel):
     token: str

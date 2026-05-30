@@ -6,6 +6,7 @@ from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
 from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.schemas.api_schemas import (
+    AcceptTermsRequest,
     AdminRegisterUserRequest,
     ChangePasswordRequest,
     ForgotPasswordRequest,
@@ -227,3 +228,24 @@ async def reset_password(
         raise AppHTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token."
         ) from e
+
+@auth_router.post("/accept-terms", tags=["Auth"])
+async def accept_terms(
+    dto: AcceptTermsRequest,
+    user_session: CurrentUserSessionDep,
+    service: UserServiceDep,
+    response: ResponseFactoryDep,
+) -> JSONResponse:
+    if not dto.accepted:
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Terms must be accepted.",
+        )
+
+    user = user_session[0]
+    updated_user = await service.accept_terms(user.id)
+
+    if updated_user is None:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    return response.success(data=updated_user.to_response_dict(), status_code=status.HTTP_200_OK)
