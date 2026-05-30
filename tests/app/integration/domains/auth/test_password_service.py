@@ -52,8 +52,20 @@ class TestPasswordService:
         return PasswordResetTokenRepository(db=db_session)
 
     @pytest.fixture
-    def user_service(self, user_repo: UserRepository) -> UserService:
-        return UserService(repo=user_repo)
+    def user_service(
+        self,
+        user_repo: UserRepository,
+        token_repo: PasswordResetTokenRepository,
+        reset_token_security: ResetTokenSecurity,
+        password_security: PasswordSecurity,
+    ) -> UserService:
+        return UserService(
+            repo=user_repo,
+            dispatcher=get_event_dispatcher(),
+            token_repo=token_repo,
+            reset_token_security=reset_token_security,
+            password_security=password_security,
+        )
 
     @pytest.fixture
     def service(

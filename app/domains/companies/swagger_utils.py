@@ -6,6 +6,7 @@ from app.domains.companies.schemas import (
     AddCompanyProductResponse,
     CreateCompanyResponse,
     GetCompaniesResponse,
+    GetCompanyProductsResponse,
     GetCompanyResponse,
     GetCompanyUsersResponse,
     ReplaceCompanyResponse,
@@ -290,4 +291,22 @@ get_company_users_swagger: dict[str, Any] = {
     "description": "Returns a paginated list of users associated with the given company.",
     "response_model": GetCompanyUsersResponse,
     "responses": get_company_users_responses,
+}
+
+get_company_products_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Paginated list of products associated with the company.",
+        "model": GetCompanyProductsResponse,
+    },
+    404: {
+        "description": "Company not found.",
+        "model": ErrorContent,
+    },
+}
+
+get_company_products_swagger: dict[str, Any] = {
+    "summary": "List products of a company",
+    "description": "Returns a paginated list of products associated with the given company.",
+    "response_model": GetCompanyProductsResponse,
+    "responses": get_company_products_responses,
 }

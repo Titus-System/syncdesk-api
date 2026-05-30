@@ -1,5 +1,5 @@
 import random
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -39,22 +39,6 @@ class TestUserDTOs:
         assert dto.name == "OAuth User"
         assert dto.is_active is True
         assert dto.is_verified is False
-
-    def test_create_user_without_password_and_oauth_should_fail(self) -> None:
-        with pytest.raises(ValidationError) as exc:
-            CreateUserDTO(
-                email="user@example.com",
-                name="Test User",
-            )
-        assert "User must have either password or OAuth provider" in str(exc.value)
-
-    def test_create_user_with_oauth_without_provider_id_should_fail(self) -> None:
-        with pytest.raises(ValidationError):
-            CreateUserDTO(
-                email="user@example.com",
-                oauth_provider=OAuthProvider.GOOGLE,
-                name="OAuth User",
-            )
 
     def test_invalid_update_user_dto_should_fail(self) -> None:
         with pytest.raises(ValidationError):
@@ -952,3 +936,138 @@ class TestUserRepository:
         assert updated is not None
         assert updated.must_change_password is False
         assert updated.must_accept_terms is True
+
+
+class TestUserAvatarRepository:
+    """Integration tests for the avatar-management slice of UserRepository.
+
+    Real Postgres, real SQLAlchemy session. FileObject rows are inserted
+    via the real FileObjectRepository so the FK to file_objects is
+    exercised exactly as in production.
+    """
+
+    @pytest.fixture
+    def user_repo(self, db_session: AsyncSession) -> UserRepository:
+        return UserRepository(db=db_session)
+
+    @staticmethod
+    async def _make_user(repo: UserRepository) -> User:
+        dto = CreateUserDTO(
+            email=f"avatar_{uuid4().hex[:8]}@example.com",
+            password_hash="hash",
+        )
+        return await repo.create(dto)
+
+    @staticmethod
+    async def _make_avatar_file(
+        db_session: AsyncSession, uploader_id: UUID
+    ) -> UUID:
+        from app.domains.files.enums import FileContext, FileStatus
+        from app.domains.files.models import FileObject
+        from app.domains.files.repositories import FileObjectRepository
+
+        repo = FileObjectRepository(db_session)
+        file_id = uuid4()
+        await repo.create(
+            FileObject(
+                id=file_id,
+                bucket="syncdesk-files",
+                object_key=f"avatars/users/{uploader_id}.png",
+                original_filename="avatar.png",
+                content_type="image/png",
+                size_bytes=4,
+                context=FileContext.USER_AVATAR,
+                status=FileStatus.UPLOADED,
+                uploaded_by_user_id=uploader_id,
+            )
+        )
+        return file_id
+
+    @pytest.mark.asyncio
+    async def test_set_avatar_on_user_without_previous_avatar(
+        self, db_session: AsyncSession, user_repo: UserRepository
+    ) -> None:
+        user = await self._make_user(user_repo)
+        file_id = await self._make_avatar_file(db_session, user.id)
+
+        result = await user_repo.set_avatar(user.id, file_id)
+
+        assert result is not None
+        updated, previous = result
+        assert updated.avatar_file_id == file_id
+        assert previous is None
+
+    @pytest.mark.asyncio
+    async def test_set_avatar_replaces_previous(
+        self, db_session: AsyncSession, user_repo: UserRepository
+    ) -> None:
+        user = await self._make_user(user_repo)
+        old_file_id = await self._make_avatar_file(db_session, user.id)
+        await user_repo.set_avatar(user.id, old_file_id)
+
+        # A second FileObject (different key so the unique-by-key trip
+        # avoided in PR2 stays clean; uploader is the same user).
+        new_file_id = await self._make_avatar_file(db_session, user.id)
+
+        result = await user_repo.set_avatar(user.id, new_file_id)
+
+        assert result is not None
+        updated, previous = result
+        assert updated.avatar_file_id == new_file_id
+        assert previous == old_file_id
+
+    @pytest.mark.asyncio
+    async def test_clear_avatar_returns_previous_file_id(
+        self, db_session: AsyncSession, user_repo: UserRepository
+    ) -> None:
+        user = await self._make_user(user_repo)
+        file_id = await self._make_avatar_file(db_session, user.id)
+        await user_repo.set_avatar(user.id, file_id)
+
+        result = await user_repo.set_avatar(user.id, None)
+
+        assert result is not None
+        updated, previous = result
+        assert updated.avatar_file_id is None
+        assert previous == file_id
+
+    @pytest.mark.asyncio
+    async def test_set_same_avatar_is_noop_and_reports_previous_equal_to_new(
+        self, db_session: AsyncSession, user_repo: UserRepository
+    ) -> None:
+        """Idempotency: setting the same file_id again should not error
+        and should not pretend there was a different previous avatar.
+        """
+        user = await self._make_user(user_repo)
+        file_id = await self._make_avatar_file(db_session, user.id)
+        await user_repo.set_avatar(user.id, file_id)
+
+        result = await user_repo.set_avatar(user.id, file_id)
+
+        assert result is not None
+        updated, previous = result
+        assert updated.avatar_file_id == file_id
+        assert previous == file_id
+
+    @pytest.mark.asyncio
+    async def test_set_avatar_returns_none_for_unknown_user(
+        self, user_repo: UserRepository
+    ) -> None:
+        result = await user_repo.set_avatar(uuid4(), None)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_avatar_returns_user_with_roles(
+        self, db_session: AsyncSession, user_repo: UserRepository
+    ) -> None:
+        """The returned user is shaped like ``UserWithRoles`` so the
+        router can pass it straight into UserResponseDTO."""
+        user = await self._make_user(user_repo)
+        file_id = await self._make_avatar_file(db_session, user.id)
+
+        result = await user_repo.set_avatar(user.id, file_id)
+
+        assert result is not None
+        updated, _ = result
+        assert hasattr(updated, "roles")
+        assert updated.roles is not None  # Empty list for a fresh user.

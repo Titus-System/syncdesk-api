@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from app.core.dependencies import ResponseFactoryDep
 from app.core.exceptions import AppHTTPException
 from app.core.logger import get_logger
-from app.db.exceptions import ResourceAlreadyExistsError
+from app.db.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError
 from app.domains.auth.schemas.api_schemas import (
     AcceptTermsRequest,
     AdminRegisterUserRequest,
@@ -81,6 +81,10 @@ async def register_common_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid registration data",
         ) from e
+    except ResourceNotFoundError as e:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise AppHTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
 @auth_router.post("/refresh", tags=["Auth"], **refresh_swagger)
@@ -160,6 +164,10 @@ async def admin_register_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid registration data",
         ) from e
+    except ResourceNotFoundError as e:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise AppHTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
 @auth_router.post(

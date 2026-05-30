@@ -23,6 +23,7 @@ from app.domains.companies.swagger_utils import (
     add_users_swagger,
     create_company_swagger,
     get_companies_swagger,
+    get_company_products_swagger,
     get_company_swagger,
     get_company_users_swagger,
     remove_product_swagger,
@@ -105,6 +106,17 @@ async def add_company_products(
         return response.success(data=None, status_code=status.HTTP_201_CREATED)
     except ValueError as e:
         raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    
+
+@company_router.get("/{company_id}/products", dependencies=[require_permission("company:read")], **get_company_products_swagger)
+async def get_company_products(
+    company_id: UUID, auth: CurrentUserSessionDep, service: CompanyServiceDep, response: ResponseFactoryDep,
+    page: int = Query(default=1, ge=1), limit: int = Query(default=20, ge=1),
+) -> JSONResponse:
+    res = await service.get_company_products_paginated(company_id, page, limit)
+    if res is None:
+        raise AppHTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    return response.success(data=res.model_dump(mode="json"), status_code=status.HTTP_200_OK)
 
 @company_router.delete("/{company_id}/products", dependencies=[require_permission("company:remove_products")], **remove_products_batch_swagger)
 async def remove_company_products_batch(

@@ -25,6 +25,7 @@ class IncomingMessage(BaseModel):
     content: str
     mime_type: str | None = None
     filename: str | None = None
+    file_id: UUID | None = None
     responding_to: UUID | None = None
 
     @model_validator(mode="before")
@@ -36,13 +37,20 @@ class IncomingMessage(BaseModel):
 
     @model_validator(mode="after")
     def validate_logic(self) -> "IncomingMessage":
-        if self.type == "text" and (self.filename is not None or self.mime_type is not None):
+        if self.type == "text" and (
+            self.filename is not None or self.mime_type is not None or self.file_id is not None
+        ):
             raise ValueError(
-                "Invalid payload. mime_type and filename fields are not allowed for text messages."
+                "Invalid payload. mime_type, filename and file_id are not allowed "
+                "for text messages."
             )
 
-        if self.type == "file" and (self.mime_type is None or self.filename is None):
-            raise ValueError("mime_type and filename fields are required when type='file'")
+        if self.type == "file" and (
+            self.mime_type is None or self.filename is None or self.file_id is None
+        ):
+            raise ValueError(
+                "mime_type, filename and file_id are required when type='file'"
+            )
 
         return self
 

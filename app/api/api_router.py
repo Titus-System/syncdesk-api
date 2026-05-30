@@ -6,8 +6,15 @@ from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.dependencies import ResponseFactoryDep
-from app.domains.auth import auth_router, permission_router, role_router, user_router
+from app.domains.auth import (
+    auth_router,
+    permission_router,
+    role_router,
+    user_level_router,
+    user_router,
+)
 from app.domains.companies import company_router
+from app.domains.files import files_router
 from app.domains.live_chat import chat_router, conversation_router
 from app.domains.products import product_router
 from app.domains.ticket.routers import ticket_router
@@ -46,6 +53,7 @@ async def root(response_factory: ResponseFactoryDep, request: Request) -> JSONRe
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(role_router, prefix="/roles", tags=["Roles"])
 api_router.include_router(permission_router, prefix="/permissions", tags=["Permissions"])
+api_router.include_router(user_level_router)
 api_router.include_router(user_router, prefix="/users", tags=["Users"])
 
 api_router.include_router(chat_router, prefix="/live_chat", tags=["Live Chat"])
@@ -57,3 +65,5 @@ api_router.include_router(chatbot_router, prefix="/chatbot", tags=["Chatbot URA"
 
 api_router.include_router(company_router, prefix="/companies", tags=["Companies"])
 api_router.include_router(product_router, prefix="/products", tags=["Products"])
+
+api_router.include_router(files_router, prefix="/files", tags=["Files"])

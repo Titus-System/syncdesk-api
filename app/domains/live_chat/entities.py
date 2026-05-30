@@ -20,6 +20,11 @@ class ChatMessage(BaseModel):
     content: str
     mime_type: str | None = None
     filename: str | None = None
+    # Reference to the FileObject backing a type="file" message. Optional in
+    # the model (and absent in historic documents) so old conversations keep
+    # deserializing; the schema-level validator enforces presence on new
+    # type="file" payloads.
+    file_id: UUID | None = None
     responding_to: UUID | None = None
 
     @classmethod
@@ -31,6 +36,7 @@ class ChatMessage(BaseModel):
         content: str,
         mime_type: str | None = None,
         filename: str | None = None,
+        file_id: UUID | None = None,
         responding_to: UUID | None = None,
     ) -> "ChatMessage":
         lim = get_settings().MAX_CHAT_MESSAGE_CONTENT_SIZE
@@ -45,6 +51,7 @@ class ChatMessage(BaseModel):
                 content=content,
                 mime_type=mime_type,
                 filename=filename,
+                file_id=file_id,
                 responding_to=responding_to,
             )
         except ValidationError as e:

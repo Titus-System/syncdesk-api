@@ -4,6 +4,7 @@ from app.domains.companies.repositories import CompanyRepository
 from app.domains.companies.entities import Company as CompanyEntity
 from app.domains.companies.schemas import CreateCompanyDTO, UpdateCompanyDTO, ReplaceCompanyDTO
 from app.core.schemas import PaginatedItems
+from app.domains.products.entities import Product
 
 class CompanyService:
     def __init__(self, repo: CompanyRepository) -> None:
@@ -24,6 +25,14 @@ class CompanyService:
 
     async def soft_delete(self, company_id: UUID) -> bool:
         return await self.repo.soft_delete(company_id)
+    
+    async def get_company_products_paginated(
+        self, company_id: UUID, page: int, limit: int
+    ) -> PaginatedItems[Product] | None:
+        if not await self.get_by_id(company_id):
+            return None
+        skip = (page - 1) * limit
+        return await self.repo.get_company_products_paginated(company_id, skip, limit)
 
     async def associate_users(self, company_id: UUID, user_ids: list[UUID]) -> None:
         if not await self.get_by_id(company_id):

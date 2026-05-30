@@ -5,7 +5,13 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.app.e2e.conftest import AuthActions, FakeEmailStrategy
+from tests.app.e2e.conftest import AGENT_ROLE_ID, AuthActions, FakeEmailStrategy
+
+
+async def _level_ids_by_name(auth: AuthActions, *names: str) -> list[int]:
+    result = await auth.db_session.execute(text("SELECT id, name FROM levels"))
+    by_name = {row.name: row.id for row in result}
+    return [by_name[name] for name in names]
 
 
 class TestRegister:
@@ -668,6 +674,34 @@ class TestAdminRegister:
         assert "ar_custom_role" in role_names
 
     @pytest.mark.asyncio
+    async def test_admin_register_agent_with_support_levels(
+        self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
+    ) -> None:
+        admin_tokens = await auth.register_and_login_admin(
+            email="arleveladmin@test.com", username="arleveladmin"
+        )
+        headers = auth.auth_headers(admin_tokens["access_token"])
+        level_ids = await _level_ids_by_name(auth, "N1", "N2")
+
+        r = await client.post(
+            "/api/auth/admin/register",
+            json={
+                "email": "arlevelagent@test.com",
+                "name": "AR Level Agent",
+                "role_ids": [AGENT_ROLE_ID],
+                "level_ids": level_ids,
+            },
+            headers=headers,
+        )
+        assert r.status_code == 201
+
+        user_id = r.json()["data"]["id"]
+        levels_r = await client.get(f"/api/users/{user_id}/levels", headers=headers)
+        assert levels_r.status_code == 200
+        level_names = {level["name"] for level in levels_r.json()["data"]["levels"]}
+        assert level_names == {"N1", "N2"}
+
+    @pytest.mark.asyncio
     async def test_admin_register_duplicate_email_fails(
         self, client: AsyncClient, auth: AuthActions, fake_email: FakeEmailStrategy
     ) -> None:
@@ -1109,4 +1143,3 @@ class TestFirstAccessFlow:
         )
         assert r.status_code == 200
         assert r.json()["data"]["email"] == "fanew@test.com"
-

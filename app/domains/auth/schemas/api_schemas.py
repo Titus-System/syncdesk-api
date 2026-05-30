@@ -51,6 +51,7 @@ class AdminRegisterUserRequest(BaseModel):
     email: EmailStr
     name: str | None = None
     role_ids: list[int] = Field(default_factory=list[int])
+    level_ids: list[int] = Field(default_factory=list[int])
 
 
 class ChangePasswordRequest(BaseModel):

@@ -33,6 +33,7 @@ class ConversationService:
             content=data.content,
             mime_type=data.mime_type,
             filename=data.filename,
+            file_id=data.file_id,
             responding_to=data.responding_to,
         )
 

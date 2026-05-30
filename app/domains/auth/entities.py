@@ -55,6 +55,12 @@ class PermissionWithRoles(Permission):
 
 
 @dataclass
+class Level:
+    id: int
+    name: str
+
+
+@dataclass
 class RolePermission:
     role_id: int
     permission_id: int
@@ -115,6 +121,7 @@ class User:
     oauth_provider: OAuthProvider | None = None
     oauth_provider_id: str | None = None
     company_id: UUID | None = None
+    avatar_file_id: UUID | None = None
     is_active: bool = True
     is_verified: bool = False
     must_change_password: bool = False
@@ -192,6 +199,22 @@ class UserWithRoles(User):
 class UserRole:
     user_id: UUID
     role_id: int
+
+
+@dataclass
+class UserSummary:
+    id: UUID
+    email: str
+    username: str | None = None
+    name: str | None = None
+
+
+@dataclass
+class UserLevel:
+    user_id: UUID
+    level_id: int
+    created_at: datetime
+    level: Level
 
 
 @dataclass

@@ -10,13 +10,23 @@ from .session_schemas import (
     UpdateSessionDTO,
 )
 from .user_schemas import (
-    AddUserRolesDTO, 
-    CreateUserDTO, 
-    ReplaceUserDTO, 
-    UpdateUserDTO, 
-    UserCompliance, 
-    UserResponseDTO, 
+    AddUserRolesDTO,
+    CreateUserDTO,
+    CurrentUserAvatarDTO,
+    ReplaceUserDTO,
+    SetUserAvatarDTO,
+    UpdateUserDTO,
+    UserCompliance,
+    UserResponseDTO,
     RoleResponseDTO
+)
+from .user_level_schemas import (
+    DeleteUserLevelResponseDTO,
+    LevelResponseDTO,
+    LevelUserResponseDTO,
+    LevelUsersResponseDTO,
+    UserLevelResponseDTO,
+    UserLevelsResponseDTO,
 )
 
 __all__ = [
@@ -35,9 +45,17 @@ __all__ = [
     "ReplaceUserDTO",
     "UpdateUserDTO",
     "AddUserRolesDTO",
+    "CurrentUserAvatarDTO",
+    "SetUserAvatarDTO",
     "UserCompliance",
     "UserResponseDTO",
     "RoleResponseDTO",
+    "LevelResponseDTO",
+    "UserLevelResponseDTO",
+    "UserLevelsResponseDTO",
+    "LevelUserResponseDTO",
+    "LevelUsersResponseDTO",
+    "DeleteUserLevelResponseDTO",
     "CreatePasswordResetTokenDTO",
     "LoginResponse",
     "RefreshSessionRequest",

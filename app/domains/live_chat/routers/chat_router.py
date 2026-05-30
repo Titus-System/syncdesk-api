@@ -1,5 +1,5 @@
-from typing import Annotated
-from uuid import uuid4
+from typing import Annotated, Any
+from uuid import UUID, uuid4
 
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, WebSocketException
@@ -11,6 +11,9 @@ from app.core.dependencies import WSResponseFactoryDep
 from app.core.logger import get_logger
 from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
 from app.domains.auth.entities import UserWithRoles
+from app.domains.files.dependencies import FileServiceDep
+from app.domains.files.enums import FileContext, FileStatus
+from app.domains.files.services import FileService
 from app.domains.live_chat.entities import Conversation
 
 from ..chat_manager import ChatConnection, get_chat_manager
@@ -58,6 +61,103 @@ chat_manager = get_chat_manager()
 chat_router = APIRouter()
 
 
+async def _validate_file_attachment(
+    payload: dict[str, Any],
+    sender_id: UUID,
+    chat_id: PydanticObjectId,
+    file_service: FileService,
+) -> None:
+    """Ensure a type='file' payload carries a file_id owned by the sender.
+
+    Runs at the composition layer (router) instead of inside the service so
+    the live_chat domain does not depend on the files domain at runtime —
+    same pattern PR2 used for conversation participation in the files
+    router. Raises InvalidMessageError for any failure; the WS loop maps
+    that to a 1003 frame.
+    """
+    if payload.get("type") != "file":
+        return
+
+    raw_file_id = payload.get("file_id")
+    if raw_file_id is None:
+        return
+
+    log_ctx = {
+        "chat_id": str(chat_id),
+        "sender_id": str(sender_id),
+        "raw_file_id": str(raw_file_id),
+    }
+
+    try:
+        file_id = UUID(str(raw_file_id))
+    except (TypeError, ValueError) as e:
+        logger.warning("File attachment rejected: file_id is not a valid UUID", extra=log_ctx)
+        raise InvalidMessageError(f"file_id is not a valid UUID: {raw_file_id!r}") from e
+
+    log_ctx["file_id"] = str(file_id)
+
+    file_obj = await file_service.get_by_id(file_id)
+    if file_obj is None:
+        logger.warning(
+            "File attachment rejected: file_id does not reference a known file",
+            extra=log_ctx,
+        )
+        raise InvalidMessageError("file_id does not reference a known file")
+    if file_obj.uploaded_by_user_id != sender_id:
+        logger.warning(
+            "File attachment rejected: file_id was uploaded by a different user",
+            extra={**log_ctx, "uploader_id": str(file_obj.uploaded_by_user_id)},
+        )
+        raise InvalidMessageError("file_id was not uploaded by the sender")
+    if file_obj.context != FileContext.LIVE_CHAT_MESSAGE:
+        logger.warning(
+            "File attachment rejected: wrong file context",
+            extra={**log_ctx, "context": file_obj.context.value},
+        )
+        raise InvalidMessageError(
+            f"file_id has context {file_obj.context.value!r}, "
+            "expected 'live_chat_message'"
+        )
+    if file_obj.status != FileStatus.UPLOADED:
+        logger.info(
+            "File attachment rejected: file is not in 'uploaded' status",
+            extra={**log_ctx, "status": file_obj.status.value},
+        )
+        raise InvalidMessageError(
+            f"file_id has status {file_obj.status.value!r}, expected 'uploaded'"
+        )
+
+    file_conv_id = _conversation_id_from_object_key(file_obj.object_key)
+    if file_conv_id is None or file_conv_id != chat_id:
+        logger.warning(
+            "File attachment rejected: file belongs to a different conversation",
+            extra={
+                **log_ctx,
+                "file_conversation_id": str(file_conv_id) if file_conv_id else None,
+                "object_key": file_obj.object_key,
+            },
+        )
+        raise InvalidMessageError(
+            "file_id belongs to a different conversation"
+        )
+
+
+def _conversation_id_from_object_key(object_key: str) -> PydanticObjectId | None:
+    """Extract the conversation id from a live_chat object key.
+
+    Object key shape produced by ``FileService._build_object_key`` is
+    ``live_chat/{conversation_id}/{file_id}-{slug}``; anything else returns
+    ``None`` so the caller can reject the message.
+    """
+    parts = object_key.split("/")
+    if len(parts) < 2:
+        return None
+    try:
+        return PydanticObjectId(parts[1])
+    except (ValueError, TypeError):
+        return None
+
+
 @chat_router.websocket("/room/{chat_id}", dependencies=[require_permission_ws("chat:add_message")])
 async def connect_to_conversation(
     chat_id: PydanticObjectId,
@@ -65,6 +165,7 @@ async def connect_to_conversation(
     _: Annotated[None, Depends(ensure_ws_request_id)],
     auth: CurrentUserSessionWsDep,
     service: ConversationServiceDep,
+    file_service: FileServiceDep,
     response: WSResponseFactoryDep,
 ) -> None:
     user = auth[0]
@@ -125,6 +226,7 @@ async def connect_to_conversation(
                 payload = await conn.receive_payload()
                 logger.debug("WS payload received", extra=log_ctx)
 
+                await _validate_file_attachment(payload, user.id, chat_id, file_service)
                 message = service.handle_message(chat_id, user.id, payload)
 
                 await service.add_message_to_conversation(chat_id, message)
