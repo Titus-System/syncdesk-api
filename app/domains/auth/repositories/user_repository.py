@@ -231,7 +231,7 @@ class UserRepository:
         return [
             PermissionEntity(id=p.id, name=p.name, description=p.description) for p in permissions
         ]
-    
+
     async def update_user_roles(
         self, user_id: UUID, add_ids: list[int], remove_ids: list[int]
     ) -> tuple[UserWithRoles | None, set[int] | None]:
@@ -341,3 +341,19 @@ class UserRepository:
             must_accept_terms=model.must_accept_terms,
             roles=roles,
         )
+    async def accept_terms(self, user_id: UUID) -> UserEntity | None:
+        stmt = (
+            update(UserModel)
+            .where(UserModel.id == user_id)
+            .values(must_accept_terms=False)
+            .returning(UserModel)
+        )
+
+        res = await self.db.execute(stmt)
+        row = res.scalar_one_or_none()
+
+        if row is None:
+            return None
+
+        await self.db.commit()
+        return self._to_entity(row)
