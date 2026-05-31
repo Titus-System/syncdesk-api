@@ -1,235 +1,212 @@
 # SyncDesk API
 
-Backend and API Gateway built with **FastAPI**, **SQLAlchemy 2** (async), **PostgreSQL**, and **MongoDB (Motor)**.
+Backend e API Gateway da plataforma SyncDesk, desenvolvido com FastAPI, Python, PostgreSQL, MongoDB e Docker.
 
-## Tech Stack
+A API centraliza os principais recursos da plataforma, incluindo autenticação, usuários, permissões, empresas, produtos, chamados, chat, chatbot, arquivos, notificações, métricas e integrações de infraestrutura.
 
-| Layer         | Technology                                              |
-| ------------- | ------------------------------------------------------- |
-| Framework     | FastAPI 0.121+ (Uvicorn / Gunicorn)                     |
-| Language      | Python 3.12+                                            |
-| Databases     | PostgreSQL + asyncpg, MongoDB + Motor / Beanie          |
-| ORM           | SQLAlchemy 2 (async)                                    |
-| Migrations    | Alembic                                                 |
-| Auth          | JWT (PyJWT) + Argon2 password hashing (passlib)         |
-| Realtime      | WebSockets (FastAPI) + in-process event bus             |
-| Email         | Resend (async) + Jinja2 templates + outbox worker       |
-| Observability | Prometheus + Grafana + Loki + Promtail + Alertmanager   |
-| Metrics       | prometheus-client + psutil                              |
-| Package mgmt  | Poetry                                                  |
-| Linting       | Ruff, Bandit, mypy                                      |
-| Testing       | pytest + pytest-asyncio + pytest-cov + httpx            |
-| Deployment    | Docker + Docker Compose                                 |
-| CI/CD         | GitHub Actions + Digital Ocean Droplet                  |
+## Repositório
 
-## Project Structure
-
-```
-├── app/
-│   ├── main.py              # FastAPI app factory + lifespan
-│   ├── api/                  # Versioned API router
-│   ├── core/                 # Config, logging, security, middleware, metrics
-│   ├── db/                   # Database engines, dependencies, exceptions (Postgres + MongoDB)
-│   ├── domains/              # Feature modules (auth, health, …)
-│   ├── schemas/              # Shared response schemas
-│   └── seed/                 # Database seed scripts
-├── alembic/                  # Database migrations
-├── tests/                    # Test suite (unit, integration, e2e)
-├── logs/                     # JSON log files (auto-created)
-├── scripts/                  # Utility scripts
-├── alembic.ini               # Alembic configuration
-├── pyproject.toml            # Poetry config, tool settings
-├── Makefile                  # Common commands
-└── run.py                    # Dev entry point
+```text
+https://github.com/Titus-System/syncdesk-api
 ```
 
-Each sub-module has its own README with detailed documentation:
+## Tecnologias
 
-- [app/core/README.md](app/core/README.md) — configuration, logging, security, middleware, metrics
-- [app/db/README.md](app/db/README.md) — database layer, sessions, exceptions
-- [app/domains/auth/README.md](app/domains/auth/README.md) — authentication, authorization, session management
-- [alembic/README](alembic/README) — migration system and commands
+| Tecnologia | Uso |
+| --- | --- |
+| Python 3.12+ | Linguagem principal do backend |
+| FastAPI | Framework da API |
+| Uvicorn | Servidor ASGI para execução local |
+| Poetry | Gerenciamento de dependências Python |
+| SQLAlchemy 2 Async | ORM e acesso assíncrono ao PostgreSQL |
+| PostgreSQL | Banco relacional principal |
+| Alembic | Controle de migrations do PostgreSQL |
+| MongoDB | Banco usado por recursos como chat e conversas |
+| Motor / Beanie | Integração assíncrona com MongoDB |
+| JWT | Autenticação e autorização |
+| Passlib / Argon2 | Hash de senhas |
+| WebSocket | Comunicação em tempo real |
+| MinIO / S3 | Armazenamento de arquivos |
+| Resend | Envio de e-mails |
+| Prometheus | Coleta de métricas |
+| Grafana | Visualização de métricas |
+| Loki / Promtail | Logs centralizados |
+| Docker | Containerização |
+| Docker Compose | Orquestração local dos serviços |
+| pytest | Testes automatizados |
+| Ruff, Bandit e mypy | Qualidade, segurança e tipagem |
 
----
+## Estrutura do projeto
 
-## Prerequisites
+```text
+app/
+|-- api/
+|-- core/
+|-- db/
+|   |-- mongo/
+|   `-- postgres/
+|-- domains/
+|   |-- auth/
+|   |-- chatbot/
+|   |-- companies/
+|   |-- files/
+|   |-- health/
+|   |-- live_chat/
+|   |-- notifications/
+|   |-- products/
+|   `-- ticket/
+|-- infra/
+|-- schemas/
+|-- seed/
+`-- main.py
 
-- **Python 3.12+**
-- **Poetry** (package manager) — [install guide](https://python-poetry.org/docs/#installation)
-- **PostgreSQL** (running locally or in a container)
-- **MongoDB** (running locally or in a container)
-- **Docker + Docker Compose plugin** (recommended for quickest setup)
+alembic/
+|-- versions/
+`-- env.py
 
----
+deploy/
+|-- alertmanager/
+|-- grafana/
+|-- loki/
+|-- prometheus/
+|-- promtail/
+`-- Dockerfile
 
-## Getting Started
+docs/
+tests/
+scripts/
+logs/
+```
 
-### 1. Clone and install dependencies
+| Pasta | Responsabilidade |
+| --- | --- |
+| `app/api/` | Roteador principal da API |
+| `app/core/` | Configurações globais, segurança, logs, métricas, middlewares e storage |
+| `app/db/` | Configuração e dependências de banco para PostgreSQL e MongoDB |
+| `app/domains/` | Módulos de negócio organizados por domínio |
+| `app/infra/` | Integrações externas, como e-mail e storage S3 |
+| `app/schemas/` | Schemas compartilhados |
+| `app/seed/` | Scripts de seed para dados iniciais |
+| `alembic/` | Migrations do PostgreSQL |
+| `deploy/` | Arquivos de Docker, observabilidade e deploy |
+| `tests/` | Testes automatizados |
+| `docs/` | Documentações auxiliares da API |
+
+## Pré-requisitos
+
+- Python 3.12+
+- Poetry
+- Docker
+- Docker Compose
+- PostgreSQL
+- MongoDB
+- MinIO, quando forem usados recursos de arquivos
+- Arquivo `.env` configurado
+
+Para desenvolvimento local, o fluxo recomendado é executar a API com Poetry e subir PostgreSQL/MongoDB via Docker.
+
+## Instalação e execução local
+
+Clone o repositório:
 
 ```bash
 git clone https://github.com/Titus-System/syncdesk-api.git
 cd syncdesk-api
-make install
-# or: poetry install
 ```
 
-### 2. Configure environment variables
+Instale as dependências:
 
-Create a `.env` file in the project root:
+```bash
+poetry install
+```
+
+Crie o arquivo de ambiente:
 
 ```bash
 cp .env.example .env
 ```
 
-Use these values as a baseline for local development:
+No Windows PowerShell:
 
-```dotenv
-# .env
-
-# Environment: development | test | production
-ENVIRONMENT=development
-
-# PostgreSQL
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=syncdesk_db
-
-# MongoDB
-MONGO_USER=mongouser
-MONGO_PASSWORD=mongopassword
-MONGO_HOST=localhost
-MONGO_PORT=27017
-MONGO_DB=syncdesk_db
-
-# Mongo root user (required when Mongo runs via docker compose)
-MONGO_INITDB_ROOT_USERNAME=mongouser
-MONGO_INITDB_ROOT_PASSWORD=mongopassword
-
-# JWT (change the secrets in any non-local environment)
-JWT_SECRET_KEY=change-me-in-production
-ACCESS_TOKEN_SIGNING_KEY=change-me-in-production
-REFRESH_TOKEN_SIGNING_KEY=change-me-in-production
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=15
-REFRESH_TOKEN_EXPIRE_DAYS=60
-SESSION_EXPIRE_DAYS=180
-
-# CORS (comma-separated origins, or * for all)
-CORS_ALLOW_ORIGINS=["*"]
-
-# Project metadata
-PROJECT_NAME=SyncDesk API
-PROJECT_VERSION=0.1.0
+```powershell
+Copy-Item .env.example .env
 ```
 
-Full variable reference is in the [core/ docs](app/core/README.md#configuration-configpy).
+Revise as variáveis do arquivo `.env`.
 
-Important:
-
-- For Docker Compose, keep `MONGO_USER` / `MONGO_PASSWORD` equal to `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD`.
-- The app authenticates MongoDB using `authSource=admin` when credentials are present.
-
-### 3. Set up the databases
-
-#### Option A: Local API run (with local DB services)
-
-When `ENVIRONMENT=development`, the app:
-
-- connects to MongoDB on startup,
-- creates the PostgreSQL database if it does not exist,
-- and runs Alembic migrations if the schema is behind `head`.
-
-Start databases first (one simple option is using Compose only for DB services):
+Suba os bancos com Docker:
 
 ```bash
 docker compose up -d db mongo
 ```
 
-Then run the API locally:
+Caso utilize recursos de arquivos, suba também o MinIO, se ele estiver disponível no `docker-compose.yaml`:
 
 ```bash
-make dev
+docker compose up -d db mongo minio
 ```
 
-#### Option B: Using Alembic migrations (recommended for staging/production)
+Aplique as migrations, se necessário:
 
 ```bash
-# Apply all migrations
-make migrate
-
-# Seed initial roles and permissions
-make seed
+poetry run alembic upgrade head
 ```
 
-See [alembic/README](alembic/README) for full migration commands.
-
-### 4. Run the server
+Na primeira execução, rode o seed:
 
 ```bash
-# Development (with hot reload)
-make dev
-
-# Production
-make run
+poetry run python -m app.seed.run_seed
 ```
 
-The API will be available at **http://127.0.0.1:8000**.
-
-- Interactive docs: http://127.0.0.1:8000/docs
-- ReDoc: http://127.0.0.1:8000/redoc
-- Health check: `GET /`
-- Metrics: `GET /metrics`
-
----
-
-## Database Seeding
-
-The seed script populates roles, permissions, and their associations:
+Execute a API localmente:
 
 ```bash
-make seed
+poetry run uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
 
-Default seed data:
+A API ficará disponível em:
 
-| Roles   | Permissions                                          |
-| ------- | ---------------------------------------------------- |
-| `admin` | All `user:*`, `role:*`, `permission:*` permissions   |
-| `user`  | All `session:*` permissions (login, refresh, logout) |
-
----
-
-## Running Tests
-
-```bash
-# All tests
-make test
-
-# E2E tests only
-make test-e2e
+```text
+http://localhost:8000
 ```
 
-Tests run with `ENVIRONMENT=test`, which targets a separate `{POSTGRES_DB}_test` database. Coverage is reported to the terminal.
+Documentação Swagger:
 
+```text
+http://localhost:8000/docs
+```
 
+Documentação ReDoc:
 
----
+```text
+http://localhost:8000/redoc
+```
 
-## Running with Docker (API + PostgreSQL + MongoDB)
+## Variáveis de ambiente
 
-This project includes a complete Docker setup so all developers can run the same environment on any OS.
+O projeto usa um arquivo `.env` na raiz do projeto.
 
-### 1. Prepare environment variables
+Antes de executar a API, copie o `.env.example` para `.env` e revise as variáveis conforme o ambiente local.
 
-If you do not have a `.env`, copy from `.env.example` and adjust values if needed.
+Exemplo baseado no `.env.example`:
 
-Required database vars for Docker Compose:
+```env
+PROJECT_NAME=syncdesk_api
+PROJECT_DESCRIPTION=Backend e API GATEWAY para o projeto SyncDesk
+PROJECT_VERSION=1.0.0
 
-```dotenv
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
+ENVIRONMENT=development
+
+WEB_FRONTEND_URL=http://localhost:3000
+MOBILE_FRONTEND_URL=syncdesk://
+
+CORS_ALLOW_ORIGINS=["https://app.example.com","http://localhost:3000"]
+CORS_ALLOW_CREDENTIALS=False
+CORS_ALLOW_METHODS=["GET","POST","PUT","PATCH","DELETE"]
+CORS_ALLOW_HEADERS=["Authorization","Content-Type"]
+
+POSTGRES_USER=syncdesk_user
+POSTGRES_PASSWORD=supersecretpassword
 POSTGRES_DB=syncdesk_db
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
@@ -241,178 +218,381 @@ MONGO_PASSWORD=mongopassword
 MONGO_HOST=localhost
 MONGO_PORT=27017
 MONGO_DB=syncdesk_db
+
+JWT_SECRET_KEY=sua_chave_secreta_aqui
+ACCESS_TOKEN_SIGNING_KEY=your_access_token_siging_key
+REFRESH_TOKEN_SIGNING_KEY=your_refresh_token_siging_key
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+SESSION_EXPIRE_DAYS=180
+
+DEFAULT_ROLE_NAME=user
+
+MAX_CHAT_MESSAGE_CONTENT_SIZE=2000
+
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=30
+INVITE_TOKEN_EXPIRE_HOURS=72
+
+RESET_TOKEN_HMAC_SECRET=your-very-secret-token
+
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin
+S3_ENDPOINT_URL=http://localhost:9000
+S3_PUBLIC_ENDPOINT_URL=http://localhost:9000
+S3_REGION=us-east-1
+S3_ACCESS_KEY=minioadmin
+S3_SECRET_KEY=minioadmin
+S3_BUCKET_DEFAULT=syncdesk-files
+S3_PRESIGNED_UPLOAD_EXPIRES_SECONDS=300
+S3_PRESIGNED_DOWNLOAD_EXPIRES_SECONDS=300
+S3_CORS_ALLOWED_ORIGINS=*
+
+RESEND_API_KEY=your-resend-api-key
+RESEND_FROM_EMAIL=no_reply@syncdesk.pro
+RUN_RESEND_INTEGRATION_TESTS=False
+RESEND_TEST_TO_EMAIL=
 ```
 
-`POSTGRES_HOST` is automatically overridden to `db`, and `MONGO_HOST` to `mongo`, inside the API container.
+Principais variáveis:
 
-`MONGO_INITDB_ROOT_*` is used to create the MongoDB root user on first startup. The API connects with `MONGO_USER`/`MONGO_PASSWORD` and authenticates against `admin`.
+| Variável | Descrição |
+| --- | --- |
+| `ENVIRONMENT` | Ambiente da aplicação |
+| `WEB_FRONTEND_URL` | URL do frontend web |
+| `MOBILE_FRONTEND_URL` | URL ou deep link do app mobile |
+| `CORS_ALLOW_ORIGINS` | Origens permitidas para chamadas CORS |
+| `POSTGRES_USER` | Usuário do PostgreSQL |
+| `POSTGRES_PASSWORD` | Senha do PostgreSQL |
+| `POSTGRES_DB` | Nome do banco PostgreSQL |
+| `POSTGRES_HOST` | Host do PostgreSQL |
+| `POSTGRES_PORT` | Porta do PostgreSQL |
+| `MONGO_USER` | Usuário do MongoDB |
+| `MONGO_PASSWORD` | Senha do MongoDB |
+| `MONGO_HOST` | Host do MongoDB |
+| `MONGO_PORT` | Porta do MongoDB |
+| `MONGO_DB` | Nome do banco MongoDB |
+| `JWT_SECRET_KEY` | Chave secreta usada pelo JWT |
+| `ACCESS_TOKEN_SIGNING_KEY` | Chave de assinatura do access token |
+| `REFRESH_TOKEN_SIGNING_KEY` | Chave de assinatura do refresh token |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Tempo de expiração do access token |
+| `SESSION_EXPIRE_DAYS` | Duração da sessão |
+| `S3_ENDPOINT_URL` | Endpoint interno do MinIO/S3 |
+| `S3_PUBLIC_ENDPOINT_URL` | Endpoint público do MinIO/S3 |
+| `S3_BUCKET_DEFAULT` | Bucket padrão para arquivos |
+| `RESEND_API_KEY` | Chave da integração com Resend |
+| `RESEND_FROM_EMAIL` | E-mail remetente usado pela aplicação |
 
-### 2. Start all services
+## Execução com Docker Compose
+
+Também é possível executar a API, os bancos e os serviços auxiliares via Docker Compose.
+
+Crie o arquivo `.env`:
+
+```bash
+cp .env.example .env
+```
+
+No Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Suba todos os serviços:
 
 ```bash
 docker compose up --build
 ```
 
-To run in detached mode:
+Ou em segundo plano:
 
 ```bash
 docker compose up -d --build
 ```
 
-To follow API logs:
+Verifique os logs da API:
 
 ```bash
 docker compose logs -f api
 ```
 
-What happens automatically:
-
-- PostgreSQL and MongoDB containers start and become healthy
-- API container waits for PostgreSQL and MongoDB readiness
-- Alembic runs: `alembic upgrade head`
-- FastAPI starts on `http://localhost:8000`
-- Prometheus starts collecting metrics from the API
-- Grafana, Loki, AlertManager, and Promtail start for observability
-
-### Access the services:
-
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| **API** | http://localhost:8000 | — |
-| **API Docs** | http://localhost:8000/docs | — |
-| **Grafana** | http://localhost:3000 | Username: `admin` / Password: `admin` |
-| **Prometheus** | http://localhost:9090 | — |
-| **AlertManager** | http://localhost:9093 | — |
-
-**Grafana dashboards:** The "SyncDesk Overview" dashboard shows API health, latency, error rates, and logs. Access via Configuration → Dashboards.
-
-If you previously changed Mongo credentials and still get `Authentication failed`, recreate containers and volumes once:
-
-```bash
-docker compose down -v
-docker compose up --build
-```
-
-If ports are already in use locally, adjust host ports in `docker-compose.yaml`. See [deploy/README.md](deploy/README.md) for detailed observability stack documentation.
-
-### 3. Stop services
+Pare os serviços:
 
 ```bash
 docker compose down
 ```
 
-To also remove Postgres and Mongo persisted data:
+Para parar os serviços e remover os volumes locais:
 
 ```bash
 docker compose down -v
 ```
 
-Data persistence behavior:
+Use `docker compose down -v` apenas quando puder apagar os dados locais dos bancos.
 
-- `docker compose down` keeps DB data (named volumes are preserved)
-- `docker compose down -v` removes DB data
+## Comandos úteis
 
-Quick reset commands:
+| Comando | Descrição |
+| --- | --- |
+| `poetry install` | Instala as dependências do projeto |
+| `poetry run uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --reload` | Executa a API localmente com reload |
+| `poetry run python -m app.seed.run_seed` | Executa o seed inicial |
+| `poetry run alembic upgrade head` | Aplica migrations pendentes |
+| `poetry run pytest` | Executa os testes |
+| `poetry run ruff check .` | Executa lint com Ruff |
+| `docker compose up -d db mongo` | Sobe PostgreSQL e MongoDB |
+| `docker compose up -d --build` | Sobe todos os serviços em background |
+| `docker compose logs -f api` | Exibe logs da API |
+| `docker compose down` | Para os containers |
+| `docker compose down -v` | Para containers e remove volumes |
+
+## Documentação da API
+
+Com a API em execução, acesse:
+
+```text
+http://localhost:8000/docs
+```
+
+A documentação interativa permite visualizar e testar os endpoints diretamente pelo navegador.
+
+## Principais áreas da API
+
+Os endpoints principais ficam abaixo do prefixo:
+
+```text
+/api
+```
+
+| Área | Descrição |
+| --- | --- |
+| `/api/auth` | Login, registro, refresh token, logout e usuário atual |
+| `/api/users` | Gestão de usuários |
+| `/api/roles` | Gestão de papéis |
+| `/api/permissions` | Gestão de permissões |
+| `/api/tickets` | Gestão de chamados |
+| `/api/live-chat` | Conversas e chat em tempo real |
+| `/api/chatbot` | Fluxos de chatbot e triagem |
+| `/api/products` | Gestão de produtos |
+| `/api/companies` | Gestão de empresas |
+| `/api/files` | Upload, download e gestão de arquivos |
+
+## Banco de dados
+
+A aplicação utiliza dois bancos:
+
+| Banco | Uso |
+| --- | --- |
+| PostgreSQL | Dados relacionais, autenticação, usuários, permissões, tickets e entidades principais |
+| MongoDB | Dados não relacionais, conversas, mensagens e recursos relacionados a chat |
+
+O PostgreSQL usa migrations com Alembic.
+
+Para aplicar migrations:
 
 ```bash
-# Stop and keep data
-docker compose down
+poetry run alembic upgrade head
+```
 
-# Stop and delete database data
+O seed inicial deve ser executado na primeira configuração do ambiente:
+
+```bash
+poetry run python -m app.seed.run_seed
+```
+
+## Armazenamento de arquivos
+
+Recursos de arquivos usam MinIO/S3.
+
+Variáveis principais:
+
+```env
+S3_ENDPOINT_URL=http://localhost:9000
+S3_PUBLIC_ENDPOINT_URL=http://localhost:9000
+S3_ACCESS_KEY=minioadmin
+S3_SECRET_KEY=minioadmin
+S3_BUCKET_DEFAULT=syncdesk-files
+```
+
+Caso o projeto seja executado totalmente via Docker, confirme no `docker-compose.yaml` quais portas e nomes de serviços estão sendo usados.
+
+## Testes
+
+Para rodar os testes:
+
+```bash
+poetry run pytest
+```
+
+Para rodar um arquivo específico:
+
+```bash
+poetry run pytest tests/caminho/do/teste.py
+```
+
+## Observações para Windows
+
+Ao rodar localmente no Windows, verifique principalmente:
+
+- IP usado pelo app mobile
+- Porta da API
+- Firewall
+- Containers ativos
+- Variáveis do `.env`
+
+A API deve ser executada com:
+
+```bash
+--host 0.0.0.0 --port 8000
+```
+
+Isso permite acesso por outros dispositivos ou pelo emulador Android.
+
+Para o mobile no Android Emulator:
+
+```env
+EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8000/api
+```
+
+Para celular físico na mesma rede:
+
+```env
+EXPO_PUBLIC_API_BASE_URL=http://SEU_IP_LOCAL:8000/api
+```
+
+Para descobrir o IP no Windows:
+
+```powershell
+ipconfig
+```
+
+Se o app não conseguir acessar a API, verifique se o firewall permite conexões na porta `8000`.
+
+## Solução de problemas
+
+### A API não sobe
+
+Verifique se as dependências foram instaladas:
+
+```bash
+poetry install
+```
+
+Confirme se o arquivo `.env` existe na raiz do projeto.
+
+Verifique se PostgreSQL e MongoDB estão rodando:
+
+```bash
+docker compose ps
+```
+
+### Erro de conexão com PostgreSQL
+
+Verifique as variáveis:
+
+```env
+POSTGRES_USER=
+POSTGRES_PASSWORD=
+POSTGRES_DB=
+POSTGRES_HOST=
+POSTGRES_PORT=
+```
+
+Se a API estiver rodando localmente com Poetry e os bancos estiverem no Docker, normalmente o host deve ser:
+
+```env
+POSTGRES_HOST=localhost
+```
+
+### Erro de conexão com MongoDB
+
+Verifique as variáveis:
+
+```env
+MONGO_USER=
+MONGO_PASSWORD=
+MONGO_HOST=
+MONGO_PORT=
+MONGO_DB=
+```
+
+Se as credenciais foram alteradas depois da criação do volume, recrie os volumes:
+
+```bash
 docker compose down -v
+docker compose up -d db mongo
 ```
----
 
-## Code Quality
-
-### Linting and formatting
+Depois rode novamente o seed:
 
 ```bash
-# Lint (ruff + bandit)
-make lint
-
-# Auto-format
-make format
-
-# Type checking
-make typecheck
+poetry run python -m app.seed.run_seed
 ```
 
-### Pre-commit hooks
+### Seed falha por falta de tabela
 
-Pre-commit is configured with Ruff, mypy, and Bandit. Install the hooks once:
+Rode as migrations:
 
 ```bash
-poetry run pre-commit install
+poetry run alembic upgrade head
 ```
 
-Or run all checks manually (lint + format + typecheck + bandit + tests):
+Depois execute novamente:
 
 ```bash
-make pre-commit
+poetry run python -m app.seed.run_seed
 ```
 
----
+### Porta 8000 já está em uso
 
-## Makefile Reference
+Use outra porta:
 
-| Command                      | Description                                    |
-| ---------------------------- | ---------------------------------------------- |
-| `make install`               | Install all dependencies via Poetry            |
-| `make dev`                   | Run dev server with hot reload                 |
-| `make run`                   | Run production server                          |
-| `make test`                  | Run full test suite with coverage              |
-| `make test-e2e`              | Run end-to-end tests only                      |
-| `make lint`                  | Run Ruff and Bandit linters                    |
-| `make format`                | Auto-format code with Ruff                     |
-| `make typecheck`             | Run mypy type checking                         |
-| `make migrate`               | Apply all pending Alembic migrations           |
-| `make makemigration m="msg"` | Auto-generate a new Alembic migration          |
-| `make seed`                  | Seed roles, permissions, and associations      |
-| `make pre-commit`            | Run all checks (lint + format + types + tests) |
+```bash
+poetry run uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8001 --reload
+```
 
----
+Se mudar a porta da API, ajuste também a URL no frontend web ou mobile.
 
-## API Overview
+### Mobile não acessa a API local
 
-All domain endpoints are mounted under `/api`:
+Confirme que a API foi iniciada com:
 
-| Prefix                    | Description                  |
-| ------------------------- | ---------------------------- |
-| `POST /api/auth/register` | User registration            |
-| `POST /api/auth/login`    | Login (returns tokens)       |
-| `POST /api/auth/refresh`  | Refresh token rotation       |
-| `POST /api/auth/logout`   | Revoke session               |
-| `GET  /api/auth/me`       | Current user profile         |
-| `/api/users/`             | User management (CRUD)       |
-| `/api/roles/`             | Role management (CRUD)       |
-| `/api/permissions/`       | Permission management (CRUD) |
-| `GET /`                   | Health check                 |
-| `GET /metrics`            | Prometheus metrics           |
-| `GET /metrics/{prefix}`   | Filtered metrics by prefix   |
+```bash
+--host 0.0.0.0
+```
 
-All protected endpoints require a `Authorization: Bearer <access_token>` header. See the [auth docs](app/domains/auth/README.md) for full details on the authentication flow.
+No emulador Android, use:
 
----
+```env
+EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8000/api
+```
 
-## Logging
+No celular físico, use:
 
-Structured JSON logs are written to:
+```env
+EXPO_PUBLIC_API_BASE_URL=http://SEU_IP_LOCAL:8000/api
+```
 
-- `logs/app.json` — INFO and above
-- `logs/error.json` — ERROR and above
-- Console — DEBUG and above
+Verifique também o firewall do Windows.
 
-Files rotate at 10 MB with 5 backups. See [core/ docs](app/core/README.md#logger-loggerpy) for details.
+### Docker não atualiza dados depois de mudar credenciais
 
----
+Se o banco já tinha volume criado, as credenciais antigas podem continuar salvas.
 
-## Known Security Limitations
+Para resetar:
 
-The following security improvements have been identified but are **deferred for a future release**:
+```bash
+docker compose down -v
+docker compose up -d --build
+```
 
-| #   | Severity   | Issue                              | Notes                                                                                                                  |
-| --- | ---------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 2   | 🔴 Critical | Hardcoded JWT secret default       | `config.py` uses a placeholder if env vars are missing. Add startup validation before production deployment.           |
-| 3   | 🟠 High     | No rate limiting on login/register | A middleware stub exists but is not yet implemented. Recommend a Redis-backed solution for multi-instance deployments. |
-| 11  | 🔵 Low      | HS256 symmetric algorithm          | Consider RS256/ES256 for microservice architectures where verifying services should not hold the signing secret.       |
+Use esse comando apenas quando puder apagar os dados locais.
+
+## Observações de desenvolvimento
+
+- O modo mais comum de desenvolvimento é executar a API localmente com Poetry e subir os bancos via Docker.
+- O modo totalmente via Docker é útil para simular o ambiente completo.
+- O seed deve ser executado na primeira configuração local.
+- As migrations são gerenciadas pelo Alembic.
+- A documentação principal da API fica em `/docs`.
+- Para integração com o mobile local, a porta `8000` precisa estar acessível.
