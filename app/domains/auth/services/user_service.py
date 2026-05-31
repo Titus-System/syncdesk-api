@@ -39,30 +39,38 @@ class UserService:
         self.logger = get_logger("app.auth.user_service")
 
     async def create(self, dto: CreateUserDTO) -> UserWithRoles:
-        """Create a user via the admin-invite flow.
+          """Create a user via the admin-invite flow.
 
-        Always generates a one-time password (unless the user authenticates via
-        OAuth), overrides any provided password_hash, marks the user as needing
-        to change password on first login, and publishes USER_WELCOME_INVITE so
-        the welcome email is enqueued.
-        """
-        await self._validate_create_support_levels(dto)
+          Always generates a one-time password (unless the user authenticates via
+          OAuth), overrides any provided password_hash, marks the user as needing
+          to change password on first login, and publishes USER_WELCOME_INVITE so
+          the welcome email is enqueued.
+          """
+          await self._validate_create_support_levels(dto)
 
-        plain_password: str | None = None
-        if not dto.oauth_provider:
-            plain_password = self._generate_random_password()
-            dto = dto.model_copy(
-                update={
-                    "password_hash": self.password_security.generate_password_hash(plain_password),
-                    "must_change_password": True,
-                }
-            )
+          if not dto.username:
+              dto = dto.model_copy(
+                  update={
+                      "username": self._generate_username(),
+                  }
+              )
 
-        user = await self.repo.create(dto)
+          plain_password: str | None = None
+          if not dto.oauth_provider:
+              plain_password = self._generate_random_password()
+              dto = dto.model_copy(
+                  update={
+                      "password_hash": self.password_security.generate_password_hash(plain_password),
+                      "must_change_password": True,
+                  }
+              )
 
-        if plain_password:
-            await self._publish_welcome_invite(user, plain_password)
-        return user
+          user = await self.repo.create(dto)
+
+          if plain_password:
+              await self._publish_welcome_invite(user, plain_password)
+
+          return user
 
     async def _validate_create_support_levels(self, dto: CreateUserDTO) -> None:
         level_ids = list(dict.fromkeys(dto.level_ids))
@@ -220,6 +228,10 @@ class UserService:
 
     async def update_password(self, user_id: UUID, new_password_hash: str) -> User | None:
         return await self.repo.update_password(user_id, new_password_hash)
+
+    @staticmethod
+    def _generate_username() -> str:
+        return f"user_{secrets.token_hex(12)}"
 
     async def accept_terms(self, user_id: UUID) -> User | None:
         return await self.repo.accept_terms(user_id)
