@@ -5,8 +5,6 @@ from uuid import UUID
 
 from beanie import PydanticObjectId
 from bson import ObjectId
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
@@ -20,7 +18,7 @@ from app.domains.chatbot.exceptions import (
     AttendanceNotFoundException,
     MissingClientDataException,
 )
-from app.domains.chatbot.fsm import ChatbotFSM, build_menu_map
+from app.domains.chatbot.fsm import ChatbotFSM
 from app.domains.chatbot.metrics import chatbot_messages_total
 from app.domains.chatbot.models import (
     AttendanceClient,
@@ -44,53 +42,16 @@ from app.domains.chatbot.schemas import (
 )
 from app.domains.ticket.models import TicketCriticality, TicketType
 
-from app.domains.auth.models import User
-from app.domains.products.models import Product
-from app.domains.companies.models import company_products
-
 
 class ChatbotService:
     def __init__(
         self,
         repository: ChatbotRepository,
         dispatcher: EventDispatcher,
-        pg_db: AsyncSession | None = None,
     ) -> None:
         self.repository = repository
         self.dispatcher = dispatcher
-        self.pg_db = pg_db
         self.logger = get_logger("app.chatbot.service")
-
-    async def _get_user_products(self, client_id: UUID | str | None) -> list[dict[str, Any]]:
-        pg_db = self.pg_db
-        if not client_id or pg_db is None:
-            return []
-
-        try:
-            client_uuid = UUID(str(client_id))
-        except ValueError:
-            return []
-
-        stmt = (
-            select(Product.id, Product.name, company_products.c.support_until)
-            .join(company_products, Product.id == company_products.c.product_id)
-            .join(User, User.company_id == company_products.c.company_id)
-            .where(User.id == client_uuid)
-        )
-
-        result = await pg_db.execute(stmt)
-        rows = result.all()
-        
-        products_context: list[dict[str, Any]] = []
-        for row in rows:
-            support_date = row.support_until.strftime("%d/%m/%Y") if row.support_until else "Sem prazo"
-            products_context.append({
-                "id": str(row.id),
-                "name": row.name,
-                "support_until": support_date
-            })
-            
-        return products_context
 
     async def create_attendance(
         self,
@@ -101,7 +62,7 @@ class ChatbotService:
         final_triage_id = triage_id or str(ObjectId())
         attendance = await self.repository.create_attendance(dto, final_triage_id)
 
-        bot_response = ChatbotFSM.process_interaction(None, "", [])
+        bot_response = ChatbotFSM.process_interaction(None, "")
         self._record_step_metric(bot_response)
 
         attendance["triage"] = [self._build_triage_step(bot_response)]
@@ -147,12 +108,7 @@ class ChatbotService:
 
         user_message = payload.answer_value if payload.answer_value else (payload.answer_text or "")
 
-        client_id_raw = payload.client_id or attendance.get("client", {}).get("id")
-        products_context = await self._get_user_products(client_id_raw)
-
-        bot_response = ChatbotFSM.process_interaction(
-            current_state, user_message, products_context
-        )
+        bot_response = ChatbotFSM.process_interaction(current_state, user_message)
         self._record_step_metric(bot_response)
 
         ticket_id: str | None = None
@@ -215,7 +171,7 @@ class ChatbotService:
         filters: AttendanceSearchFiltersDTO,
     ) -> list[AttendanceResponse]:
         docs = await self.repository.list_attendances(filters)
-        return [await self._map_attendance_response(doc) for doc in docs]
+        return [self._map_attendance_response(doc) for doc in docs]
 
     async def get_attendance(self, triage_id: str) -> AttendanceResponse:
         attendance = await self.repository.find_attendance(triage_id)
@@ -223,7 +179,7 @@ class ChatbotService:
         if attendance is None:
             raise AttendanceNotFoundException(triage_id)
 
-        return await self._map_attendance_response(attendance)
+        return self._map_attendance_response(attendance)
 
     async def finish_attendance_pending_evaluation(self, triage_id: str) -> bool:
         finished_at = datetime.now(UTC)
@@ -552,7 +508,7 @@ class ChatbotService:
             email=client_email,
         )
 
-    async def _map_attendance_response(self, attendance: dict[str, Any]) -> AttendanceResponse:
+    def _map_attendance_response(self, attendance: dict[str, Any]) -> AttendanceResponse:
         client_raw = attendance["client"]
         result_raw = attendance.get("result")
         evaluation_raw = attendance.get("evaluation")
@@ -560,7 +516,7 @@ class ChatbotService:
         start_date = self._coerce_datetime(attendance["start_date"])
         end_date = self._coerce_datetime(attendance.get("end_date"))
 
-        current_step_id, current_message, current_input = await self._get_current_input(attendance)
+        current_step_id, current_message, current_input = self._get_current_input(attendance)
 
         return AttendanceResponse(
             triage_id=str(attendance["_id"]),
@@ -589,7 +545,7 @@ class ChatbotService:
             current_input=current_input,
         )
 
-    async def _get_current_input(
+    def _get_current_input(
         self,
         attendance: dict[str, Any],
     ) -> tuple[str | None, str | None, TriageInputDef | None]:
@@ -612,14 +568,7 @@ class ChatbotService:
         except ValueError:
             return None, None, None
 
-        client_id = (attendance.get("client") or {}).get("id")
-        products_context = await self._get_user_products(client_id)
-        menu_map = build_menu_map(products_context)
-
-        if state not in menu_map:
-            return None, None, None
-
-        bot_response = ChatbotFSM._get_state_response(state, menu_map)
+        bot_response = ChatbotFSM._get_state_response(state)
         triage_data = self._build_triage_data(str(attendance["_id"]), bot_response)
 
         return triage_data.step_id, triage_data.message, triage_data.input
