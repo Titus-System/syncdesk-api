@@ -5,6 +5,8 @@ from uuid import UUID
 
 from beanie import PydanticObjectId
 from bson import ObjectId
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.event_dispatcher.enums import AppEvent
 from app.core.event_dispatcher.event_dispatcher import EventDispatcher
@@ -42,16 +44,53 @@ from app.domains.chatbot.schemas import (
 )
 from app.domains.ticket.models import TicketCriticality, TicketType
 
+from app.domains.auth.models import User
+from app.domains.products.models import Product
+from app.domains.companies.models import company_products
+
 
 class ChatbotService:
     def __init__(
         self,
         repository: ChatbotRepository,
         dispatcher: EventDispatcher,
+        pg_db: AsyncSession | None = None,
     ) -> None:
         self.repository = repository
         self.dispatcher = dispatcher
+        self.pg_db = pg_db
         self.logger = get_logger("app.chatbot.service")
+
+    async def _get_user_products(self, client_id: UUID | str | None) -> list[dict[str, Any]]:
+        pg_db = self.pg_db
+        if not client_id or pg_db is None:
+            return []
+
+        try:
+            client_uuid = UUID(str(client_id))
+        except ValueError:
+            return []
+
+        stmt = (
+            select(Product.id, Product.name, company_products.c.support_until)
+            .join(company_products, Product.id == company_products.c.product_id)
+            .join(User, User.company_id == company_products.c.company_id)
+            .where(User.id == client_uuid)
+        )
+
+        result = await pg_db.execute(stmt)
+        rows = result.all()
+        
+        products_context: list[dict[str, Any]] = []
+        for row in rows:
+            support_date = row.support_until.strftime("%d/%m/%Y") if row.support_until else "Sem prazo"
+            products_context.append({
+                "id": str(row.id),
+                "name": row.name,
+                "support_until": support_date
+            })
+            
+        return products_context
 
     async def create_attendance(
         self,
@@ -62,7 +101,7 @@ class ChatbotService:
         final_triage_id = triage_id or str(ObjectId())
         attendance = await self.repository.create_attendance(dto, final_triage_id)
 
-        bot_response = ChatbotFSM.process_interaction(None, "")
+        bot_response = ChatbotFSM.process_interaction(None, "", [])
         self._record_step_metric(bot_response)
 
         attendance["triage"] = [self._build_triage_step(bot_response)]
@@ -108,7 +147,12 @@ class ChatbotService:
 
         user_message = payload.answer_value if payload.answer_value else (payload.answer_text or "")
 
-        bot_response = ChatbotFSM.process_interaction(current_state, user_message)
+        client_id_raw = payload.client_id or attendance.get("client", {}).get("id")
+        products_context = await self._get_user_products(client_id_raw)
+
+        bot_response = ChatbotFSM.process_interaction(
+            current_state, user_message, products_context
+        )
         self._record_step_metric(bot_response)
 
         ticket_id: str | None = None
