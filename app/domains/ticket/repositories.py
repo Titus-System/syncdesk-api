@@ -1,10 +1,13 @@
+import re
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from beanie import PydanticObjectId
+from bson.binary import Binary
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.domains.ticket.models import Ticket, TicketComment
+from app.domains.ticket.models import Ticket, TicketComment, TicketHistory, TicketLevel, TicketType
 from app.domains.ticket.schemas import TicketQueueFiltersDTO, TicketSearchFiltersDTO
 from app.domains.ticket.schemas import TicketSearchFiltersDTO, UpdateTicketCommentDTO
 
@@ -79,6 +82,285 @@ class TicketRepository:
         ticket.comments = [c for c in ticket.comments if c.comment_id != comment_id]
         await ticket.save()
         return comment
+    
+    async def get_ticket_history(
+        self, ticket_id: PydanticObjectId
+    ) -> list[TicketHistory] | None:
+        ticket = await Ticket.get(ticket_id)
+        if ticket is None:
+            return None
+        return ticket.agent_history
+    
+
+    async def search_ticket(
+        self,
+        search_query: str,
+        client_id: UUID | None = None,
+        agent_id: UUID | None = None,
+        company_id: UUID | None = None,
+        global_scope: bool = False,
+    ) -> list[Ticket] | None:
+        pattern = re.escape(search_query)
+        text_filter: dict[str, Any] = {
+            "$or": [
+                {"description": {"$regex": pattern, "$options": "i"}},
+                {"comments.text": {"$regex": pattern, "$options": "i"}},
+            ]
+        }
+
+        scope_filter: dict[str, Any] | None = None
+        if client_id is not None:
+            scope_filter = {"client.id": client_id}
+        elif agent_id is not None:
+            scope_filter = {"agent_history.agent_id": agent_id}
+        elif company_id is not None:
+            scope_filter = {"client.company.id": company_id}
+        elif not global_scope:
+            return []
+
+        query = text_filter if scope_filter is None else {"$and": [text_filter, scope_filter]}
+
+        try:
+            return await Ticket.find(query).to_list()
+        except Exception:
+            return None
+
+
+    async def aggregate_dashboard(self, ticket_type: TicketType) -> dict[str, Any]:
+        """Single-roundtrip aggregation for the dashboard.
+
+        Returns a dict with keys: ``kpis``, ``open_breakdown``, ``assigned_breakdown_raw``.
+        Top-10/Outros bucketing is intentionally left to the service layer.
+        """
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"type": ticket_type.value}},
+            {
+                "$addFields": {
+                    "sla_days": {
+                        "$switch": {
+                            "branches": [
+                                {"case": {"$eq": ["$criticality", "high"]}, "then": 1},
+                                {"case": {"$eq": ["$criticality", "medium"]}, "then": 3},
+                                {"case": {"$eq": ["$criticality", "low"]}, "then": 5},
+                            ],
+                            "default": 5,
+                        }
+                    },
+                    "active_assignments": {
+                        "$filter": {
+                            "input": {"$ifNull": ["$agent_history", []]},
+                            "as": "h",
+                            "cond": {"$eq": ["$$h.exit_date", None]},
+                        }
+                    },
+                    # creation_date pode estar corrompido em documentos legados
+                    # (string, ausente, null). $convert recupera o que for
+                    # convertível para Date e degrada o resto para null, em vez
+                    # de abortar toda a agregação no $dateAdd.
+                    "creation_date_safe": {
+                        "$convert": {
+                            "input": "$creation_date",
+                            "to": "date",
+                            "onError": None,
+                            "onNull": None,
+                        }
+                    },
+                }
+            },
+            {
+                "$addFields": {
+                    # due_date só existe quando há data de criação válida.
+                    # Sem data não há SLA calculável → due_date = null.
+                    "due_date": {
+                        "$cond": [
+                            {"$ne": ["$creation_date_safe", None]},
+                            {
+                                "$dateAdd": {
+                                    "startDate": "$creation_date_safe",
+                                    "unit": "day",
+                                    "amount": "$sla_days",
+                                }
+                            },
+                            None,
+                        ]
+                    },
+                    "is_open": {
+                        "$not": {"$in": ["$status", ["finished", "cancelled"]]}
+                    },
+                    "has_active_assignment": {
+                        "$gt": [{"$size": "$active_assignments"}, 0]
+                    },
+                    "active_assignment": {"$first": "$active_assignments"},
+                }
+            },
+            {
+                "$facet": {
+                    "kpis": [
+                        {
+                            "$group": {
+                                "_id": None,
+                                "open_count": {
+                                    "$sum": {"$cond": ["$is_open", 1, 0]}
+                                },
+                                "cancelled_count": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {"$eq": ["$status", "cancelled"]},
+                                            1,
+                                            0,
+                                        ]
+                                    }
+                                },
+                                "unassigned_count": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {
+                                                "$and": [
+                                                    "$is_open",
+                                                    {"$not": "$has_active_assignment"},
+                                                ]
+                                            },
+                                            1,
+                                            0,
+                                        ]
+                                    }
+                                },
+                                # due_date null deve ser ignorado: no MongoDB
+                                # null < $$NOW é true, então sem o $ne explícito
+                                # documentos sem data contariam como vencidos.
+                                "overdue_count": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {
+                                                "$and": [
+                                                    "$is_open",
+                                                    {"$ne": ["$due_date", None]},
+                                                    {
+                                                        "$lt": [
+                                                            "$due_date",
+                                                            "$$NOW",
+                                                        ]
+                                                    },
+                                                ]
+                                            },
+                                            1,
+                                            0,
+                                        ]
+                                    }
+                                },
+                            }
+                        }
+                    ],
+                    "open_breakdown": [
+                        {"$match": {"is_open": True}},
+                        {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+                    ],
+                    "assigned_breakdown_raw": [
+                        {
+                            "$match": {
+                                "is_open": True,
+                                "has_active_assignment": True,
+                            }
+                        },
+                        {
+                            "$group": {
+                                "_id": "$active_assignment.agent_id",
+                                "agent_name": {"$first": "$active_assignment.name"},
+                                "count": {"$sum": 1},
+                            }
+                        },
+                        {"$sort": {"count": -1}},
+                    ],
+                }
+            },
+        ]
+
+        cursor = Ticket.get_motor_collection().aggregate(pipeline)
+        results: list[dict[str, Any]] = await cursor.to_list(length=1)
+        if not results:
+            return {
+                "kpis": [],
+                "open_breakdown": [],
+                "assigned_breakdown_raw": [],
+            }
+        return results[0]
+
+    async def aggregate_agent_closings(
+        self,
+        *,
+        period_start: datetime,
+        period_end_exclusive: datetime,
+        level: TicketLevel | None,
+    ) -> list[dict[str, Any]]:
+        """Tickets ``status == finished`` agrupados por (agente que encerrou, tipo).
+
+        Cada linha: ``{"_id": {"agent_id": <bson Binary UUID>, "type": <str>},
+        "agent_name": <str>, "count": <int>}``.
+        O pivot para 3 contadores por agente fica no service.
+        """
+        match_stage: dict[str, Any] = {
+            "status": "finished",
+            "closed_at": {
+                "$gte": period_start,
+                "$lt": period_end_exclusive,
+            },
+            "closed_by_agent": {"$ne": None},
+        }
+        if level is not None:
+            match_stage["closed_by_agent.level"] = level.value
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match_stage},
+            {
+                "$group": {
+                    "_id": {
+                        "agent_id": "$closed_by_agent.agent_id",
+                        "type": "$type",
+                    },
+                    "agent_name": {"$first": "$closed_by_agent.name"},
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+        cursor = Ticket.get_motor_collection().aggregate(pipeline)
+        return await cursor.to_list(length=None)
+
+    async def aggregate_issues_by_product(
+        self,
+        *,
+        date_from: datetime,
+        date_to_exclusive: datetime,
+        company_id: UUID | None,
+    ) -> list[dict[str, Any]]:
+        """Returns raw monthly counts of ``type == issue`` tickets grouped by product.
+
+        Each row has shape ``{"_id": {"year": int, "month": int, "product": str}, "count": int}``.
+        The service is responsible for materialising every (product, month) cell,
+        including zeros.
+        """
+        match_stage: dict[str, Any] = {
+            "type": TicketType.ISSUE.value,
+            "creation_date": {"$gte": date_from, "$lt": date_to_exclusive},
+        }
+        if company_id is not None:
+            match_stage["client.company.id"] = Binary(company_id.bytes, subtype=4)
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match_stage},
+            {
+                "$group": {
+                    "_id": {
+                        "year": {"$year": "$creation_date"},
+                        "month": {"$month": "$creation_date"},
+                        "product": "$product",
+                    },
+                    "count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"_id.product": 1, "_id.year": 1, "_id.month": 1}},
+        ]
+        cursor = Ticket.get_motor_collection().aggregate(pipeline)
+        return await cursor.to_list(length=None)
 
     @staticmethod
     def _build_query(filters: TicketSearchFiltersDTO) -> dict[str, Any]:

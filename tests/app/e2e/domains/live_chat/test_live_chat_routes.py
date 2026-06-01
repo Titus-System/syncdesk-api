@@ -1,15 +1,22 @@
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 from beanie import PydanticObjectId
 from httpx import AsyncClient
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import ASGIApp
 
 from app.domains.auth.entities import UserWithRoles
+from app.domains.files.enums import FileContext, FileStatus
+from app.domains.files.models import FileObject
+from app.domains.files.repositories import FileObjectRepository
 from app.domains.live_chat.entities import Conversation
 from app.domains.live_chat.schemas import CreateConversationDTO
 from tests.app.e2e.conftest import AuthActions
@@ -345,7 +352,7 @@ class TestWebSocketChat:
             error_msg = await ws.receive_json()
             assert error_msg["status"] == 1003
             assert (
-                "mime_type and filename fields are not allowed"
+                "mime_type, filename and file_id are not allowed"
                 in error_msg["detail"]
             )
 
@@ -355,7 +362,7 @@ class TestWebSocketChat:
             error_msg = await ws.receive_json()
             assert error_msg["status"] == 1003
             assert (
-                "mime_type and filename fields are required when type='file'"
+                "mime_type, filename and file_id are required when type='file'"
                 in error_msg["detail"]
             )
 
@@ -368,9 +375,8 @@ class TestWebSocketChat:
         creator, creator_token = await self._register_client_user(auth)
         conv_id = await self._create_conversation(client, auth, creator_token, creator.id)
 
-        outsider_tokens = await auth.register_and_login_admin(
-            email="outsider@test.com", username="outsider"
-        )
+        await auth.register_agent(email="outsider@test.com", username="outsider")
+        outsider_tokens = await auth.login(email="outsider@test.com")
 
         with pytest.raises(WebSocketDeniedError) as exc_info:
             async with AsyncWebSocket(
@@ -381,4 +387,520 @@ class TestWebSocketChat:
                 pass
 
         assert exc_info.value.status == 403
-        assert "not a participant" in exc_info.value.body
+        assert "not allowed to join" in exc_info.value.body
+
+
+@pytest.mark.asyncio
+class TestChatFileAttachments:
+    """Validation of file_id when sending type='file' messages.
+
+    The chat router consults the files domain at the composition layer to
+    verify ownership, context and status of the referenced FileObject
+    before persisting the message. These tests exercise the success path
+    and each rejection branch, plus a backward-compat check for legacy
+    documents that predate the file_id field.
+    """
+
+    @staticmethod
+    async def _register_admin(
+        auth: AuthActions, email: str, username: str
+    ) -> tuple[UserWithRoles, str]:
+        tokens = await auth.register_and_login_admin(email=email, username=username)
+        user = await auth.me(tokens["access_token"])
+        return user, tokens["access_token"]
+
+    @staticmethod
+    async def _create_conv(
+        client: AsyncClient,
+        auth: AuthActions,
+        token: str,
+        client_id: Any,
+    ) -> str:
+        dto = CreateConversationDTO(ticket_id=PydanticObjectId(), client_id=client_id)
+        r = await client.post(
+            "/api/conversations/",
+            json=dto.model_dump(mode="json"),
+            headers=auth.auth_headers(token),
+        )
+        assert r.status_code == 201, f"Failed to create conversation: {r.text}"
+        return r.json()["data"]["id"]
+
+    @staticmethod
+    async def _insert_file(
+        db_session: AsyncSession,
+        uploader_id: UUID,
+        conversation_id: PydanticObjectId | None = None,
+        context: FileContext = FileContext.LIVE_CHAT_MESSAGE,
+        status: FileStatus = FileStatus.UPLOADED,
+    ) -> UUID:
+        """Insert a FileObject row directly, bypassing presign + upload.
+
+        The chat router only inspects DB state (ownership, context, status
+        and the conversation id embedded in the object key); no MinIO call
+        happens during message validation, so for the error-path tests we
+        do not need a real blob.
+
+        The object key mirrors ``FileService._build_object_key`` so the
+        validator's conversation-id parser sees the same layout as
+        production.
+        """
+        repo = FileObjectRepository(db_session)
+        file_id = uuid4()
+        if context == FileContext.LIVE_CHAT_MESSAGE:
+            conv = conversation_id if conversation_id is not None else PydanticObjectId()
+            object_key = f"live_chat/{conv}/{file_id}-probe.bin"
+        else:
+            object_key = f"avatars/users/{uploader_id}.bin"
+        await repo.create(
+            FileObject(
+                id=file_id,
+                bucket="syncdesk-files",
+                object_key=object_key,
+                original_filename="probe.bin",
+                content_type="application/pdf",
+                size_bytes=4,
+                context=context,
+                status=status,
+                uploaded_by_user_id=uploader_id,
+            )
+        )
+        return file_id
+
+    async def test_text_message_with_file_id_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+    ) -> None:
+        user, token = await self._register_admin(auth, "f_txt@test.com", "f_txt")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {"type": "text", "content": "oops", "file_id": str(uuid4())}
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "not allowed for text messages" in error_msg["detail"]
+
+    async def test_file_message_with_unknown_file_id_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+    ) -> None:
+        user, token = await self._register_admin(auth, "f_unk@test.com", "f_unk")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "ghost",
+                    "filename": "x.pdf",
+                    "mime_type": "application/pdf",
+                    "file_id": str(uuid4()),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "does not reference a known file" in error_msg["detail"]
+
+    async def test_file_message_with_another_users_file_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+        db_session: AsyncSession,
+    ) -> None:
+        sender, sender_token = await self._register_admin(auth, "f_me@test.com", "f_me")
+        other_tokens = await auth.register_and_login_admin(
+            email="f_other@test.com", username="f_other"
+        )
+        other = await auth.me(other_tokens["access_token"])
+
+        conv_id = await self._create_conv(client, auth, sender_token, sender.id)
+        # File belongs to ``other``, not to the sender.
+        foreign_file_id = await self._insert_file(db_session, other.id)
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {sender_token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "stealing",
+                    "filename": "x.pdf",
+                    "mime_type": "application/pdf",
+                    "file_id": str(foreign_file_id),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "not uploaded by the sender" in error_msg["detail"]
+
+    async def test_file_message_with_wrong_context_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+        db_session: AsyncSession,
+    ) -> None:
+        user, token = await self._register_admin(auth, "f_ctx@test.com", "f_ctx")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+        # Same uploader, but the file was meant as an avatar.
+        avatar_file_id = await self._insert_file(
+            db_session, user.id, context=FileContext.USER_AVATAR
+        )
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "mismatched",
+                    "filename": "x.png",
+                    "mime_type": "image/png",
+                    "file_id": str(avatar_file_id),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "context 'user_avatar'" in error_msg["detail"]
+
+    async def test_file_message_with_pending_file_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+        db_session: AsyncSession,
+    ) -> None:
+        user, token = await self._register_admin(auth, "f_pend@test.com", "f_pend")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+        pending_file_id = await self._insert_file(
+            db_session, user.id, status=FileStatus.PENDING
+        )
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "too soon",
+                    "filename": "x.pdf",
+                    "mime_type": "application/pdf",
+                    "file_id": str(pending_file_id),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "status 'pending'" in error_msg["detail"]
+
+    async def test_file_message_with_deleted_file_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+        db_session: AsyncSession,
+    ) -> None:
+        """Soft-deleted files cannot be referenced even by their owner."""
+        user, token = await self._register_admin(auth, "f_del@test.com", "f_del")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+        deleted_file_id = await self._insert_file(
+            db_session, user.id, status=FileStatus.DELETED
+        )
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "gone",
+                    "filename": "x.pdf",
+                    "mime_type": "application/pdf",
+                    "file_id": str(deleted_file_id),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "status 'deleted'" in error_msg["detail"]
+
+    async def test_file_message_with_failed_file_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+        db_session: AsyncSession,
+    ) -> None:
+        """Files left in FAILED state are not usable as attachments."""
+        user, token = await self._register_admin(auth, "f_fail@test.com", "f_fail")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+        failed_file_id = await self._insert_file(
+            db_session, user.id, status=FileStatus.FAILED
+        )
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "broken",
+                    "filename": "x.pdf",
+                    "mime_type": "application/pdf",
+                    "file_id": str(failed_file_id),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "status 'failed'" in error_msg["detail"]
+
+    async def test_file_message_with_malformed_file_id_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+    ) -> None:
+        """Non-UUID values in file_id are caught before any DB lookup.
+
+        IncomingMessage already declares file_id as ``UUID | None``, so
+        Pydantic rejects strings that don't parse as UUIDs first. The
+        router's defensive ``UUID(str(...))`` block only fires if a future
+        schema change loosens the type; the test pins both behaviors.
+        """
+        user, token = await self._register_admin(auth, "f_bad@test.com", "f_bad")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "garbled",
+                    "filename": "x.pdf",
+                    "mime_type": "application/pdf",
+                    "file_id": "not-a-uuid",
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            # Either Pydantic's UUID parse error or the router's explicit
+            # message — both indicate the same rejection class.
+            assert (
+                "valid UUID" in error_msg["detail"]
+                or "uuid" in error_msg["detail"].lower()
+            )
+
+    async def test_file_message_from_different_conversation_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+        db_session: AsyncSession,
+    ) -> None:
+        """A file uploaded in conversation A cannot be reused in conversation B.
+
+        The object key carries the original conversation id; recipients in
+        conversation B would receive 403 trying to download the file (the
+        files router authorizes downloads against the embedded conversation
+        id, not the message's conversation), so we reject at send time to
+        avoid the confusing UX.
+        """
+        user, token = await self._register_admin(auth, "f_xconv@test.com", "f_xconv")
+        # Two conversations owned by the same user.
+        conv_a_id = await self._create_conv(client, auth, token, user.id)
+        conv_b_id = await self._create_conv(client, auth, token, user.id)
+
+        # File belongs to conversation A.
+        foreign_file_id = await self._insert_file(
+            db_session, user.id, conversation_id=PydanticObjectId(conv_a_id)
+        )
+
+        # Try to send it from conversation B.
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_b_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "smuggled",
+                    "filename": "x.pdf",
+                    "mime_type": "application/pdf",
+                    "file_id": str(foreign_file_id),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "different conversation" in error_msg["detail"]
+
+    async def test_legacy_mongo_conversation_without_file_id_still_loads(
+        self,
+        mongo_db_conn: AsyncIOMotorDatabase[dict[str, Any]],
+    ) -> None:
+        """Backward compat read-side: documents written before PR3 lack the
+        ``file_id`` key on embedded messages. Beanie must deserialize them
+        with ``file_id`` defaulting to ``None`` so historical conversations
+        keep loading after the schema change.
+
+        Writes the document via raw Motor (bypassing Beanie's writer, which
+        would always include the field) and reads it back via the
+        ``Conversation`` model with the new schema.
+        """
+        conv_object_id = PydanticObjectId()
+        message_id = uuid4()
+        sender_id = uuid4()
+
+        legacy_document = {
+            "_id": conv_object_id,
+            "ticket_id": PydanticObjectId(),
+            "agent_id": None,
+            "client_id": str(uuid4()),
+            "sequential_index": 0,
+            "parent_id": None,
+            "children_ids": [],
+            "started_at": datetime.now(UTC),
+            "finished_at": None,
+            "messages": [
+                {
+                    "id": str(message_id),
+                    "conversation_id": conv_object_id,
+                    "sender_id": str(sender_id),
+                    "timestamp": datetime.now(UTC),
+                    "type": "text",
+                    "content": "pre-PR3 message",
+                    # Crucially, no ``file_id`` key — simulates the
+                    # document shape from before the field existed.
+                }
+            ],
+        }
+        await mongo_db_conn["conversations"].insert_one(legacy_document)
+
+        loaded = await Conversation.get(conv_object_id)
+        assert loaded is not None
+        assert len(loaded.messages) == 1
+        msg = loaded.messages[0]
+        assert msg.file_id is None
+        assert msg.id == message_id
+        assert msg.type == "text"
+        assert msg.content == "pre-PR3 message"
+
+        # Datetime round-trip sanity: the Motor client in this project is
+        # constructed without ``tz_aware=True``, so BSON dates come back as
+        # naive datetimes — Pydantic accepts that and keeps them as naive.
+        # The test pins that contract so a future "set tz_aware globally"
+        # change surfaces here intentionally.
+        assert msg.timestamp is not None
+        assert msg.timestamp.tzinfo is None
+        assert loaded.started_at is not None
+        assert loaded.started_at.tzinfo is None
+
+    async def test_file_message_with_malformed_object_key_is_rejected(
+        self,
+        app: Any,
+        client: AsyncClient,
+        auth: AuthActions,
+        db_session: AsyncSession,
+    ) -> None:
+        """Defensive branch: a FileObject row whose object_key does not
+        match the ``live_chat/{conv_id}/...`` shape can't be associated
+        with a conversation, so the validator must reject the attachment
+        instead of raising or silently accepting it.
+
+        Inserts the row directly so the validator sees a corrupted key
+        the production code would normally never produce.
+        """
+        user, token = await self._register_admin(auth, "f_mkey@test.com", "f_mkey")
+        conv_id = await self._create_conv(client, auth, token, user.id)
+
+        repo = FileObjectRepository(db_session)
+        file_id = uuid4()
+        await repo.create(
+            FileObject(
+                id=file_id,
+                bucket="syncdesk-files",
+                # Missing the second path segment that the parser reads as
+                # conversation id; ``_conversation_id_from_object_key``
+                # returns None and the validator rejects.
+                object_key="malformed-no-slash-no-conv-id",
+                original_filename="probe.bin",
+                content_type="application/pdf",
+                size_bytes=4,
+                context=FileContext.LIVE_CHAT_MESSAGE,
+                status=FileStatus.UPLOADED,
+                uploaded_by_user_id=user.id,
+            )
+        )
+
+        async with AsyncWebSocket(
+            app,
+            f"/api/live_chat/room/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ws:
+            await ws.receive_json()
+            await ws.receive_json()
+
+            await ws.send_json(
+                {
+                    "type": "file",
+                    "content": "corrupt key",
+                    "filename": "probe.bin",
+                    "mime_type": "application/pdf",
+                    "file_id": str(file_id),
+                }
+            )
+            error_msg = await ws.receive_json()
+            assert error_msg["status"] == 1003
+            assert "different conversation" in error_msg["detail"]

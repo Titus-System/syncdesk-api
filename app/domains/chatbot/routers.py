@@ -25,7 +25,6 @@ router = APIRouter()
 
 @router.post(
     "/",
-    # dependencies=[require_permission("chatbot:create")],
     **create_attendance_swagger,
 )
 async def create_triage(
@@ -34,21 +33,23 @@ async def create_triage(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     user = auth[0]
-    c = AttendanceClient(
+
+    client = AttendanceClient(
         id=user.id,
         name=user.name or user.email,
         email=user.email,
     )
-    res = await service.create_attendance(c)
+
+    data = await service.create_attendance(client)
+
     return response.success(
-        data=res,
+        data=data.model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
     )
 
 
 @router.get(
     "/",
-    # dependencies=[require_permission("chatbot:list")],
     **list_attendances_swagger,
 )
 async def get_attendances(
@@ -58,6 +59,7 @@ async def get_attendances(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     data = await service.list_attendances(filters)
+
     return response.success(
         data=[item.model_dump(mode="json") for item in data],
         status_code=status.HTTP_200_OK,
@@ -66,7 +68,6 @@ async def get_attendances(
 
 @router.post(
     "/webhook",
-    # dependencies=[require_permission("chatbot:interact")],
     **webhook_swagger,
 )
 async def send_message(
@@ -75,15 +76,15 @@ async def send_message(
     payload: TriageInputDTO = Body(...),
 ) -> JSONResponse:
     data = await service.process_message(payload)
+
     return response.success(
-        data = data,
-        status_code=status.HTTP_200_OK
+        data=data.model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
     )
 
 
 @router.get(
     "/{triage_id}",
-    # dependencies=[require_permission("chatbot:read")],
     **get_attendance_swagger,
 )
 async def get_attendance(
@@ -93,6 +94,7 @@ async def get_attendance(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     data = await service.get_attendance(triage_id)
+
     return response.success(
         data=data.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
@@ -101,7 +103,6 @@ async def get_attendance(
 
 @router.post(
     "/{triage_id}/evaluation",
-    # dependencies=[require_permission("chatbot:evaluate")],
     **evaluation_swagger,
 )
 async def set_evaluation(
@@ -112,8 +113,8 @@ async def set_evaluation(
     response: ResponseFactoryDep,
 ) -> JSONResponse:
     data = await service.set_evaluation(triage_id, payload)
+
     return response.success(
         data=data.model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
     )
-

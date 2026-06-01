@@ -106,6 +106,96 @@ class TestUsersCRUD:
         assert r.status_code == 200
         assert r.json()["data"]["name"] == "Updated Name"
 
+    # ── Deactivate ──────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user(self, client: AsyncClient, auth: AuthActions) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="deactadm@test.com", username="deactadm"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        target = await auth.register(email="deacttarget@test.com", username="deacttarget")
+        target_id = target["id"]
+
+        r = await client.patch(f"/api/users/{target_id}/deactivate", headers=headers)
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data["id"] == target_id
+        assert data["is_active"] is False
+        assert "password_hash" not in data
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_is_idempotent(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="deactidemadm@test.com", username="deactidemadm"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        target = await auth.register(
+            email="deactidemtarget@test.com", username="deactidemtgt"
+        )
+        target_id = target["id"]
+
+        first = await client.patch(f"/api/users/{target_id}/deactivate", headers=headers)
+        assert first.status_code == 200
+        assert first.json()["data"]["is_active"] is False
+
+        second = await client.patch(f"/api/users/{target_id}/deactivate", headers=headers)
+        assert second.status_code == 200
+        assert second.json()["data"]["is_active"] is False
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_not_found(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="deactnf@test.com", username="deactnf"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.patch(
+            "/api/users/00000000-0000-0000-0000-000000000000/deactivate",
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_invalid_uuid(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="deactbad@test.com", username="deactbad"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.patch("/api/users/not-a-uuid/deactivate", headers=headers)
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_requires_auth(self, client: AsyncClient) -> None:
+        r = await client.patch(
+            "/api/users/00000000-0000-0000-0000-000000000000/deactivate"
+        )
+        assert r.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_requires_permission(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        regular = await auth.register_and_login(
+            email="deactreg@test.com", username="deactreg"
+        )
+        headers = auth.auth_headers(regular["access_token"])
+
+        me_r = await client.get("/api/auth/me", headers=headers)
+        user_id = me_r.json()["data"]["id"]
+
+        r = await client.patch(f"/api/users/{user_id}/deactivate", headers=headers)
+        assert r.status_code == 403
+
     # ── Role assignment ─────────────────────────────────
 
     @pytest.mark.asyncio

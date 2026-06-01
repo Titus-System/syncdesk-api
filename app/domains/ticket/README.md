@@ -97,7 +97,7 @@ Not added in this sprint:
 - `current_assignee`
 - dedicated department or assignee embedded references
 
-Queue and routing concerns are represented in API DTOs where needed, without inflating the persisted MongoDB document.
+Queue and routing concerns are represented in API DTOs where needed, without inflating the persisted MongoDB document. Department routing is intentionally not implemented in the current ticket model.
 
 ## Schemas
 
@@ -124,15 +124,13 @@ Queue and routing concerns are represented in API DTOs where needed, without inf
 - `TicketEscalatedEventPayload`
 - `TriageFinishedEventPayload`
 
-### Provisional integration fields
+### Provisional routing fields
 
-The following fields are intentionally typed as `str` in this sprint:
+The following field is intentionally typed as `str` in this sprint:
 - `department_id`
-- `target_department_id`
 - `level`
-- `target_level`
 
-These fields are provisional because they depend on external domain contracts. They are part of the official API contract here, but their concrete cross-domain type alignment remains owned by the external integration boundary.
+`department_id` remains available only as a queue filter/response contract field. Transfer and escalation rules do not implement department behavior; they use the support level stored in assignment history.
 
 ## Routes
 
@@ -267,7 +265,7 @@ Example request:
 ### `GET /api/tickets/queue`
 
 Status:
-- contract stub
+- implemented
 
 Permission:
 - `ticket:queue`
@@ -290,12 +288,12 @@ Ordering contract:
 - creation date second
 
 Current behavior:
-- returns `501 Not Implemented`
+- lists queue candidates with filters and criticality/date ordering
 
 ### `POST /api/tickets/{ticket_id}/assign`
 
 Status:
-- contract stub
+- implemented
 
 Permission:
 - `ticket:assign`
@@ -310,12 +308,12 @@ Event contract:
 - emits `ticket.assignee_updated`
 
 Current behavior:
-- returns `501 Not Implemented`
+- assigns the ticket to the requested agent and emits `ticket.assignee_updated`
 
 ### `POST /api/tickets/{ticket_id}/escalate`
 
 Status:
-- contract stub
+- implemented
 
 Permission:
 - `ticket:escalate`
@@ -324,7 +322,7 @@ Request body:
 - `EscalateTicketRequest`
 
 Business rule contract:
-- escalation moves the ticket upward in the support structure
+- escalation transfers the ticket to a target agent at a higher support level
 
 Response:
 - `GenericSuccessContent[TicketResponse]`
@@ -333,12 +331,12 @@ Event contract:
 - emits `ticket.escalated`
 
 Current behavior:
-- returns `501 Not Implemented`
+- closes the previous assignment, assigns the target higher-level agent, keeps the ticket `in_progress`, and emits `ticket.escalated`
 
 ### `POST /api/tickets/{ticket_id}/transfer`
 
 Status:
-- contract stub
+- implemented
 
 Permission:
 - `ticket:transfer`
@@ -347,7 +345,7 @@ Request body:
 - `TransferTicketRequest`
 
 Business rule contract:
-- transfer changes the assignee without changing level or department
+- transfer changes the assignee without changing support level
 
 Response:
 - `GenericSuccessContent[TicketResponse]`
@@ -356,7 +354,7 @@ Event contract:
 - emits `ticket.assignee_updated`
 
 Current behavior:
-- returns `501 Not Implemented`
+- closes the previous assignment, assigns the target same-level agent, keeps the ticket `in_progress`, and emits `ticket.assignee_updated`
 
 ### Delete policy
 

@@ -105,6 +105,48 @@ get_messages_swagger: dict[str, Any] = {
     "responses": get_messages_responses,
 }
 
+search_convs_responses: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "Conversations matching the search query. At most one conversation per "
+            "ticket is returned (the most recent matching one). Empty list when there "
+            "are no matches."
+        ),
+        "model": GenericSuccessContent[list[Conversation]],
+    },
+    400: {
+        "description": "The 'search_query' parameter was not provided.",
+        "model": ErrorContent,
+    },
+    403: {
+        "description": "The authenticated user does not have permission to read chats.",
+        "model": ErrorContent,
+    },
+    422: {
+        "description": (
+            "Query parameter validation failed (e.g. 'search_query' shorter than 5 "
+            "or longer than 100 characters)."
+        ),
+        "model": ErrorContent,
+    },
+}
+
+search_convs_swagger: dict[str, Any] = {
+    "summary": "Search conversations by message content",
+    "description": (
+        "Case-insensitive substring search over the `messages.content` field of "
+        "conversations. Special regex characters in the query are treated as literal "
+        "text. Results are deduplicated by ticket: only the most recent matching "
+        "conversation per ticket is returned. "
+        "Scope is enforced by role: clients only see their own conversations; "
+        "agents (including N1/N2/N3) only see conversations they are assigned to; "
+        "admins see all matching conversations. "
+        "Requires the 'chat:read' permission."
+    ),
+    "response_model": GenericSuccessContent[list[Conversation]],
+    "responses": search_convs_responses,
+}
+
 set_agent_responses: dict[int | str, dict[str, Any]] = {
     200: {
         "description": "Agent assigned to the conversation successfully.",

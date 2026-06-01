@@ -9,10 +9,78 @@ from app.domains.chatbot.schemas import (
 )
 from app.schemas.response import ErrorContent, GenericSuccessContent
 
+_MAIN_MENU_MESSAGE = (
+    "Olá! Bem vindo ao SyncDesk! Para começarmos, verifiquei no seu cadastro "
+    "e você possui os seguintes produtos disponíveis para manutenção. "
+    "Selecione a opção que indica sobre o que você quer falar hoje:"
+)
+
+_MAIN_MENU_QUICK_REPLIES = [
+    {"label": "Produto A", "value": "1"},
+    {"label": "Produto B", "value": "2"},
+    {"label": "Produto C", "value": "3"},
+    {"label": "Desejo apenas tirar uma dúvida.", "value": "4"},
+    {"label": "Desejo uma liberação de acesso no Sync Desk.", "value": "5"},
+]
+
+_TRIAGE_IN_PROGRESS_EXAMPLE: dict[str, Any] = {
+    "data": {
+        "triage_id": "69f40f33baca8f85e73cb741",
+        "step_id": "step_a",
+        "message": _MAIN_MENU_MESSAGE,
+        "input": {
+            "mode": "quick_replies",
+            "quick_replies": _MAIN_MENU_QUICK_REPLIES,
+        },
+    },
+    "meta": {
+        "timestamp": "2026-05-01T02:25:55.593576+00:00",
+        "success": True,
+        "request_id": "d87e6a1b-f3fe-4c60-bb20-f65f3299976f",
+    },
+}
+
+_TRIAGE_FINISHED_TICKET_EXAMPLE: dict[str, Any] = {
+    "data": {
+        "triage_id": "69f40f33baca8f85e73cb741",
+        "finished": True,
+        "closure_message": (
+            "Aguarde, sua solicitação foi criada e será atribuída a um de nossos "
+            "analistas. Você já pode acompanhar o tema pela tela 'Minhas demandas'. "
+            "Obrigada!"
+        ),
+        "result": {"type": "Ticket", "id": "69f40f33baca8f85e73cb741"},
+    },
+    "meta": {
+        "timestamp": "2026-05-01T02:30:11.123456+00:00",
+        "success": True,
+        "request_id": "5b1c8d2e-7a44-4f9b-9cf3-2e8a4b1d6f70",
+    },
+}
+
+_TRIAGE_FINISHED_RESOLVED_EXAMPLE: dict[str, Any] = {
+    "data": {
+        "triage_id": "69f40f33baca8f85e73cb741",
+        "finished": True,
+        "closure_message": "Atendimento finalizado! Momento de avaliação do atendimento.",
+        "result": None,
+    },
+    "meta": {
+        "timestamp": "2026-05-01T02:32:44.778899+00:00",
+        "success": True,
+        "request_id": "8e2a51fb-9eaa-4af6-95cc-bb0f25c91022",
+    },
+}
+
 create_attendance_responses: dict[int | str, dict[str, Any]] = {
     201: {
-        "description": "Attendance created and first triage step returned.",
+        "description": "Attendance created and first triage step (MAIN_MENU) returned.",
         "model": GenericSuccessContent[TriageData],
+        "content": {
+            "application/json": {
+                "example": _TRIAGE_IN_PROGRESS_EXAMPLE,
+            },
+        },
     },
     401: {
         "description": "Missing or invalid authentication token.",
@@ -24,9 +92,12 @@ create_attendance_swagger: dict[str, Any] = {
     "summary": "Create a new attendance and start triage",
     "description": (
         "Creates a new triage attendance session for the authenticated user "
-        "and returns the first question from the FSM (MAIN_MENU). "
-        "The client identity is derived from the JWT token. No request body required. "
-        "This is the only way to create an attendance — the webhook does not create them."
+        "and immediately runs the first FSM transition, returning the MAIN_MENU "
+        "question. The client identity is derived from the JWT token; no request "
+        "body is required. The persisted attendance starts with `status = opened` "
+        "and a single triage step (`A`).\n\n"
+        "This is the only way to create an attendance — the webhook does not "
+        "create them."
     ),
     "status_code": status.HTTP_201_CREATED,
     "response_model": GenericSuccessContent[TriageData],
@@ -65,8 +136,30 @@ list_attendances_swagger: dict[str, Any] = {
 
 webhook_responses: dict[int | str, dict[str, Any]] = {
     200: {
-        "description": "Triage step processed successfully.",
+        "description": (
+            "Triage step processed successfully. The response shape depends on "
+            "whether the triage is still running (`step_id` + `message` + `input`) "
+            "or has finished (`finished: true` + `closure_message` + optional `result`)."
+        ),
         "model": GenericSuccessContent[TriageData],
+        "content": {
+            "application/json": {
+                "examples": {
+                    "in_progress": {
+                        "summary": "Triage step in progress",
+                        "value": _TRIAGE_IN_PROGRESS_EXAMPLE,
+                    },
+                    "finished_ticket": {
+                        "summary": "Triage finished — ticket created",
+                        "value": _TRIAGE_FINISHED_TICKET_EXAMPLE,
+                    },
+                    "finished_resolved": {
+                        "summary": "Triage finished — resolved without ticket",
+                        "value": _TRIAGE_FINISHED_RESOLVED_EXAMPLE,
+                    },
+                },
+            },
+        },
     },
     401: {
         "description": "Missing or invalid authentication token.",
@@ -92,10 +185,13 @@ webhook_swagger: dict[str, Any] = {
     "summary": "Interact with the triage chatbot",
     "description": (
         "Sends an answer to the current triage step and receives the next step "
-        "from the chatbot FSM. The attendance must already exist (created via POST /). "
-        "Exactly one of `answer_text` or `answer_value` must be provided. "
-        "When the triage finishes, the response includes "
-        "a closure message and, if applicable, the generated ticket id."
+        "from the chatbot FSM. The attendance must already exist (created via "
+        "`POST /`). Exactly one of `answer_text` or `answer_value` must be "
+        "provided.\n\n"
+        "While the triage is running, the response carries `step_id`, `message` "
+        "and `input` (mode + quick_replies). When the triage finishes, the "
+        "response carries `finished: true`, a `closure_message`, and a `result` "
+        "block when a ticket was generated."
     ),
     "response_model": GenericSuccessContent[TriageData],
     "responses": webhook_responses,

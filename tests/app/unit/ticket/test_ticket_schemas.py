@@ -62,16 +62,15 @@ def test_assign_request_is_importable_and_validatable() -> None:
     assert dto.reason == "Primeira atribuicao."
 
 
-def test_escalate_request_marks_department_reference_as_string_contract() -> None:
+def test_escalate_request_requires_target_agent_id_and_reason() -> None:
+    target_agent_id = uuid4()
     dto = EscalateTicketRequest(
-        target_department_id="dept-finance",
-        target_department_name="Financeiro",
-        target_level="N3",
+        target_agent_id=target_agent_id,
         reason="Subir para especialista",
     )
 
-    assert dto.target_department_id == "dept-finance"
-    assert dto.target_level == "N3"
+    assert dto.target_agent_id == target_agent_id
+    assert dto.reason == "Subir para especialista"
 
 
 def test_triage_finished_event_payload_is_valid() -> None:
@@ -112,9 +111,8 @@ def test_ticket_escalated_event_payload_is_valid() -> None:
         status=TicketStatus.AWAITING_ASSIGNMENT,
         occurred_at="2026-04-14T12:40:00Z",
         previous_agent_id=uuid4(),
-        source_department_id="dept-finance",
         source_level="N1",
-        target_department_id="dept-specialists",
+        target_agent_id=uuid4(),
         target_level="N2",
         reason="Escalar para especialista",
     )

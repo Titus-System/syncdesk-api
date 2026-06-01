@@ -1,5 +1,5 @@
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -402,5 +402,262 @@ class TestConversationCRUD:
         returned_tickets = {c["ticket_id"] for c in data}
         assert set(str(t) for t in ticket_ids) == returned_tickets
 
-    
 
+async def _seed_conversation(
+    client: AsyncClient,
+    auth: AuthActions,
+    admin_token: str,
+    contents: list[str],
+    ticket_id: PydanticObjectId | None = None,
+    client_id: Any = None,
+    agent_id: Any = None,
+    sequential_index: int = 0,
+) -> PydanticObjectId:
+    dto = CreateConversationDTO(
+        ticket_id=ticket_id or PydanticObjectId(),
+        agent_id=agent_id if agent_id is not None else uuid4(),
+        client_id=client_id or uuid4(),
+        sequential_index=sequential_index,
+    )
+    r = await client.post(
+        "/api/conversations/",
+        json=dto.model_dump(mode="json"),
+        headers=auth.auth_headers(admin_token),
+    )
+    assert r.status_code == 201, r.text
+    conv_id = PydanticObjectId(r.json()["data"]["id"])
+
+    conv = await Conversation.get(conv_id)
+    assert conv is not None
+    sender = client_id if client_id is not None else conv.client_id
+    for content in contents:
+        msg = ChatMessage.create(conv_id, sender, "text", content)
+        await conv.update({"$push": {"messages": msg.model_dump()}})
+    return conv_id
+
+
+class TestConversationSearch:
+    @pytest.fixture
+    async def admin_user(self, auth: AuthActions) -> tuple[UserWithRoles, str]:
+        tokens = await auth.register_and_login_admin(
+            email="search_admin@test.com", username="searchadm"
+        )
+        user = await auth.me(tokens["access_token"])
+        return user, tokens["access_token"]
+
+    @pytest.mark.asyncio
+    async def test_admin_finds_conversation_by_message_content(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        match_id = await _seed_conversation(
+            client, auth, admin_user[1], ["preciso de ajuda com o boleto"]
+        )
+        await _seed_conversation(client, auth, admin_user[1], ["nada relacionado"])
+
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "boleto"},
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(match_id)
+
+    @pytest.mark.asyncio
+    async def test_search_picks_highest_match_score_per_ticket(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        ticket_id = PydanticObjectId()
+        client_id = uuid4()
+        best_id = await _seed_conversation(
+            client, auth, admin_user[1],
+            [
+                "primeiro contato sobre reembolso",
+                "ainda discutindo reembolso",
+                "novo pedido de reembolso registrado",
+            ],
+            ticket_id=ticket_id, client_id=client_id, sequential_index=0,
+        )
+        await _seed_conversation(
+            client, auth, admin_user[1],
+            ["apenas uma menção a reembolso aqui"],
+            ticket_id=ticket_id, client_id=client_id, sequential_index=1,
+        )
+
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "reembolso"},
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(best_id)
+        assert data[0]["sequential_index"] == 0
+
+    @pytest.mark.asyncio
+    async def test_search_tiebreaker_prefers_most_recent_per_ticket(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        ticket_id = PydanticObjectId()
+        client_id = uuid4()
+        await _seed_conversation(
+            client, auth, admin_user[1],
+            ["primeira menção ao reembolso"],
+            ticket_id=ticket_id, client_id=client_id, sequential_index=0,
+        )
+        latest_id = await _seed_conversation(
+            client, auth, admin_user[1],
+            ["nova mensagem sobre reembolso"],
+            ticket_id=ticket_id, client_id=client_id, sequential_index=1,
+        )
+
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "reembolso"},
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(latest_id)
+        assert data[0]["sequential_index"] == 1
+
+    @pytest.mark.asyncio
+    async def test_agent_only_finds_their_conversations(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        agent = await auth.register_agent(
+            email="search_agent@test.com", username="searchag"
+        )
+        agent_id = UUID(agent["id"])
+
+        owned_id = await _seed_conversation(
+            client, auth, admin_user[1],
+            ["cliente pediu cancelamento da fatura"],
+            agent_id=agent_id,
+        )
+        await _seed_conversation(
+            client, auth, admin_user[1],
+            ["cliente pediu cancelamento da fatura"],
+        )
+
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "cancelamento"},
+            headers=auth.auth_headers(agent["access_token"]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(owned_id)
+        assert data[0]["agent_id"] == str(agent_id)
+
+    @pytest.mark.asyncio
+    async def test_client_only_finds_own_conversations(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        regular = await auth.register_and_login(
+            email="search_client@test.com", username="searchcli"
+        )
+        regular_user = await auth.me(regular["access_token"])
+
+        owned_id = await _seed_conversation(
+            client, auth, admin_user[1],
+            ["dúvida sobre o pedido"],
+            client_id=regular_user.id,
+        )
+        await _seed_conversation(
+            client, auth, admin_user[1],
+            ["dúvida sobre o pedido"],
+        )
+
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "pedido"},
+            headers=auth.auth_headers(regular["access_token"]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(owned_id)
+        assert data[0]["client_id"] == str(regular_user.id)
+
+    @pytest.mark.asyncio
+    async def test_search_no_results_returns_empty_list(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        await _seed_conversation(
+            client, auth, admin_user[1], ["mensagem qualquer"]
+        )
+
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "inexistente"},
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        assert r.json()["data"] == []
+
+    @pytest.mark.asyncio
+    async def test_search_is_case_insensitive(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        match_id = await _seed_conversation(
+            client, auth, admin_user[1], ["Erro no LOGIN do sistema"]
+        )
+
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "login"},
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(match_id)
+
+    @pytest.mark.asyncio
+    async def test_search_missing_query_returns_400(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        r = await client.get(
+            "/api/conversations/search",
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 400
+        assert "search_query" in r.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_search_whitespace_only_query_returns_400(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "       "},
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 400
+        assert "search_query" in r.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_search_query_too_short_returns_422(
+        self, client: AsyncClient, auth: AuthActions, admin_user: tuple[UserWithRoles, str]
+    ) -> None:
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "abc"},
+            headers=auth.auth_headers(admin_user[1]),
+        )
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_search_requires_authentication(
+        self, client: AsyncClient
+    ) -> None:
+        r = await client.get(
+            "/api/conversations/search",
+            params={"search_query": "qualquer"},
+        )
+        assert r.status_code == 403

@@ -16,6 +16,7 @@ from .swagger_utils import (
     get_convs_swagger,
     get_messages_swagger,
     post_conv_swagger,
+    search_convs_swagger,
     set_agent_swagger,
 )
 
@@ -38,6 +39,43 @@ async def get_active_conversations(
 
     return response.success(
         data=[chat.model_dump(mode="json") for chat in chats],
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@conversation_router.get(
+    "/search",
+    tags=["Conversations"],
+    dependencies=[require_permission("chat:read")],
+    **search_convs_swagger,
+)
+async def search_conversations_text(
+    auth: CurrentUserSessionDep,
+    service: ConversationServiceDep,
+    response: ResponseFactoryDep,
+    search_query: str | None = Query(
+        default=None,
+        min_length=5,
+        max_length=100,
+        description="Substring to match against message content (case-insensitive).",
+    ),
+) -> JSONResponse:
+    """Search conversations by message content.
+
+    Scope is enforced by role:
+    - clients can only find their own conversations
+    - agents can only find conversations they are assigned to
+    - admins can find any conversation
+    """
+    if search_query is None or not search_query.strip():
+        raise AppHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="provide a search text using search_query in the query string",
+        )
+
+    res = await service.search_conversation_by_text(search_query, auth[0])
+    return response.success(
+        data=[c.model_dump(mode="json") for c in res],
         status_code=status.HTTP_200_OK,
     )
 

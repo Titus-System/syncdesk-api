@@ -11,6 +11,7 @@ from app.domains.auth.models import User as UserModel
 from app.db.exceptions import ResourceAlreadyExistsError
 from app.domains.companies.schemas import CreateCompanyDTO, UpdateCompanyDTO, ReplaceCompanyDTO
 from app.core.schemas import PaginatedItems
+from app.domains.products.entities import Product
 
 class CompanyRepository:
     def __init__(self, db: AsyncSession) -> None:
@@ -92,6 +93,36 @@ class CompanyRepository:
             await self.db.commit()
             return True
         return False
+
+    async def get_company_products_paginated(
+        self, company_id: UUID, skip: int, limit: int
+    ) -> PaginatedItems[Product]:
+        from app.domains.products.models import Product as ProductModel
+
+        total_result = await self.db.execute(
+            select(func.count(ProductModel.id))
+            .join(company_products, company_products.c.product_id == ProductModel.id)
+            .where(company_products.c.company_id == company_id)
+        )
+        total = total_result.scalar_one() or 0
+
+        result = await self.db.execute(
+            select(ProductModel)
+            .join(company_products, company_products.c.product_id == ProductModel.id)
+            .where(company_products.c.company_id == company_id)
+            .offset(skip)
+            .limit(limit)
+        )
+        models = result.scalars().all()
+        return PaginatedItems(
+            items=[
+                Product(id=p.id, name=p.name, description=p.description, created_at=p.created_at)
+                for p in models
+            ],
+            total=total,
+            page=(skip // limit) + 1,
+            limit=limit,
+        )
 
     async def associate_users(self, company_id: UUID, user_ids: list[UUID]) -> None:
         if not user_ids:

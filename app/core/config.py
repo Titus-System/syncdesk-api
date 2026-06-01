@@ -19,8 +19,8 @@ class Settings(BaseSettings):
 
     ENVIRONMENT: str = "development"
 
-    MOBILE_FRONTEND_URL: str = "syncdesk:/"
-    WEB_FRONTEND_URL: str = "http://localhost:3000"
+    MOBILE_FRONTEND_URL: str = "http://syncdesk.pro"
+    WEB_FRONTEND_URL: str = "http://syncdesk.pro"
 
     # CORS settings
     CORS_ALLOW_ORIGINS: list[str] = ["*"]
@@ -129,11 +129,47 @@ class Settings(BaseSettings):
     
     RESET_TOKEN_HMAC_SECRET: str = "your_reset_token_hmac_secret"
 
+    # Object storage (S3/MinIO)
+    S3_ENDPOINT_URL: str = "http://localhost:9000"
+    S3_PUBLIC_ENDPOINT_URL: str = "http://localhost:9000"
+    S3_REGION: str = "us-east-1"
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+    S3_BUCKET_DEFAULT: str = "syncdesk-files"
+    S3_PRESIGNED_UPLOAD_EXPIRES_SECONDS: int = 300
+    S3_PRESIGNED_DOWNLOAD_EXPIRES_SECONDS: int = 300
+
+    # File maintenance workers (PR5)
+    FILE_MAINTENANCE_ENABLED: bool = True
+    # Pending cleanup: how old a ``pending`` row must be before the sweeper
+    # decides the client never confirmed; should comfortably exceed the
+    # presigned upload TTL so we never race a still-valid upload.
+    FILE_CLEANUP_PENDING_MAX_AGE_MINUTES: int = 15
+    FILE_CLEANUP_PENDING_INTERVAL_SECONDS: int = 900
+    FILE_CLEANUP_PENDING_BATCH_SIZE: int = 100
+    # Chat media retention: live_chat_message files older than this are
+    # soft-deleted by the retention worker. Avatars are NEVER touched here.
+    LIVE_CHAT_FILE_RETENTION_DAYS: int = 180
+    FILE_RETENTION_INTERVAL_SECONDS: int = 86400
+    FILE_RETENTION_BATCH_SIZE: int = 200
+    # Grace period between soft delete and physical purge from object storage.
+    FILE_RETENTION_GRACE_DAYS: int = 7
+    FILE_PURGE_INTERVAL_SECONDS: int = 86400
+    FILE_PURGE_BATCH_SIZE: int = 200
+
     # Email (Resend)
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "no_reply@syncdesk.pro"
     RUN_RESEND_INTEGRATION_TESTS: bool = False
     RESEND_TEST_TO_EMAIL: str = ""
+
+    # Email Outbox
+    EMAIL_OUTBOX_ENABLED: bool = True
+    EMAIL_OUTBOX_POLL_SECONDS: int = 5
+    EMAIL_OUTBOX_BATCH_SIZE: int = 50
+    EMAIL_OUTBOX_MAX_ATTEMPTS: int = 5
+    EMAIL_OUTBOX_BACKOFF_MAX_SECONDS: int = 900
+    EMAIL_OUTBOX_WORKER_ID: str = ""
 
     model_config = SettingsConfigDict(extra="allow", env_file=".env", env_file_encoding="utf-8")
 

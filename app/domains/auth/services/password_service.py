@@ -6,6 +6,8 @@ from uuid import UUID
 from app.core.config import get_settings
 from app.core.email import EmailStrategy, ResetPasswordEmailParams
 from app.core.email.schemas import WelcomeEmailParams
+from app.core.event_dispatcher import AppEvent, EventDispatcher
+from app.core.event_dispatcher.schemas import PasswordResetEventSchema
 from app.core.logger import get_logger
 from app.core.security import PasswordSecurity, ResetTokenSecurity
 from ..enums import TokenPurpose
@@ -25,12 +27,14 @@ class PasswordService:
         password_security: PasswordSecurity,
         email_strategy: EmailStrategy,
         reset_token_security: ResetTokenSecurity,
+        dispatcher: EventDispatcher,
     ):
         self.user_service = user_service
         self.token_repo = token_repo
         self.password_security = password_security
         self.email_strategy = email_strategy
         self.reset_token_security = reset_token_security
+        self.dispatcher = dispatcher
         self.logger = get_logger("app.auth.password_service")
 
     def generate_random_password(self, length: int = 16) -> str:
@@ -146,7 +150,17 @@ class PasswordService:
         if user is None:
             return
         try:
+            settings = get_settings()
             raw_token = await self.create_reset_token(user.id, TokenPurpose.RESET)
-            await self.send_reset_password_email(user, raw_token)
+            await self.dispatcher.publish(
+                AppEvent.USER_PASSWORD_RESET,
+                PasswordResetEventSchema(
+                    user_id=user.id,
+                    user_email=user.email,
+                    roles=user.roles_names(),
+                    raw_token=raw_token,
+                    max_attempts=settings.EMAIL_OUTBOX_MAX_ATTEMPTS,
+                ),
+            )
         except Exception:
             self.logger.exception("Failed forgot-password pipeline for existing user")

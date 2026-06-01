@@ -1,5 +1,5 @@
-from typing import Annotated
-from uuid import uuid4
+from typing import Annotated, Any
+from uuid import UUID, uuid4
 
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, WebSocketException
@@ -10,6 +10,11 @@ from pydantic import ValidationError
 from app.core.dependencies import WSResponseFactoryDep
 from app.core.logger import get_logger
 from app.domains.auth import CurrentUserSessionWsDep, require_permission_ws
+from app.domains.auth.entities import UserWithRoles
+from app.domains.files.dependencies import FileServiceDep
+from app.domains.files.enums import FileContext, FileStatus
+from app.domains.files.services import FileService
+from app.domains.live_chat.entities import Conversation
 
 from ..chat_manager import ChatConnection, get_chat_manager
 from ..dependencies import ConversationServiceDep
@@ -23,8 +28,134 @@ def ensure_ws_request_id(ws: WebSocket) -> None:
         ws.state.request_id = ws.headers.get("x-request-id") or str(uuid4())
 
 
+def get_role_names(user: UserWithRoles) -> set[str]:
+    return {str(role).strip().lower() for role in user.roles_names()}
+
+
+def is_admin(user: UserWithRoles) -> bool:
+    return "admin" in get_role_names(user)
+
+
+def can_user_join_conversation(user: UserWithRoles, conversation: Conversation) -> bool:
+    if is_admin(user):
+        return True
+
+    return user.id in conversation.participants()
+
+
+def get_accepted_subprotocol(ws: WebSocket) -> str | None:
+    requested = ws.headers.get("sec-websocket-protocol")
+
+    if not requested:
+        return None
+
+    parts = [part.strip() for part in requested.split(",")]
+
+    if "access_token" in parts:
+        return "access_token"
+
+    return None
+
+
 chat_manager = get_chat_manager()
 chat_router = APIRouter()
+
+
+async def _validate_file_attachment(
+    payload: dict[str, Any],
+    sender_id: UUID,
+    chat_id: PydanticObjectId,
+    file_service: FileService,
+) -> None:
+    """Ensure a type='file' payload carries a file_id owned by the sender.
+
+    Runs at the composition layer (router) instead of inside the service so
+    the live_chat domain does not depend on the files domain at runtime —
+    same pattern PR2 used for conversation participation in the files
+    router. Raises InvalidMessageError for any failure; the WS loop maps
+    that to a 1003 frame.
+    """
+    if payload.get("type") != "file":
+        return
+
+    raw_file_id = payload.get("file_id")
+    if raw_file_id is None:
+        return
+
+    log_ctx = {
+        "chat_id": str(chat_id),
+        "sender_id": str(sender_id),
+        "raw_file_id": str(raw_file_id),
+    }
+
+    try:
+        file_id = UUID(str(raw_file_id))
+    except (TypeError, ValueError) as e:
+        logger.warning("File attachment rejected: file_id is not a valid UUID", extra=log_ctx)
+        raise InvalidMessageError(f"file_id is not a valid UUID: {raw_file_id!r}") from e
+
+    log_ctx["file_id"] = str(file_id)
+
+    file_obj = await file_service.get_by_id(file_id)
+    if file_obj is None:
+        logger.warning(
+            "File attachment rejected: file_id does not reference a known file",
+            extra=log_ctx,
+        )
+        raise InvalidMessageError("file_id does not reference a known file")
+    if file_obj.uploaded_by_user_id != sender_id:
+        logger.warning(
+            "File attachment rejected: file_id was uploaded by a different user",
+            extra={**log_ctx, "uploader_id": str(file_obj.uploaded_by_user_id)},
+        )
+        raise InvalidMessageError("file_id was not uploaded by the sender")
+    if file_obj.context != FileContext.LIVE_CHAT_MESSAGE:
+        logger.warning(
+            "File attachment rejected: wrong file context",
+            extra={**log_ctx, "context": file_obj.context.value},
+        )
+        raise InvalidMessageError(
+            f"file_id has context {file_obj.context.value!r}, "
+            "expected 'live_chat_message'"
+        )
+    if file_obj.status != FileStatus.UPLOADED:
+        logger.info(
+            "File attachment rejected: file is not in 'uploaded' status",
+            extra={**log_ctx, "status": file_obj.status.value},
+        )
+        raise InvalidMessageError(
+            f"file_id has status {file_obj.status.value!r}, expected 'uploaded'"
+        )
+
+    file_conv_id = _conversation_id_from_object_key(file_obj.object_key)
+    if file_conv_id is None or file_conv_id != chat_id:
+        logger.warning(
+            "File attachment rejected: file belongs to a different conversation",
+            extra={
+                **log_ctx,
+                "file_conversation_id": str(file_conv_id) if file_conv_id else None,
+                "object_key": file_obj.object_key,
+            },
+        )
+        raise InvalidMessageError(
+            "file_id belongs to a different conversation"
+        )
+
+
+def _conversation_id_from_object_key(object_key: str) -> PydanticObjectId | None:
+    """Extract the conversation id from a live_chat object key.
+
+    Object key shape produced by ``FileService._build_object_key`` is
+    ``live_chat/{conversation_id}/{file_id}-{slug}``; anything else returns
+    ``None`` so the caller can reject the message.
+    """
+    parts = object_key.split("/")
+    if len(parts) < 2:
+        return None
+    try:
+        return PydanticObjectId(parts[1])
+    except (ValueError, TypeError):
+        return None
 
 
 @chat_router.websocket("/room/{chat_id}", dependencies=[require_permission_ws("chat:add_message")])
@@ -34,53 +165,131 @@ async def connect_to_conversation(
     _: Annotated[None, Depends(ensure_ws_request_id)],
     auth: CurrentUserSessionWsDep,
     service: ConversationServiceDep,
+    file_service: FileServiceDep,
     response: WSResponseFactoryDep,
 ) -> None:
     user = auth[0]
+    log_ctx = {"chat_id": str(chat_id), "user_id": str(user.id)}
+
+    logger.info("WS connect attempt", extra=log_ctx)
 
     chat = await service.get_by_id(chat_id)
 
-    if chat is None or not chat.is_opened() or user.id not in chat.participants():
+    if chat is None:
+        logger.warning("WS denied: chat does not exist", extra=log_ctx)
         await ws.send_denial_response(
             JSONResponse(
                 status_code=403,
-                content={"detail": "Chat does not exist or user is not a participant."},
+                content={"detail": "Chat does not exist."},
             )
         )
         return
 
-    await ws.accept(subprotocol="access_token")
+    if not chat.is_opened():
+        logger.warning("WS denied: chat already closed", extra=log_ctx)
+        await ws.send_denial_response(
+            JSONResponse(
+                status_code=403,
+                content={"detail": "Chat is already closed."},
+            )
+        )
+        return
+
+    if not can_user_join_conversation(user, chat):
+        logger.warning("WS denied: user not allowed in chat", extra=log_ctx)
+        await ws.send_denial_response(
+            JSONResponse(
+                status_code=403,
+                content={"detail": "User is not allowed to join this chat."},
+            )
+        )
+        return
+
+    subprotocol = get_accepted_subprotocol(ws)
+    logger.debug(
+        "WS accepting handshake",
+        extra={**log_ctx, "subprotocol": subprotocol},
+    )
+    await ws.accept(subprotocol=subprotocol)
+    logger.info("WS handshake accepted", extra=log_ctx)
+
     conn = ChatConnection(ws, response, user)
     joined = False
 
     try:
         await chat_manager.join_room(chat_id, conn)
         joined = True
+        logger.info("WS joined room", extra=log_ctx)
 
         while ws.client_state == WebSocketState.CONNECTED:
             try:
                 payload = await conn.receive_payload()
+                logger.debug("WS payload received", extra=log_ctx)
+
+                await _validate_file_attachment(payload, user.id, chat_id, file_service)
                 message = service.handle_message(chat_id, user.id, payload)
 
                 await service.add_message_to_conversation(chat_id, message)
+                logger.debug(
+                    "WS message persisted",
+                    extra={**log_ctx, "message_id": str(message.id)},
+                )
 
                 await chat_manager.broadcast(chat_id, message)
+                logger.debug(
+                    "WS message broadcast",
+                    extra={**log_ctx, "message_id": str(message.id)},
+                )
 
-            except WebSocketDisconnect:
+            except WebSocketDisconnect as e:
+                logger.info(
+                    "WS client disconnected",
+                    extra={**log_ctx, "code": e.code, "reason": e.reason},
+                )
                 break
             except (InvalidMessageError, ValidationError) as e:
-                await conn.send_error(WebSocketException(code=1003, reason=str(e) or ""))
+                logger.warning(
+                    "WS invalid message",
+                    extra={**log_ctx, "error": str(e)},
+                )
+                await conn.send_error(
+                    WebSocketException(code=1003, reason=str(e) or "")
+                )
             except ValueError as e:
-                await conn.send_error(WebSocketException(code=1008, reason=str(e)))
+                logger.warning(
+                    "WS policy violation",
+                    extra={**log_ctx, "error": str(e)},
+                )
+                await conn.send_error(
+                    WebSocketException(code=1008, reason=str(e))
+                )
             except RuntimeError as e:
-                await conn.send_error(WebSocketException(code=1011, reason=str(e)))
+                logger.error(
+                    "WS runtime error",
+                    extra={**log_ctx, "error": str(e)},
+                )
+                await conn.send_error(
+                    WebSocketException(code=1011, reason=str(e))
+                )
+
     except ChatRoomNotFoundError as e:
-        logger.warning("Chat room not found during connection", extra={"chat_id": str(chat_id)})
+        logger.warning(
+            "Chat room not found during connection",
+            extra={**log_ctx, "error": str(e)},
+        )
         await conn.send_error(WebSocketException(code=1011, reason=str(e)))
         await conn.close(code=1011, reason="Chat room unavailable")
+
+    except Exception:
+        logger.exception("WS unexpected error", extra=log_ctx)
+        raise
+
     finally:
         if joined:
+            logger.info("WS leaving room", extra=log_ctx)
             await chat_manager.leave_room(chat_id, conn)
+        else:
+            logger.info("WS connection ended without joining", extra=log_ctx)
 
 
 @chat_router.websocket("/test/room/{conversation_id}")
@@ -92,8 +301,10 @@ async def connect_to_conversation_test(
     response: WSResponseFactoryDep,
 ) -> None:
     await ws.accept()
+
     conn = ChatConnection(ws, response)
     user_id = uuid4()
+
     await chat_manager.join_room(conversation_id, conn)
 
     try:

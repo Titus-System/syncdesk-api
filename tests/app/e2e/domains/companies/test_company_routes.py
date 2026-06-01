@@ -447,6 +447,106 @@ class TestCompanyProducts:
         assert r.status_code == 200
 
     @pytest.mark.asyncio
+    async def test_list_company_products_returns_paginated_items(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="cprodlist@test.com", username="cprodlist"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        company = await _create_company(client, headers)
+        product_ids: list[int] = []
+        for _ in range(2):
+            res = await client.post(
+                "/api/products/",
+                json={"name": f"P {uuid4().hex[:6]}", "description": "Initial desc"},
+                headers=headers,
+            )
+            product_ids.append(res.json()["data"]["id"])
+        await client.post(
+            f"/api/companies/{company['id']}/products",
+            json={"product_ids": product_ids},
+            headers=headers,
+        )
+
+        r = await client.get(
+            f"/api/companies/{company['id']}/products", headers=headers
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data["total"] == 2
+        assert data["page"] == 1
+        assert {item["id"] for item in data["items"]} == set(product_ids)
+
+    @pytest.mark.asyncio
+    async def test_list_company_products_pagination_respected(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="cprodpag@test.com", username="cprodpag"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        company = await _create_company(client, headers)
+        product_ids: list[int] = []
+        for _ in range(3):
+            res = await client.post(
+                "/api/products/",
+                json={"name": f"P {uuid4().hex[:6]}", "description": "Initial desc"},
+                headers=headers,
+            )
+            product_ids.append(res.json()["data"]["id"])
+        await client.post(
+            f"/api/companies/{company['id']}/products",
+            json={"product_ids": product_ids},
+            headers=headers,
+        )
+
+        r = await client.get(
+            f"/api/companies/{company['id']}/products",
+            params={"page": 1, "limit": 2},
+            headers=headers,
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data["total"] == 3
+        assert data["limit"] == 2
+        assert len(data["items"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_company_products_unknown_company_returns_404(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="cprodlistnf@test.com", username="cprodlistnf"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        r = await client.get(
+            "/api/companies/00000000-0000-0000-0000-000000000000/products",
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_list_company_products_soft_deleted_company_returns_404(
+        self, client: AsyncClient, auth: AuthActions
+    ) -> None:
+        tokens = await auth.register_and_login_admin(
+            email="cprodlistdel@test.com", username="cprodlistdel"
+        )
+        headers = auth.auth_headers(tokens["access_token"])
+
+        company = await _create_company(client, headers)
+        await client.delete(f"/api/companies/{company['id']}", headers=headers)
+
+        r = await client.get(
+            f"/api/companies/{company['id']}/products", headers=headers
+        )
+        assert r.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_remove_products_batch(
         self, client: AsyncClient, auth: AuthActions
     ) -> None:

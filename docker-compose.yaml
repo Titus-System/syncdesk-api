@@ -40,6 +40,42 @@ services:
       retries: 5
       start_period: 10s
 
+  minio:
+    image: minio/minio:latest
+    container_name: syncdesk_minio
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Comma-separated list of frontend origins allowed to upload/download
+      # cross-origin. Read natively by MinIO at startup; empty in dev.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${S3_CORS_ALLOWED_ORIGINS:-}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: syncdesk_minio_init
+    depends_on:
+      - minio
+    env_file:
+      - .env
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1; do
+        echo 'Waiting for MinIO...'; sleep 1;
+      done;
+      mc mb --ignore-existing local/$$S3_BUCKET_DEFAULT;
+      mc anonymous set none local/$$S3_BUCKET_DEFAULT;
+      "
+    restart: "no"
+
   api:
     container_name: syncdesk_api
     restart: unless-stopped
@@ -124,6 +160,7 @@ volumes:
   app_logs:
   postgres_data:
   mongo_data:
+  minio_data:
   prometheus_data:
   grafana_data:
   loki_data:

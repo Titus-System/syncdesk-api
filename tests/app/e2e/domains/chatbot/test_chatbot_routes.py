@@ -49,13 +49,17 @@ class TestChatbotRoutes:
 		assert body["meta"]["success"] is True
 		triage_id = body["data"]["triage_id"]
 		assert triage_id
+		assert body["data"]["step_id"] == "step_a"
+		assert body["data"]["input"]["mode"] == "quick_replies"
+		assert len(body["data"]["input"]["quick_replies"]) > 0
 
 		stored = await mongo_db_conn["atendimentos"].find_one({"_id": ObjectId(triage_id)})
 		assert stored is not None
 		assert str(stored["_id"]) == triage_id
 		assert stored["status"] == "opened"
 		assert stored["end_date"] is None
-		assert stored["triage"] == []
+		assert len(stored["triage"]) == 1
+		assert stored["triage"][0]["step"] == "A"
 		assert stored["result"] is None
 		assert stored["evaluation"] is None
 		assert stored["client"]["id"] == str(user.id)

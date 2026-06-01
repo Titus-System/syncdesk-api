@@ -2,11 +2,11 @@ from typing import Any
 from uuid import UUID
 
 from app.core.config import get_settings
+from app.core.event_dispatcher import EventDispatcher
 from app.core.http.schemas import SessionDeviceInfo
 from app.core.logger import get_logger
 from app.core.security import JWTService, PasswordSecurity
 from app.domains.auth.entities import Session, User, UserWithRoles
-from app.domains.auth.enums import TokenPurpose
 from app.domains.auth.schemas.api_schemas import AdminRegisterUserRequest, LoginResponse
 from app.domains.auth.services.password_service import PasswordService
 
@@ -39,6 +39,7 @@ class AuthService:
         password_security: PasswordSecurity,
         role_service: RoleService,
         password_service: PasswordService,
+        dispatcher: EventDispatcher,
     ):
         self.user_service = user_service
         self.session_service = session_service
@@ -46,6 +47,7 @@ class AuthService:
         self.passwordSecurity = password_security
         self.role_service = role_service
         self.password_service = password_service
+        self.dispatcher = dispatcher
         self.logger = get_logger("app.auth.service")
 
     async def register(
@@ -64,7 +66,7 @@ class AuthService:
             name=dto.name,
             role_ids=default_role_ids,
         )
-        user = await self.user_service.create(create_user_dto)
+        user = await self.user_service.repo.create(create_user_dto)
         role_names = [r.name for r in user.roles] if user.roles is not None else []
         access_token, refresh_token = await self.session_service.init_session(
             user.id, role_names, device_info, user.company_id
@@ -87,17 +89,25 @@ class AuthService:
         user = await self.user_service.get_by_email_with_roles(email=dto.email)
         if user is None:
             login_total.labels(status="user_not_found").inc()
+            self.logger.info("Login failed: user not found", extra={"email": dto.email})
             raise UserNotFoundError()
 
         password_hash = user.password_hash
         if not password_hash:
+            self.logger.info(
+                "Login failed: password not configured",
+                extra={"user_id": str(user.id), "email": user.email},
+            )
             login_total.labels(status="no_password").inc()
             raise UserPasswordNotConfiguredError()
 
         is_authenticated = self.passwordSecurity.verify_password(dto.password, password_hash)
         if not is_authenticated:
             login_total.labels(status="invalid_password").inc()
-            self.logger.warning("Failed login attempt", extra={"email": dto.email})
+            self.logger.warning(
+                "Login failed: invalid password",
+                extra={"user_id": str(user.id), "email": dto.email},
+            )
             raise InvalidPasswordError(user.email)
 
         role_names = [r.name for r in user.roles] if user.roles is not None else []
@@ -202,27 +212,20 @@ class AuthService:
         await self.session_service.revoke(session.id)
 
     async def admin_register(self, dto: AdminRegisterUserRequest) -> UserWithRoles:
-        password = self.password_service.generate_random_password()
-        password_hash = self.passwordSecurity.generate_password_hash(password)
+        """Backwards-compatible alias for ``POST /users``.
 
+        The welcome-invite flow (OTP generation, must_change_password, email)
+        lives entirely in ``UserService.create``.
+        """
         create_dto = CreateUserDTO(
             email=dto.email,
-            password_hash=password_hash,
             name=dto.name,
             role_ids=dto.role_ids,
-            must_change_password=True,
         )
 
         user = await self.user_service.create(create_dto)
 
         registration_total.labels(method="admin").inc()
         self.logger.info("Admin registered user", extra={"user_id": str(user.id), "email": dto.email})
-
-        raw_token = await self.password_service.create_reset_token(user.id, TokenPurpose.INVITE)
-
-        try:
-            await self.password_service.send_welcome_email(user, raw_token, password)
-        except Exception:
-            self.logger.exception("Welcome email dispatch failed after admin_register")
 
         return user

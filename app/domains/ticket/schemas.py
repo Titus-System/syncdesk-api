@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -6,7 +6,7 @@ from beanie import PydanticObjectId
 from pydantic import BaseModel, Field
 
 from app.core.schemas import BaseDTO
-from app.domains.ticket.models import TicketCriticality, TicketStatus, TicketType
+from app.domains.ticket.models import TicketCriticality, TicketLevel, TicketStatus, TicketType
 
 
 class PaginationDTO(BaseDTO):
@@ -52,6 +52,10 @@ class CreateTicketDTO(BaseDTO):
     company_name: str | None = Field(
         default=None,
         description="Company name snapshot for the ticket. Falls back to a client-derived label when omitted.",
+    )
+    level: TicketLevel = Field(
+        default=TicketLevel.N1,
+        description="Support queue level assigned to the ticket. Defaults to N1.",
     )
 
 
@@ -137,7 +141,9 @@ class TicketResponse(BaseModel):
     criticality: TicketCriticality
     product: str
     status: TicketStatus
+    level: TicketLevel = TicketLevel.N1
     creation_date: datetime
+    due_date: datetime | None = None
     description: str
     chat_ids: list[str]
     agent_history: list[TicketHistoryResponse]
@@ -287,30 +293,30 @@ class EscalateTicketRequest(BaseDTO):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "target_department_id": "dept-finance",
-                "target_department_name": "Financeiro",
-                "target_level": "N2",
+                "target_agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8",
                 "reason": "Necessario apoio do nivel superior.",
             }
         }
     }
 
-    target_department_id: str = Field(
-        ...,
-        description=(
-            "Provisional department reference. Exact type may evolve when "
-            "the department contract is imported."
-        ),
-    )
-    target_department_name: str | None = Field(
-        default=None,
-        description="Optional human-readable department snapshot for API consumers.",
-    )
-    target_level: str = Field(
-        ...,
-        description="Provisional support level reference. Example values: N1, N2, N3.",
-    )
+    target_agent_id: UUID
     reason: str = Field(..., description="Business reason for the escalation.")
+
+
+class CancelTicketRequest(BaseDTO):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "reason": "Solicitante desistiu da abertura do chamado.",
+            }
+        }
+    }
+
+    reason: str = Field(
+        ...,
+        min_length=3,
+        description="Motivo do cancelamento. Obrigatório e registrado no histórico do ticket.",
+    )
 
 
 class TransferTicketRequest(BaseDTO):
@@ -325,6 +331,230 @@ class TransferTicketRequest(BaseDTO):
 
     target_agent_id: UUID
     reason: str = Field(..., description="Business reason for the transfer.")
+
+
+class TicketDashboardFiltersDTO(BaseDTO):
+    type: TicketType = Field(..., description="Ticket type filter for the dashboard.")
+
+
+class TicketDashboardKPIsDTO(BaseModel):
+    open_count: int = Field(..., ge=0, description="Tickets not in finished/cancelled.")
+    cancelled_count: int = Field(..., ge=0, description="Tickets in cancelled.")
+    unassigned_count: int = Field(..., ge=0, description="Open tickets without an active assignee.")
+    overdue_count: int = Field(..., ge=0, description="Open tickets past their SLA window.")
+
+
+class TicketStatusBucketDTO(BaseModel):
+    bucket: Literal["pendente", "em_atendimento", "nao_atribuidos"]
+    label: str
+    count: int = Field(..., ge=0)
+
+
+class TicketAssigneeBucketDTO(BaseModel):
+    agent_id: UUID | None = Field(
+        default=None,
+        description="Assignee UUID. None when the bucket aggregates the long tail (is_aggregate=True).",
+    )
+    agent_name: str
+    count: int = Field(..., ge=0)
+    is_aggregate: bool = False
+
+
+class TicketDashboardResponseDTO(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "type": "issue",
+                "generated_at": "2026-05-18T12:00:00Z",
+                "kpis": {
+                    "open_count": 190,
+                    "cancelled_count": 80,
+                    "unassigned_count": 110,
+                    "overdue_count": 5,
+                },
+                "open_breakdown": [
+                    {"bucket": "pendente", "label": "Pendente", "count": 30},
+                    {"bucket": "em_atendimento", "label": "Em atendimento", "count": 50},
+                    {"bucket": "nao_atribuidos", "label": "Não atribuídos", "count": 110},
+                ],
+                "assigned_breakdown": [
+                    {"agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8", "agent_name": "Julia", "count": 20, "is_aggregate": False},
+                    {"agent_id": "97f0c9b8-e4b0-41a2-83d4-e5f600000001", "agent_name": "Mafe", "count": 30, "is_aggregate": False},
+                    {"agent_id": "0f7d7c4f-7b5b-45cb-9d85-6f3c69f0b5d2", "agent_name": "Angelina", "count": 30, "is_aggregate": False},
+                ],
+            }
+        }
+    }
+
+    type: TicketType
+    generated_at: datetime
+    kpis: TicketDashboardKPIsDTO
+    open_breakdown: list[TicketStatusBucketDTO]
+    assigned_breakdown: list[TicketAssigneeBucketDTO]
+
+
+class AgentClosingsChartFiltersDTO(BaseDTO):
+    month: int | None = Field(
+        default=None,
+        ge=1,
+        le=12,
+        description="Mês (1-12) do encerramento. Default: mês corrente UTC.",
+    )
+    year: int | None = Field(
+        default=None,
+        ge=2000,
+        le=2100,
+        description="Ano do encerramento. Default: ano corrente UTC.",
+    )
+    level: TicketLevel | None = Field(
+        default=None,
+        description="Filtra por nível do agente que encerrou (snapshot).",
+    )
+
+
+class AgentClosingsBucketDTO(BaseModel):
+    agent_id: UUID | None = Field(
+        default=None,
+        description="UUID do agente. None apenas no bucket 'Outros' (is_aggregate=True).",
+    )
+    agent_name: str
+    issue_count: int = Field(..., ge=0, description='Equivalente ao rótulo "Ticket" no front.')
+    access_count: int = Field(..., ge=0, description='Equivalente ao rótulo "Liberação de acesso".')
+    new_feature_count: int = Field(..., ge=0, description='Equivalente ao rótulo "Features".')
+    total: int = Field(..., ge=0)
+    is_aggregate: bool = False
+
+
+class AgentClosingsChartResponseDTO(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "month": 5,
+                "year": 2026,
+                "level": None,
+                "generated_at": "2026-05-19T12:00:00Z",
+                "agents": [
+                    {
+                        "agent_id": "0f7d7c4f-7b5b-45cb-9d85-6f3c69f0b5d2",
+                        "agent_name": "Angelina",
+                        "issue_count": 4000,
+                        "access_count": 7000,
+                        "new_feature_count": 2500,
+                        "total": 13500,
+                        "is_aggregate": False,
+                    },
+                    {
+                        "agent_id": "97f0c9b8-e4b0-41a2-83d4-e5f600000001",
+                        "agent_name": "Mafe",
+                        "issue_count": 3200,
+                        "access_count": 2000,
+                        "new_feature_count": 1700,
+                        "total": 6900,
+                        "is_aggregate": False,
+                    },
+                    {
+                        "agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8",
+                        "agent_name": "Julia",
+                        "issue_count": 2200,
+                        "access_count": 5000,
+                        "new_feature_count": 1200,
+                        "total": 8400,
+                        "is_aggregate": False,
+                    },
+                ],
+            }
+        }
+    }
+
+    month: int
+    year: int
+    level: TicketLevel | None = None
+    agents: list[AgentClosingsBucketDTO]
+    generated_at: datetime
+
+
+class IssuesByProductChartFiltersDTO(BaseDTO):
+    company_id: UUID | None = Field(
+        default=None,
+        description="Optional company UUID; when set, restricts to tickets whose client.company.id matches.",
+    )
+    date_from: date | None = Field(
+        default=None,
+        description="Inclusive start date (ISO 8601). Truncated to the first day of the month.",
+    )
+    date_to: date | None = Field(
+        default=None,
+        description="Inclusive end date (ISO 8601). Truncated to the last day of the month.",
+    )
+
+
+class ProductSeriesPointDTO(BaseModel):
+    month: str = Field(..., description="Identificador do mês no formato YYYY-MM.")
+    count: int = Field(..., ge=0)
+
+
+class ProductSeriesDTO(BaseModel):
+    product: str = Field(..., description="Nome do produto (snapshot guardado no ticket).")
+    total: int = Field(..., ge=0, description="Soma de tickets do produto no período.")
+    points: list[ProductSeriesPointDTO] = Field(
+        ..., description="Um ponto por mês do eixo X, mesma ordem de months[]."
+    )
+
+
+class IssuesByProductChartResponseDTO(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "period_start": "2026-01-01",
+                "period_end": "2026-05-31",
+                "company_id": None,
+                "months": ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"],
+                "generated_at": "2026-05-19T12:00:00Z",
+                "series": [
+                    {
+                        "product": "Produto 1",
+                        "total": 61,
+                        "points": [
+                            {"month": "2026-01", "count": 12},
+                            {"month": "2026-02", "count": 14},
+                            {"month": "2026-03", "count": 7},
+                            {"month": "2026-04", "count": 18},
+                            {"month": "2026-05", "count": 10},
+                        ],
+                    },
+                    {
+                        "product": "Produto 2",
+                        "total": 75,
+                        "points": [
+                            {"month": "2026-01", "count": 10},
+                            {"month": "2026-02", "count": 12},
+                            {"month": "2026-03", "count": 16},
+                            {"month": "2026-04", "count": 17},
+                            {"month": "2026-05", "count": 20},
+                        ],
+                    },
+                    {
+                        "product": "Produto 3",
+                        "total": 44,
+                        "points": [
+                            {"month": "2026-01", "count": 8},
+                            {"month": "2026-02", "count": 8},
+                            {"month": "2026-03", "count": 5},
+                            {"month": "2026-04", "count": 10},
+                            {"month": "2026-05", "count": 13},
+                        ],
+                    },
+                ],
+            }
+        }
+    }
+
+    period_start: date
+    period_end: date
+    company_id: UUID | None = None
+    months: list[str]
+    series: list[ProductSeriesDTO]
+    generated_at: datetime
 
 
 class TicketEventPayload(BaseModel):
@@ -394,12 +624,11 @@ class TicketEscalatedEventPayload(TicketEventPayload):
                 "ticket_id": "67f0ca60e4b0b1a2c3d4e601",
                 "triage_id": "67f0c9b8e4b0b1a2c3d4e5f6",
                 "client_id": "0f7d7c4f-7b5b-45cb-9d85-6f3c69f0b5d2",
-                "status": "awaiting_assignment",
+                "status": "in_progress",
                 "occurred_at": "2026-04-14T12:40:00Z",
                 "previous_agent_id": "4b8b9bd2-6042-43f5-b5a3-6b36fdfaf9a8",
-                "source_department_id": "dept-finance",
                 "source_level": "N1",
-                "target_department_id": "dept-finance-specialists",
+                "target_agent_id": "97f0c9b8-e4b0-41a2-83d4-e5f600000001",
                 "target_level": "N2",
                 "reason": "Necessario apoio do nivel superior.",
             }
@@ -408,9 +637,8 @@ class TicketEscalatedEventPayload(TicketEventPayload):
 
     event_name: Literal["ticket.escalated"] = "ticket.escalated"
     previous_agent_id: UUID | None = None
-    source_department_id: str | None = None
     source_level: str | None = None
-    target_department_id: str
+    target_agent_id: UUID
     target_level: str
     reason: str
 

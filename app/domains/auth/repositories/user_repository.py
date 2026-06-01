@@ -141,21 +141,7 @@ class UserRepository:
         row = result.scalar_one_or_none()
         if row is None:
             return None
-        roles = [RoleEntity(id=r.id, name=r.name, description=r.description) for r in row.roles]
-        return UserWithRoles(
-            id=row.id,
-            email=row.email,
-            password_hash=row.password_hash,
-            username=row.username,
-            name=row.name,
-            oauth_provider=row.oauth_provider,
-            oauth_provider_id=row.oauth_provider_id,
-            is_active=row.is_active,
-            is_verified=row.is_verified,
-            must_change_password=row.must_change_password,
-            must_accept_terms=row.must_accept_terms,
-            roles=roles,
-        )
+        return self._to_user_with_roles(row)
 
     async def get_by_email_with_roles(self, email: str) -> UserWithRoles | None:
         stmt = (
@@ -165,21 +151,7 @@ class UserRepository:
         row = result.scalar_one_or_none()
         if row is None:
             return None
-        roles = [RoleEntity(id=r.id, name=r.name, description=r.description) for r in row.roles]
-        return UserWithRoles(
-            id=row.id,
-            email=row.email,
-            password_hash=row.password_hash,
-            username=row.username,
-            name=row.name,
-            oauth_provider=row.oauth_provider,
-            oauth_provider_id=row.oauth_provider_id,
-            is_active=row.is_active,
-            is_verified=row.is_verified,
-            must_change_password=row.must_change_password,
-            must_accept_terms=row.must_accept_terms,
-            roles=roles,
-        )
+        return self._to_user_with_roles(row)
 
     async def add_roles(
         self, id: UUID, role_ids: list[int]
@@ -336,6 +308,46 @@ class UserRepository:
         await self.db.commit()
         return self._to_entity(row)
 
+    async def set_avatar(
+        self, user_id: UUID, new_avatar_file_id: UUID | None
+    ) -> tuple[UserWithRoles, UUID | None] | None:
+        """Set or clear the user's avatar_file_id.
+
+        Returns ``(user_with_roles, previous_avatar_file_id)`` on success
+        or ``None`` when the user does not exist. ``previous_avatar_file_id``
+        is ``None`` when the user had no avatar before.
+
+        Reads the previous value before issuing the UPDATE so the caller
+        knows which old ``file_objects`` row to soft-delete. Both reads
+        live in the same transaction.
+        """
+        select_stmt = (
+            select(UserModel)
+            .options(selectinload(UserModel.roles))
+            .where(UserModel.id == user_id)
+        )
+        current = (await self.db.execute(select_stmt)).scalar_one_or_none()
+        if current is None:
+            return None
+
+        previous_avatar_file_id = current.avatar_file_id
+
+        if previous_avatar_file_id == new_avatar_file_id:
+            # No-op write avoids a needless RETURNING round-trip; surface
+            # the same shape to the caller.
+            return self._to_user_with_roles(current), previous_avatar_file_id
+
+        update_stmt = (
+            update(UserModel)
+            .where(UserModel.id == user_id)
+            .values(avatar_file_id=new_avatar_file_id)
+            .returning(UserModel)
+        )
+        updated = (await self.db.execute(update_stmt)).scalar_one()
+        await self.db.commit()
+        await self.db.refresh(updated, attribute_names=["roles"])
+        return self._to_user_with_roles(updated), previous_avatar_file_id
+
     def _to_entity(self, model: UserModel) -> UserEntity:
         return UserEntity(
             id=model.id,
@@ -345,6 +357,8 @@ class UserRepository:
             name=model.name,
             oauth_provider=model.oauth_provider,
             oauth_provider_id=model.oauth_provider_id,
+            company_id=model.company_id,
+            avatar_file_id=model.avatar_file_id,
             is_active=model.is_active,
             is_verified=model.is_verified,
             must_change_password=model.must_change_password,
@@ -361,6 +375,8 @@ class UserRepository:
             name=model.name,
             oauth_provider=model.oauth_provider,
             oauth_provider_id=model.oauth_provider_id,
+            company_id=model.company_id,
+            avatar_file_id=model.avatar_file_id,
             is_active=model.is_active,
             is_verified=model.is_verified,
             must_change_password=model.must_change_password,
