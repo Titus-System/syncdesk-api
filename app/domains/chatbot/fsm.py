@@ -1,4 +1,4 @@
-from typing import Optional, Dict, List, TypedDict, NotRequired, Any
+from typing import Optional, Dict, List, TypedDict, NotRequired
 from app.domains.chatbot.enums import TriageState
 from app.domains.chatbot.schemas import InternalBotResponseDTO
 
@@ -15,117 +15,100 @@ class MenuConfig(TypedDict):
     next_state: NotRequired[Optional[TriageState]]
 # -------------------------------------
 
-def build_menu_map(products_context: List[Dict[str, Any]]) -> Dict[TriageState, MenuConfig]:
-    main_menu_options: List[MenuOption] = []
-    deadlines_text = "Verifiquei e esses são os seguintes prazos:\n"
-    
-    # Preenche os produtos dinamicamente
-    for idx, prod in enumerate(products_context, start=1):
-        main_menu_options.append({
-            "label": prod["name"], 
-            "value": str(idx), 
-            "next_state": TriageState.CHOOSING_PRODUCT_PROBLEM
-        })
-        deadlines_text += f" - {prod['name']}: Até {prod['support_until']}\n"
-        
-    if not products_context:
-        deadlines_text = "Você não possui produtos com suporte ativo no momento."
-        
-    # Adiciona as opções fixas deslocando os índices
-    idx_offset = len(products_context)
-    main_menu_options.extend([
-        {"label": "Desejo apenas tirar uma dúvida.", "value": str(idx_offset + 1), "next_state": TriageState.CHOOSING_QUESTION_TYPE},
-        {"label": "Desejo uma liberação de acesso no Sync Desk.", "value": str(idx_offset + 2), "next_state": TriageState.REQUESTING_ACCESS}
-    ])
-
-    return {
-        TriageState.MAIN_MENU: {
-            "message": "Olá! Bem vindo ao SyncDesk! Para começarmos, verifiquei no seu cadastro e você possui os seguintes produtos disponíveis para manutenção. Selecione a opção que indica sobre o que você quer falar hoje:",
-            "input_type": "quick_replies",
-            "options": main_menu_options
-        },
-        TriageState.CHOOSING_PRODUCT_PROBLEM: {
-            "message": "Entendi. Como posso te ajudar hoje em relação ao produto selecionado?",
-            "input_type": "quick_replies",
-            "options": [
-                {"label": "O sistema apresenta falhas.", "value": "1", "next_state": TriageState.WAITING_FAILURE_TEXT},
-                {"label": "Quero solicitar uma nova função.", "value": "2", "next_state": TriageState.WAITING_FEATURE_TEXT}
-            ]
-        },
-        TriageState.CHOOSING_QUESTION_TYPE: {
-            "message": "Entendi. Selecione, por favor, qual a sua dúvida:",
-            "input_type": "quick_replies",
-            "options": [
-                {"label": "Qual o período restante para manutenção dos sistemas que eu já adquiri?", "value": "1", "next_state": TriageState.SHOWING_DEADLINES},
-                {"label": "Estou com dúvidas sobre como utilizar um dos meus sistemas.", "value": "2", "next_state": TriageState.SHOWING_MANUAL},
-                {"label": "Como faço para solicitar um novo sistema?", "value": "3", "next_state": TriageState.SHOWING_EMAIL}
-            ]
-        },
-        TriageState.REQUESTING_ACCESS: {
-            "message": "Entendi. Por favor, envie uma mensagem respondendo as seguintes perguntas: 1-Essa liberação se refere à um novo perfil ou à edição de um perfil já existente? 2-Qual o email e empresa da pessoa que deve ser cadastrada? 3-Qual o motivo da solicitação? 4-Quais produtos essa pessoa deve ter vinculados à sua conta?",
-            "input_type": "free_text",
-            "next_state": None
-        },
-        TriageState.WAITING_FAILURE_TEXT: {
-            "message": "Por favor, explique da maneira mais detalhada possível o seu problema. Lembre-se: Se a descrição do problema não for clara e/ou faltarem informações, seu chamado poderá ser cancelado pelo time de suporte. Seja específico e detalhista.",
-            "input_type": "free_text",
-            "next_state": None
-        },
-        TriageState.WAITING_FEATURE_TEXT: {
-            "message": "Por favor, explique da maneira mais detalhada possível a nova funcionalidade que deseja. Lembre-se: Se a descrição da função não for clara e/ou faltarem informações, sua solicitação poderá ser cancelada pelo time de analistas. Seja específico e detalhista.",
-            "input_type": "free_text",
-            "next_state": None
-        },
-        TriageState.SHOWING_DEADLINES: {
-            "message": deadlines_text,
-            "input_type": "quick_replies",
-            "options": [
-                {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
-            ]
-        },
-        TriageState.SHOWING_MANUAL: {
-            "message": "Todos os nossos produtos possuem manual do usuário, onde você pode logar e acessar todas as informações necessárias para a navegação. Verifique no sistema e tire todas as suas dúvidas por lá.",
-            "input_type": "quick_replies",
-            "options": [
-                {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
-            ]
-        },
-        TriageState.SHOWING_EMAIL: {
-            "message": "Você pode enviar um pedido através do nosso email xxxxx.com",
-            "input_type": "quick_replies",
-            "options": [
-                {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
-            ]
-        },
-        TriageState.ANYTHING_ELSE: {
-            "message": "Ajudo em algo mais?",
-            "input_type": "quick_replies",
-            "options": [
-                {"label": "Sim", "value": "1", "next_state": TriageState.MAIN_MENU},
-                {"label": "Não", "value": "2", "next_state": TriageState.SERVICE_FINISHED}
-            ]
-        }
+# Mapa de menus (Dicionário Python)
+# Preparado para ser migrado futuramente para o banco de dados.
+MENU_MAP: Dict[TriageState, MenuConfig] = {
+    TriageState.MAIN_MENU: {
+        "message": "Olá! Bem vindo ao SyncDesk! Para começarmos, verifiquei no seu cadastro e você possui os seguintes produtos disponíveis para manutenção. Selecione a opção que indica sobre o que você quer falar hoje:",
+        "input_type": "quick_replies",
+        "options": [
+            {"label": "Produto A", "value": "1", "next_state": TriageState.CHOOSING_PRODUCT_PROBLEM},
+            {"label": "Produto B", "value": "2", "next_state": TriageState.CHOOSING_PRODUCT_PROBLEM},
+            {"label": "Produto C", "value": "3", "next_state": TriageState.CHOOSING_PRODUCT_PROBLEM},
+            {"label": "Desejo apenas tirar uma dúvida.", "value": "4", "next_state": TriageState.CHOOSING_QUESTION_TYPE},
+            {"label": "Desejo uma liberação de acesso no Sync Desk.", "value": "5", "next_state": TriageState.REQUESTING_ACCESS}
+        ]
+    },
+    TriageState.CHOOSING_PRODUCT_PROBLEM: {
+        "message": "Entendi. Como posso te ajudar hoje em relação ao Produto >produto escolhido< ?",
+        "input_type": "quick_replies",
+        "options": [
+            {"label": "O sistema apresenta falhas.", "value": "1", "next_state": TriageState.WAITING_FAILURE_TEXT},
+            {"label": "Quero solicitar uma nova função.", "value": "2", "next_state": TriageState.WAITING_FEATURE_TEXT}
+        ]
+    },
+    TriageState.CHOOSING_QUESTION_TYPE: {
+        "message": "Entendi. Selecione, por favor, qual a sua dúvida:",
+        "input_type": "quick_replies",
+        "options": [
+            {"label": "Qual o período restante para manutenção dos sistemas que eu já adquiri?", "value": "1", "next_state": TriageState.SHOWING_DEADLINES},
+            {"label": "Estou com dúvidas sobre como utilizar um dos meus sistemas.", "value": "2", "next_state": TriageState.SHOWING_MANUAL},
+            {"label": "Como faço para solicitar um novo sistema?", "value": "3", "next_state": TriageState.SHOWING_EMAIL}
+        ]
+    },
+    TriageState.REQUESTING_ACCESS: {
+        "message": "Entendi. Por favor, envie uma mensagem respondendo as seguintes perguntas: 1-Essa liberação se refere à um novo perfil ou à edição de um perfil já existente? 2-Qual o email e empresa da pessoa que deve ser cadastrada? 3-Qual o motivo da solicitação? 4-Quais produtos essa pessoa deve ter vinculados à sua conta?",
+        "input_type": "free_text",
+        "next_state": None
+    },
+    TriageState.WAITING_FAILURE_TEXT: {
+        "message": "Por favor, explique da maneira mais detalhada possível o seu problema. Lembre-se: Se a descrição do problema não for clara e/ou faltarem informações, seu chamado poderá ser cancelado pelo time de suporte. Seja específico e detalhista.",
+        "input_type": "free_text",
+        "next_state": None
+    },
+    TriageState.WAITING_FEATURE_TEXT: {
+        "message": "Por favor, explique da maneira mais detalhada possível a nova funcionalidade que deseja. Lembre-se: Se a descrição da função não for clara e/ou faltarem informações, sua solicitação poderá ser cancelada pelo time de analistas. Seja específico e detalhista.",
+        "input_type": "free_text",
+        "next_state": None
+    },
+    TriageState.SHOWING_DEADLINES: {
+        "message": "Verifiquei e esses são os seguintes prazos:\n Produto A - Até dd/mm/aaaa\n Produto B - Até dd/mm/aaa\n Produto C - Até dd/mm/aaaa",
+        "input_type": "quick_replies",
+        "options": [
+            {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
+        ]
+    },
+    TriageState.SHOWING_MANUAL: {
+        "message": "Todos os nossos produtos possuem manual do usuário, onde você pode logar e acessar todas as informações necessárias para a navegação. Verifique no sistema e tire todas as suas dúvidas por lá.",
+        "input_type": "quick_replies",
+        "options": [
+            {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
+        ]
+    },
+    TriageState.SHOWING_EMAIL: {
+        "message": "Você pode enviar um pedido através do nosso email xxxxx.com",
+        "input_type": "quick_replies",
+        "options": [
+            {"label": "Continuar", "value": "1", "next_state": TriageState.ANYTHING_ELSE}
+        ]
+    },
+    TriageState.ANYTHING_ELSE: {
+        "message": "Ajudo em algo mais?",
+        "input_type": "quick_replies",
+        "options": [
+            {"label": "Sim", "value": "1", "next_state": TriageState.MAIN_MENU},
+            {"label": "Não", "value": "2", "next_state": TriageState.SERVICE_FINISHED}
+        ]
     }
+}
 
 class ChatbotFSM:
     @staticmethod
-    def process_interaction(current_state: Optional[TriageState], message: str, products_context: List[Dict[str, Any]]) -> InternalBotResponseDTO:
+    def process_interaction(current_state: Optional[TriageState], message: str) -> InternalBotResponseDTO:
         msg = message.strip() if message else ""
-        
-        menu_map = build_menu_map(products_context)
 
         # Se não houver estado, inicia pelo menu principal
-        if not current_state or current_state not in menu_map:
-            return ChatbotFSM._get_state_response(TriageState.MAIN_MENU, menu_map)
+        if not current_state or current_state not in MENU_MAP:
+            return ChatbotFSM._get_state_response(TriageState.MAIN_MENU)
 
-        current_menu = menu_map[current_state]
+        current_menu = MENU_MAP[current_state]
 
         # Tratamento de entrada em texto livre
         if current_menu["input_type"] == "free_text":
             next_state = current_menu.get("next_state")
             if next_state is None:
                 return ChatbotFSM._get_ticket_response()
-            return ChatbotFSM._get_state_response(next_state, menu_map)
+            return ChatbotFSM._get_state_response(next_state)
 
         # Tratamento de resposta de opções
         if current_menu["input_type"] == "quick_replies":
@@ -141,16 +124,16 @@ class ChatbotFSM:
                     if next_state == TriageState.SERVICE_FINISHED:
                         return ChatbotFSM._get_finished_response()
                     
-                    return ChatbotFSM._get_state_response(next_state, menu_map)
+                    return ChatbotFSM._get_state_response(next_state)
 
             # Cai aqui se a mensagem não bater com nenhuma opção válida
-            return ChatbotFSM._get_state_response(current_state, menu_map)
+            return ChatbotFSM._get_state_response(current_state)
         
-        return ChatbotFSM._get_state_response(TriageState.MAIN_MENU, menu_map)
+        return ChatbotFSM._get_state_response(TriageState.MAIN_MENU)
 
     @staticmethod
-    def _get_state_response(state: TriageState, menu_map: Dict[TriageState, MenuConfig]) -> InternalBotResponseDTO:
-        menu = menu_map[state]
+    def _get_state_response(state: TriageState) -> InternalBotResponseDTO:
+        menu = MENU_MAP[state]
         is_free_text = menu["input_type"] == "free_text"
         
         # Constrói as opções apenas se não for campo de texto
