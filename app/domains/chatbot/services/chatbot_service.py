@@ -20,7 +20,7 @@ from app.domains.chatbot.exceptions import (
     AttendanceNotFoundException,
     MissingClientDataException,
 )
-from app.domains.chatbot.fsm import ChatbotFSM
+from app.domains.chatbot.fsm import ChatbotFSM, build_menu_map
 from app.domains.chatbot.metrics import chatbot_messages_total
 from app.domains.chatbot.models import (
     AttendanceClient,
@@ -215,7 +215,7 @@ class ChatbotService:
         filters: AttendanceSearchFiltersDTO,
     ) -> list[AttendanceResponse]:
         docs = await self.repository.list_attendances(filters)
-        return [self._map_attendance_response(doc) for doc in docs]
+        return [await self._map_attendance_response(doc) for doc in docs]
 
     async def get_attendance(self, triage_id: str) -> AttendanceResponse:
         attendance = await self.repository.find_attendance(triage_id)
@@ -223,7 +223,7 @@ class ChatbotService:
         if attendance is None:
             raise AttendanceNotFoundException(triage_id)
 
-        return self._map_attendance_response(attendance)
+        return await self._map_attendance_response(attendance)
 
     async def finish_attendance_pending_evaluation(self, triage_id: str) -> bool:
         finished_at = datetime.now(UTC)
@@ -552,7 +552,7 @@ class ChatbotService:
             email=client_email,
         )
 
-    def _map_attendance_response(self, attendance: dict[str, Any]) -> AttendanceResponse:
+    async def _map_attendance_response(self, attendance: dict[str, Any]) -> AttendanceResponse:
         client_raw = attendance["client"]
         result_raw = attendance.get("result")
         evaluation_raw = attendance.get("evaluation")
@@ -560,7 +560,7 @@ class ChatbotService:
         start_date = self._coerce_datetime(attendance["start_date"])
         end_date = self._coerce_datetime(attendance.get("end_date"))
 
-        current_step_id, current_message, current_input = self._get_current_input(attendance)
+        current_step_id, current_message, current_input = await self._get_current_input(attendance)
 
         return AttendanceResponse(
             triage_id=str(attendance["_id"]),
@@ -589,7 +589,7 @@ class ChatbotService:
             current_input=current_input,
         )
 
-    def _get_current_input(
+    async def _get_current_input(
         self,
         attendance: dict[str, Any],
     ) -> tuple[str | None, str | None, TriageInputDef | None]:
@@ -612,7 +612,14 @@ class ChatbotService:
         except ValueError:
             return None, None, None
 
-        bot_response = ChatbotFSM._get_state_response(state)
+        client_id = (attendance.get("client") or {}).get("id")
+        products_context = await self._get_user_products(client_id)
+        menu_map = build_menu_map(products_context)
+
+        if state not in menu_map:
+            return None, None, None
+
+        bot_response = ChatbotFSM._get_state_response(state, menu_map)
         triage_data = self._build_triage_data(str(attendance["_id"]), bot_response)
 
         return triage_data.step_id, triage_data.message, triage_data.input
